@@ -1,9 +1,12 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useState } from 'react'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } from '../../store'
 import { stationsApi } from '../../api/stations.api'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { STATUS_CSS } from './mapColors'
-import type { MachineStatus } from '../../models'
+import LotCard from '../lots/LotCard'
+import CreateLotModal from '../lots/CreateLotModal'
+import MoveLotModal from '../lots/MoveLotModal'
+import type { Card, MachineStatus } from '../../models'
 
 interface Props {
   stationId: string
@@ -15,6 +18,9 @@ export default function StationPanel({ stationId, onClose }: Props) {
   const machineState= useMachinesStore((s) => s.states[stationId])
   const allCards    = useCardsStore((s) => s.cards)
   const templates   = useProcessesStore((s) => s.lotTemplates)
+
+  const [showCreate, setShowCreate] = useState(false)
+  const [moveCard, setMoveCard]     = useState<Card | null>(null)
 
   const cards = Object.values(allCards).filter(
     (c) => (c.bins[stationId]?.count ?? 0) > 0
@@ -147,67 +153,71 @@ export default function StationPanel({ stationId, onClose }: Props) {
         )}
 
         {/* Lot cards at this station */}
-        <Section label={`LOTS AT STATION (${cards.length})`}>
+        <Section
+          label={`LOTS (${cards.length})`}
+          action={
+            <button
+              onClick={() => setShowCreate(true)}
+              style={{
+                background: 'none', border: 'none',
+                color: color.textSecondary, cursor: 'pointer',
+                fontSize: 16, lineHeight: 1, padding: '0 2px',
+              }}
+              title="Create lot at this station"
+            >
+              +
+            </button>
+          }
+        >
           {cards.length === 0 ? (
-            <div style={{ fontSize: 11, color: color.textDim }}>No lots currently here</div>
+            <div style={{ fontSize: 11, color: color.textDim }}>
+              No lots here — press + to create one
+            </div>
           ) : (
-            cards.map((card) => {
-              const template = templates[card.lotTemplateId]
-              const count    = card.bins[stationId]?.count ?? 0
-              return (
-                <div key={card._id} style={{
-                  background:   color.bgCard,
-                  border:       `1px solid ${color.border}`,
-                  borderRadius: size.radius,
-                  padding:      `${size.sp2} ${size.sp3}`,
-                  marginBottom: size.sp2,
-                  display:      'flex',
-                  justifyContent: 'space-between',
-                  alignItems:   'center',
-                }}>
-                  <div>
-                    <div style={{ fontSize: 12, color: color.textPrimary, fontWeight: 500 }}>
-                      {template?.name ?? 'Unknown Template'}
-                    </div>
-                    {card.lotNum != null && (
-                      <div style={{ fontSize: 10, color: color.textSecondary, fontFamily: font.mono }}>
-                        #{card.lotNum}
-                      </div>
-                    )}
-                  </div>
-                  <div style={{
-                    fontFamily:  font.mono,
-                    fontSize:    13,
-                    color:       color.blueBright,
-                    fontWeight:  600,
-                  }}>
-                    {count}
-                    <span style={{ fontSize: 10, color: color.textDim, fontWeight: 400 }}>
-                      /{card.totalQuantity}
-                    </span>
-                  </div>
-                </div>
-              )
-            })
+            <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+              {cards.map((card) => (
+                <LotCard
+                  key={card._id}
+                  card={card}
+                  template={templates[card.lotTemplateId]}
+                  stationId={stationId}
+                  onClick={() => setMoveCard(card)}
+                />
+              ))}
+            </div>
           )}
         </Section>
 
       </div>
+
+      {showCreate && (
+        <CreateLotModal stationId={stationId} onClose={() => setShowCreate(false)} />
+      )}
+      {moveCard && (
+        <MoveLotModal card={moveCard} fromStationId={stationId} onClose={() => setMoveCard(null)} />
+      )}
     </aside>
   )
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({ label, children, action }: { label: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div>
       <div style={{
-        fontSize:      9,
-        fontFamily:    font.mono,
-        letterSpacing: '0.14em',
-        color:         color.textDim,
+        display:       'flex',
+        alignItems:    'center',
         marginBottom:  size.sp2,
       }}>
-        {label}
+        <span style={{
+          fontSize:      9,
+          fontFamily:    font.mono,
+          letterSpacing: '0.14em',
+          color:         color.textDim,
+          flex:          1,
+        }}>
+          {label}
+        </span>
+        {action}
       </div>
       {children}
     </div>

@@ -1,28 +1,32 @@
 import React, { useRef, useCallback, useState, useMemo } from 'react'
 import { Container, Graphics, Text } from '@pixi/react'
 import * as PIXI from 'pixi.js'
-import type { Station, MachineState } from '../../models'
-import { STATUS_HEX } from './mapColors'
+import type { Station } from '../../models'
 import { useStationsStore } from '../../store'
 
-export const NODE_W = 150
-export const NODE_H = 64
-const RADIUS = 6
+export const NODE_W = 100
+export const NODE_H = 32
+const RADIUS = 4
+
+// Accent bar color: green when lots are present, muted blue otherwise
+const COLOR_ACTIVE  = 0x10B981
+const COLOR_EMPTY   = 0x2D5B8E
+const COLOR_SELECTED= 0x3B82F6
+const BG_NORMAL     = 0x0D1B2E
+const BG_SELECTED   = 0x162845
 
 interface Props {
   station:      Station
-  machineState: MachineState | undefined
+  lotCount:     number       // distinct lot cards currently at this station
   selected:     boolean
   onSelect:     () => void
-  onNodePointerDown: () => void   // tells MapCanvas a node drag started
+  onNodePointerDown: () => void
 }
 
-export default function StationNode({ station, machineState, selected, onSelect, onNodePointerDown }: Props) {
+export default function StationNode({ station, lotCount, selected, onSelect, onNodePointerDown }: Props) {
   const updateStation = useStationsStore((s) => s.update)
 
-  const status     = (machineState?.status ?? 'none') as keyof typeof STATUS_HEX
-  const statusHex  = STATUS_HEX[status]
-  const isAnimated = status === 'running' || status === 'fault'
+  const accentColor = selected ? COLOR_SELECTED : lotCount > 0 ? COLOR_ACTIVE : COLOR_EMPTY
 
   const dragRef = useRef<{ px: number; py: number; sx: number; sy: number } | null>(null)
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null)
@@ -30,49 +34,40 @@ export default function StationNode({ station, machineState, selected, onSelect,
 
   const drawNode = useCallback((g: PIXI.Graphics) => {
     g.clear()
-    if (isAnimated) {
-      g.lineStyle(10, statusHex, 0.15)
-      g.drawRoundedRect(-5, -5, NODE_W + 10, NODE_H + 10, RADIUS + 4)
-    }
-    g.lineStyle(selected ? 2 : 1.5, selected ? 0x3B82F6 : statusHex)
-    g.beginFill(selected ? 0x162845 : 0x101E35)
+    // Body
+    g.lineStyle(selected ? 1.5 : 1, accentColor, selected ? 1 : 0.6)
+    g.beginFill(selected ? BG_SELECTED : BG_NORMAL)
     g.drawRoundedRect(0, 0, NODE_W, NODE_H, RADIUS)
     g.endFill()
-    // Status accent bar on left edge
+    // Left accent bar
     g.lineStyle(0)
-    g.beginFill(statusHex)
-    g.drawRoundedRect(0, 0, 4, NODE_H, RADIUS)
+    g.beginFill(accentColor)
+    g.drawRoundedRect(0, 0, 3, NODE_H, RADIUS)
     g.endFill()
-  }, [statusHex, selected, isAnimated])
+  }, [accentColor, selected])
 
   const nameStyle = useMemo(() => new PIXI.TextStyle({
-    fill: 0xEBF1F8, fontSize: 12, fontWeight: '600',
+    fill: 0xC5D3E2,
+    fontSize: 10,
+    fontWeight: '500',
     fontFamily: 'Inter, system-ui, sans-serif',
-    wordWrap: true, wordWrapWidth: NODE_W - 20,
+    wordWrap: false,
   }), [])
 
-  const statusStyle = useMemo(() => new PIXI.TextStyle({
-    fill: statusHex, fontSize: 9,
+  const countStyle = useMemo(() => new PIXI.TextStyle({
+    fill: lotCount > 0 ? 0x10B981 : 0x4A6080,
+    fontSize: 10,
+    fontWeight: '600',
     fontFamily: '"JetBrains Mono", monospace',
-    letterSpacing: 1,
-  }), [statusHex])
+  }), [lotCount])
 
-  const metricStyle = useMemo(() => new PIXI.TextStyle({
-    fill: 0x8FA3BC, fontSize: 10,
-    fontFamily: '"JetBrains Mono", monospace',
-  }), [])
-
-  const statusLabel  = machineState ? machineState.status.toUpperCase() : 'NO ADAPTER'
-  const firstMetric  = machineState ? Object.values(machineState.metrics)[0] : null
-  const metricText   = firstMetric ? `${firstMetric.label}: ${firstMetric.value} ${firstMetric.unit}` : ''
+  // Truncate name to fit in the node width
+  const displayName = station.name.length > 11 ? station.name.slice(0, 10) + '…' : station.name
 
   const handlePointerDown = useCallback((e: PIXI.FederatedPointerEvent) => {
     e.stopPropagation()
     onNodePointerDown()
-    dragRef.current = {
-      px: e.globalX, py: e.globalY,
-      sx: pos.x,     sy: pos.y,
-    }
+    dragRef.current = { px: e.globalX, py: e.globalY, sx: pos.x, sy: pos.y }
   }, [pos, onNodePointerDown])
 
   const handlePointerMove = useCallback((e: PIXI.FederatedPointerEvent) => {
@@ -104,7 +99,7 @@ export default function StationNode({ station, machineState, selected, onSelect,
       x={pos.x}
       y={pos.y}
       eventMode="static"
-      cursor={dragRef.current ? 'grabbing' : 'pointer'}
+      cursor="pointer"
       pointerdown={handlePointerDown}
       pointermove={handlePointerMove}
       pointerup={handlePointerUp}
@@ -112,9 +107,10 @@ export default function StationNode({ station, machineState, selected, onSelect,
       pointertap={handleTap}
     >
       <Graphics draw={drawNode} />
-      <Text text={station.name} style={nameStyle} x={12} y={9} />
-      <Text text={statusLabel} style={statusStyle} x={12} y={28} />
-      {metricText ? <Text text={metricText} style={metricStyle} x={12} y={42} /> : null}
+      {/* Name: padded past the accent bar */}
+      <Text text={displayName} style={nameStyle} x={8} y={11} />
+      {/* Lot count badge: right-aligned */}
+      <Text text={String(lotCount)} style={countStyle} x={NODE_W - 14} y={11} />
     </Container>
   )
 }

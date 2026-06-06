@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Stage, Container } from '@pixi/react'
-import type { Station, Route, MachineState } from '../../models'
+import type { Station, Route } from '../../models'
 import { color } from '../../theme/tokens'
 import StationNode from './StationNode'
 import RouteEdge from './RouteEdge'
@@ -11,15 +11,15 @@ const MAX_ZOOM = 4.0
 interface Viewport { x: number; y: number; scale: number }
 
 interface Props {
-  stations:        Record<string, Station>
-  routes:          Record<string, Route>
-  machineStates:   Record<string, MachineState>
+  stations:          Record<string, Station>
+  routes:            Record<string, Route>
+  lotCounts:         Record<string, number>   // stationId → distinct lot card count
   selectedStationId: string | null
-  onSelectStation: (id: string) => void
+  onSelectStation:   (id: string) => void
 }
 
 export default function MapCanvas({
-  stations, routes, machineStates, selectedStationId, onSelectStation,
+  stations, routes, lotCounts, selectedStationId, onSelectStation,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
@@ -122,7 +122,7 @@ export default function MapCanvas({
               <StationNode
                 key={station._id}
                 station={station}
-                machineState={machineStates[station._id]}
+                lotCount={lotCounts[station._id] ?? 0}
                 selected={selectedStationId === station._id}
                 onSelect={() => onSelectStation(station._id)}
                 onNodePointerDown={() => { nodeHit.current = true }}

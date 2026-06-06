@@ -64,3 +64,13 @@ async def delete_station(station_id: str, db=Depends(get_db)):
     if result.deleted_count == 0:
         raise HTTPException(404, "Station not found")
     await plugin_registry.unregister(station_id)
+
+
+@router.post("/{station_id}/command")
+async def send_command(station_id: str, body: dict):
+    from ..models.machine_state import StationCommand
+    cmd = StationCommand(**body)
+    ok = await plugin_registry.send_command(station_id, cmd)
+    if not ok:
+        raise HTTPException(404, "No adapter found for this station")
+    return {"ok": True}

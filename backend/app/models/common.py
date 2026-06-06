@@ -8,7 +8,14 @@ from typing import Any
 class PyObjectId(str):
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: Any) -> Any:
-        return core_schema.no_info_plain_validator_function(cls._validate)
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            serialization=core_schema.to_string_ser_schema(),
+        )
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        return {"type": "string", "example": "64a1f2b3c4d5e6f7a8b9c0d1"}
 
     @classmethod
     def _validate(cls, v: Any) -> str:

@@ -7,5 +7,7 @@ export const stationsApi = {
   create: (body: Omit<Station, '_id' | 'createdAt' | 'updatedAt'>): Promise<Station> =>
     client.post('/stations/', body),
   update: (id: string, patch: Partial<Station>):   Promise<Station>   => client.put(`/stations/${id}`, patch),
-  remove: (id: string):                             Promise<void>      => client.delete(`/stations/${id}`),
+  remove:      (id: string):                                              Promise<void>      => client.delete(`/stations/${id}`),
+  sendCommand: (id: string, cmd: { type: string; params?: Record<string, unknown> }): Promise<{ ok: boolean }> =>
+    client.post(`/stations/${id}/command`, cmd),
 }

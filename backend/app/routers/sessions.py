@@ -10,7 +10,14 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 def _to_session(doc: dict) -> WorkSession:
-    return WorkSession(**{**doc, "_id": str(doc["_id"])})
+    d = {**doc, "_id": str(doc["_id"])}
+    # Motor returns naive datetimes; tag them as UTC so Pydantic serializes
+    # with +00:00 and the browser parses them correctly as UTC.
+    for field in ("startedAt", "endedAt"):
+        dt = d.get(field)
+        if isinstance(dt, datetime) and dt.tzinfo is None:
+            d[field] = dt.replace(tzinfo=timezone.utc)
+    return WorkSession(**d)
 
 
 @router.get("/", response_model=List[WorkSession])

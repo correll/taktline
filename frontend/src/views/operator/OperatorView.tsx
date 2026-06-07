@@ -382,10 +382,14 @@ function WorkingPanel({
   const templates = useProcessesStore((s) => s.lotTemplates)
   const [stopping, setStopping] = useState(false)
 
-  const startedAt = new Date(session.startedAt)
+  // Ensure the ISO string is treated as UTC — Motor/Pydantic may omit the Z suffix.
+  const startedAtStr = session.startedAt
+  const startedAt = new Date(
+    startedAtStr.endsWith('Z') || startedAtStr.includes('+') ? startedAtStr : startedAtStr + 'Z'
+  )
 
   useEffect(() => {
-    const tick = () => onElapsed(differenceInSeconds(new Date(), startedAt))
+    const tick = () => onElapsed(Math.max(0, differenceInSeconds(new Date(), startedAt)))
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)

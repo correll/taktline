@@ -13,18 +13,22 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
   const stations    = useStationsStore((s) => s.stations)
   const createCard  = useCardsStore((s) => s.create)
 
-  const [templateId, setTemplateId]   = useState('')
-  const [quantity, setQuantity]       = useState(1)
-  const [lotNum, setLotNum]           = useState('')
-  const [saving, setSaving]           = useState(false)
-  const [error, setError]             = useState<string | null>(null)
-
   // Only templates whose startStationId === this station are valid here.
   // Merge-destination templates (2+ incoming routes) are excluded — they come
   // from merge operations, not direct creation.
   const validTemplates = useMemo(() => {
     return Object.values(templates).filter((t) => t.startStationId === stationId)
   }, [templates, stationId])
+
+  // Auto-select the only template when there's exactly one option
+  const [templateId, setTemplateId]   = useState(() => {
+    const valid = Object.values(templates).filter((t) => t.startStationId === stationId)
+    return valid.length === 1 ? valid[0]._id : ''
+  })
+  const [quantity, setQuantity]       = useState(1)
+  const [lotNum, setLotNum]           = useState('')
+  const [saving, setSaving]           = useState(false)
+  const [error, setError]             = useState<string | null>(null)
 
   const station = stations[stationId]
 

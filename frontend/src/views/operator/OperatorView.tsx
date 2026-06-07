@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
 import { sessionsApi, type WorkSession } from '../../api/sessions.api'
 import { color, font, size, shadow } from '../../theme/tokens'
 import type { Card } from '../../models'
 import { formatDistanceToNow, differenceInSeconds } from 'date-fns'
 import { getValidDestinations } from '../lots/LotsView'
+import { mergeNodes } from '../../domain/graph'
+import { mergeApi } from '../../api/merge.api'
+import LotCard from '../../components/lots/LotCard'
 
 // ─── Flow ─────────────────────────────────────────────────────────────────────
 // 1. pick-location  → pick your station
-// 2. pick-lot       → see lots at that station, tap one (or "without lot")
+// 2. pick-lot       → see lots at that station, tap one
 // 3. working        → lot selected + START button → timer running → STOP button
 // 4. done           → timer shows final time + MOVE button
 
@@ -21,7 +24,13 @@ export default function OperatorView() {
   const [session,   setSession]   = useState<WorkSession | null>(null)
   const [elapsed,   setElapsed]   = useState(0)
 
-  const updateCard = useCardsStore((s) => s.update)
+  const routes      = useProcessesStore((s) => s.routes)
+  const updateCard  = useCardsStore((s) => s.update)
+
+  const mergeNodeSet = useMemo(
+    () => mergeNodes(Object.values(routes) as { load: string; unload: string }[]),
+    [routes],
+  )
 
   const reset = useCallback(() => {
     setPhase('pick-location')
@@ -36,7 +45,6 @@ export default function OperatorView() {
     setPhase('pick-lot')
   }, [])
 
-  // Phase 2 → 3: tap lot to select, then press START
   const [selectedCard, setSelectedCard] = useState<Card | null>(null)
   const [quantity,     setQuantity]     = useState(1)
 
@@ -59,7 +67,6 @@ export default function OperatorView() {
     setPhase('working')
   }, [stationId, selectedCard, quantity, updateCard])
 
-  // Phase 3 → 4: STOP
   const handleStop = useCallback(async () => {
     if (!session) return
     await sessionsApi.end(session._id, quantity)
@@ -67,14 +74,12 @@ export default function OperatorView() {
     setPhase('done')
   }, [session, card, quantity, updateCard])
 
-  // Phase 4: MOVE to next station
   const handleMove = useCallback(async (toStationId: string) => {
     if (!card || !stationId) return
     const fromCount = card.bins[stationId]?.count ?? 0
     const moveQty   = Math.min(quantity, fromCount)
     if (moveQty <= 0) { reset(); return }
 
-    // Update bins and reset status
     const newBins = { ...card.bins }
     const remaining = (newBins[stationId]?.count ?? 0) - moveQty
     if (remaining <= 0) {
@@ -90,8 +95,8 @@ export default function OperatorView() {
 
   return (
     <div style={{
-      flex:          1, display: 'flex', flexDirection: 'column',
-      overflow:      'hidden', background: color.bgDeep,
+      flex:      1, display: 'flex', flexDirection: 'column',
+      overflow:  'hidden', background: color.bgDeep,
     }}>
       {/* Header */}
       <div style={{
@@ -115,13 +120,14 @@ export default function OperatorView() {
 
       <div style={{ flex: 1, overflowY: 'auto', padding: size.sp4 }}>
         {phase === 'pick-location' && (
-          <LocationPicker onSelect={selectLocation} />
+          <LocationPicker onSelect={selectLocation} mergeNodeSet={mergeNodeSet} />
         )}
         {phase === 'pick-lot' && stationId && (
           <LotPicker
             stationId={stationId}
             selected={selectedCard}
             quantity={quantity}
+            isMergeStation={mergeNodeSet.has(stationId)}
             onSelectLot={handleSelectLot}
             onSetQuantity={setQuantity}
             onStart={handleStart}
@@ -156,7 +162,12 @@ export default function OperatorView() {
 
 // ─── Phase 1: Pick a location ─────────────────────────────────────────────────
 
-function LocationPicker({ onSelect }: { onSelect: (id: string) => void }) {
+function LocationPicker({
+  onSelect, mergeNodeSet,
+}: {
+  onSelect:     (id: string) => void
+  mergeNodeSet: Set<string>
+}) {
   const stations = useStationsStore((s) => s.stations)
   const cards    = useCardsStore((s) => s.cards)
   const [openSessions, setOpenSessions] = useState<WorkSession[]>([])
@@ -196,8 +207,9 @@ function LocationPicker({ onSelect }: { onSelect: (id: string) => void }) {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: size.sp3 }}>
         {list.map((s) => {
-          const lots   = lotCounts[s._id] ?? 0
-          const active = openByStation[s._id] ?? 0
+          const lots      = lotCounts[s._id] ?? 0
+          const active    = openByStation[s._id] ?? 0
+          const isMerge   = mergeNodeSet.has(s._id)
           const sideBorder = `1px solid ${active > 0 ? color.statusRunning + '60' : color.border}`
           return (
             <button key={s._id} onClick={() => onSelect(s._id)} style={{
@@ -210,7 +222,18 @@ function LocationPicker({ onSelect }: { onSelect: (id: string) => void }) {
               cursor: 'pointer', textAlign: 'left',
               boxShadow: active > 0 ? `0 0 12px ${color.statusRunning}18` : shadow.sm,
             }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: color.textPrimary, marginBottom: 4 }}>{s.name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: color.textPrimary, flex: 1 }}>{s.name}</div>
+                {isMerge && (
+                  <span style={{
+                    fontSize: 8, fontFamily: font.mono, letterSpacing: '0.08em',
+                    color: '#8B5CF6', background: '#8B5CF620', border: '1px solid #8B5CF640',
+                    borderRadius: size.radiusFull, padding: '1px 5px', flexShrink: 0,
+                  }}>
+                    MERGE
+                  </span>
+                )}
+              </div>
               <div style={{ fontSize: 11, color: color.textDim, fontFamily: font.mono }}>
                 {lots} lot{lots !== 1 ? 's' : ''}
                 {active > 0 && <span style={{ color: color.statusRunning, marginLeft: 8 }}>· {active} active</span>}
@@ -226,24 +249,65 @@ function LocationPicker({ onSelect }: { onSelect: (id: string) => void }) {
 // ─── Phase 2: Pick a lot + START button ──────────────────────────────────────
 
 function LotPicker({
-  stationId, selected, quantity,
+  stationId, selected, quantity, isMergeStation,
   onSelectLot, onSetQuantity, onStart,
 }: {
-  stationId:    string
-  selected:     Card | null
-  quantity:     number
-  onSelectLot:  (c: Card | null) => void
-  onSetQuantity:(n: number) => void
-  onStart:      () => void
+  stationId:      string
+  selected:       Card | null
+  quantity:       number
+  isMergeStation: boolean
+  onSelectLot:    (c: Card | null) => void
+  onSetQuantity:  (n: number) => void
+  onStart:        () => void
 }) {
   const stations  = useStationsStore((s) => s.stations)
   const cards     = useCardsStore((s) => s.cards)
   const templates = useProcessesStore((s) => s.lotTemplates)
-  const [starting, setStarting] = useState(false)
-  const [error,    setError]    = useState<string | null>(null)
+  const routes    = useProcessesStore((s) => s.routes)
+  const fetchAll  = useCardsStore((s) => s.fetchAll)
+
+  const [starting,   setStarting]   = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
+  const [merging,    setMerging]    = useState(false)
+  const [mergeError, setMergeError] = useState<string | null>(null)
 
   const station = stations[stationId]
   const lots    = Object.values(cards).filter((c) => (c.bins[stationId]?.count ?? 0) > 0)
+
+  // Auto-merge when entering a merge station
+  useEffect(() => {
+    if (!isMergeStation) return
+    setMerging(true)
+    setMergeError(null)
+    mergeApi.perform(stationId)
+      .then(() => fetchAll())
+      .catch((e: unknown) => {
+        const msg = String(e)
+        if (msg.includes('No assembly template')) {
+          setMergeError('No assembly template configured for this station.')
+        }
+        // "not enough units" (400) is expected when precursors are incomplete — not shown as error
+      })
+      .finally(() => setMerging(false))
+  }, [stationId, isMergeStation])   // intentionally not re-running on fetchAll change
+
+  // Identify which lots are assembly cards vs. unconsumed precursors
+  const incomingSourceIds = useMemo(() => {
+    if (!isMergeStation) return new Set<string>()
+    return new Set(Object.values(routes).filter((r) => r.unload === stationId).map((r) => r.load))
+  }, [isMergeStation, routes, stationId])
+
+  const assemblyLots  = useMemo(() => lots.filter(
+    (c) => templates[c.lotTemplateId]?.startStationId === stationId,
+  ), [lots, templates, stationId])
+
+  const precursorLots = useMemo(() => lots.filter((c) => {
+    const sid = templates[c.lotTemplateId]?.startStationId
+    return sid && incomingSourceIds.has(sid)
+  }), [lots, templates, incomingSourceIds])
+
+  // At a normal station show all lots; at a merge station show only assembly lots
+  const selectableLots = isMergeStation ? assemblyLots : lots
 
   const doStart = async () => {
     setStarting(true)
@@ -258,13 +322,37 @@ function LotPicker({
       <div>
         <div style={{ fontSize: 20, fontWeight: 700, color: color.textPrimary }}>{station?.name}</div>
         <div style={{ fontSize: 11, color: color.textDim, marginTop: 2 }}>
-          Select a lot to work on, then press START
+          {isMergeStation
+            ? 'Select an assembled lot, then press START'
+            : 'Select a lot to work on, then press START'}
         </div>
       </div>
 
-      {/* Lot list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2, marginBottom: size.sp1 }}>
-        {lots.map((c) => {
+      {/* Merging indicator */}
+      {merging && (
+        <div style={{
+          padding: `${size.sp2} ${size.sp3}`,
+          background: '#8B5CF615', border: '1px solid #8B5CF640',
+          borderRadius: size.radius, fontSize: 11, color: '#8B5CF6', fontFamily: font.mono,
+        }}>
+          Merging precursors…
+        </div>
+      )}
+
+      {/* Merge configuration error */}
+      {mergeError && (
+        <div style={{
+          padding: `${size.sp2} ${size.sp3}`,
+          background: `${color.statusFault}18`, border: `1px solid ${color.statusFault}40`,
+          borderRadius: size.radius, fontSize: 11, color: color.statusFault,
+        }}>
+          {mergeError}
+        </div>
+      )}
+
+      {/* Selectable lot cards */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+        {selectableLots.map((c) => {
           const tmpl  = templates[c.lotTemplateId]
           const count = c.bins[stationId]?.count ?? 0
           const isSel = selected?._id === c._id
@@ -298,19 +386,61 @@ function LotPicker({
           )
         })}
 
-        {lots.length === 0 && (
+        {selectableLots.length === 0 && !merging && (
           <div style={{
             padding: size.sp5, background: color.bgCard, borderRadius: size.radiusMd,
             color: color.textDim, fontSize: 12, textAlign: 'center',
             border: `1px solid ${color.border}`,
           }}>
-            No lots at this location
+            {isMergeStation
+              ? 'No assemblies ready — waiting for precursors'
+              : 'No lots at this location'}
           </div>
         )}
-
       </div>
 
-      {/* Quantity — only when a card is selected */}
+      {/* Unconsumed precursor lots — grayed out, not selectable */}
+      {isMergeStation && precursorLots.length > 0 && (
+        <div>
+          <div style={{
+            fontSize: 9, fontFamily: font.mono, color: color.textDim,
+            letterSpacing: '0.1em', marginBottom: size.sp2,
+          }}>
+            WAITING FOR MORE PRECURSORS
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+            {precursorLots.map((c) => {
+              const tmpl  = templates[c.lotTemplateId]
+              const count = c.bins[stationId]?.count ?? 0
+              return (
+                <div key={c._id} style={{
+                  background:   color.bgCard,
+                  border:       `1px solid ${color.border}`,
+                  borderLeft:   `4px solid ${color.textDim}`,
+                  borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
+                  display: 'flex', alignItems: 'center', gap: size.sp3,
+                  opacity: 0.45, pointerEvents: 'none',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: color.textPrimary }}>
+                      {tmpl?.name ?? 'Unknown'}
+                      {c.lotNum != null && (
+                        <span style={{ color: color.textSecondary, fontFamily: font.mono, fontWeight: 400 }}> #{c.lotNum}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
+                    <div style={{ fontSize: 9, color: color.textDim }}>units</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Quantity — shown only when a card is selected */}
       {selected !== null && (
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: size.sp2 }}>
           <span style={{ fontSize: 10, fontFamily: font.mono, color: color.textDim, letterSpacing: '0.1em' }}>UNITS</span>
@@ -327,7 +457,7 @@ function LotPicker({
         </label>
       )}
 
-      {/* Error */}
+      {/* API error */}
       {error && (
         <div style={{
           background: `${color.statusFault}18`, border: `1px solid ${color.statusFault}40`,
@@ -338,7 +468,7 @@ function LotPicker({
         </div>
       )}
 
-      {/* START — only appears after a lot card is selected */}
+      {/* START */}
       {selected !== null && (
         <button
           onClick={doStart}
@@ -369,14 +499,14 @@ function WorkingPanel({
   session, card, stationId, quantity, elapsed,
   onSetQuantity, onElapsed, onStop,
 }: {
-  session:      WorkSession
-  card:         Card | null
-  stationId:    string
-  quantity:     number
-  elapsed:      number
-  onSetQuantity:(n: number) => void
-  onElapsed:    (n: number) => void
-  onStop:       () => void
+  session:       WorkSession
+  card:          Card | null
+  stationId:     string
+  quantity:      number
+  elapsed:       number
+  onSetQuantity: (n: number) => void
+  onElapsed:     (n: number) => void
+  onStop:        () => void
 }) {
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
@@ -415,16 +545,8 @@ function WorkingPanel({
       </div>
 
       {card && (
-        <div style={{
-          background: color.bgCard, border: `1px solid ${color.border}`,
-          borderLeft: `4px solid ${tmpl?.color ?? color.bluePrimary}`,
-          borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp5}`,
-          textAlign: 'center', minWidth: 240,
-        }}>
-          <div style={{ fontSize: 12, color: color.textSecondary }}>{tmpl?.name ?? 'Lot'}</div>
-          {card.lotNum != null && (
-            <div style={{ fontSize: 16, fontFamily: font.mono, fontWeight: 700, color: color.textPrimary }}>#{card.lotNum}</div>
-          )}
+        <div style={{ width: '100%', maxWidth: 320 }}>
+          <LotCard card={card} template={tmpl ?? undefined} stationId={stationId} />
         </div>
       )}
 
@@ -485,12 +607,12 @@ function WorkingPanel({
 function DonePanel({
   card, stationId, quantity, elapsed, onMove, onBack,
 }: {
-  card:     Card | null
-  stationId:string
-  quantity: number
-  elapsed:  number
-  onMove:   (toStationId: string) => void
-  onBack:   () => void
+  card:      Card | null
+  stationId: string
+  quantity:  number
+  elapsed:   number
+  onMove:    (toStationId: string) => void
+  onBack:    () => void
 }) {
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
@@ -513,7 +635,6 @@ function DonePanel({
     return ids.map((id) => stations[id]).filter(Boolean)
   }, [stationId, routes, stations])
 
-  // Auto-select if only one destination
   useEffect(() => {
     if (destinations.length === 1) setToId(destinations[0]!._id)
   }, [destinations])
@@ -527,17 +648,12 @@ function DonePanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: size.sp6, paddingTop: size.sp8 }}>
-      {/* Done indicator */}
       <div style={{ textAlign: 'center' }}>
-        <div style={{
-          fontSize: 40, marginBottom: 8,
-          filter: 'drop-shadow(0 0 12px #10B981)',
-        }}>✓</div>
+        <div style={{ fontSize: 40, marginBottom: 8, filter: 'drop-shadow(0 0 12px #10B981)' }}>✓</div>
         <div style={{ fontSize: 22, fontWeight: 700, color: color.statusRunning }}>DONE</div>
         <div style={{ fontSize: 13, color: color.textSecondary, marginTop: 4 }}>{station?.name}</div>
       </div>
 
-      {/* Final time */}
       <div style={{
         background: color.bgCard, border: `1px solid ${color.border}`,
         borderRadius: size.radiusLg, padding: `${size.sp5} ${size.sp8}`,
@@ -551,7 +667,6 @@ function DonePanel({
         </div>
       </div>
 
-      {/* Lot info */}
       {card && (
         <div style={{ fontSize: 12, color: color.textSecondary, textAlign: 'center' }}>
           {tmpl?.name ?? 'Lot'}
@@ -559,7 +674,6 @@ function DonePanel({
         </div>
       )}
 
-      {/* Destination picker (only when multiple options) */}
       {destinations.length > 1 && (
         <div style={{ width: '100%', maxWidth: 320 }}>
           <div style={{ fontSize: 10, fontFamily: font.mono, color: color.textDim, letterSpacing: '0.1em', marginBottom: 6 }}>
@@ -585,7 +699,6 @@ function DonePanel({
         </div>
       )}
 
-      {/* MOVE button */}
       {destinations.length > 0 && (
         <button
           onClick={doMove}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useProcessesStore, useStationsStore } from '../../store'
 import { color, font, size } from '../../theme/tokens'
 import type { LotTemplate, FieldDefinition, FieldType } from '../../models'
@@ -35,7 +35,11 @@ const blankField = (): FieldDefinition => ({
   key: '', label: '', type: 'text', options: [], required: false,
 })
 
-export default function TemplatesTab() {
+interface Props {
+  initialStationId?: string | null
+}
+
+export default function TemplatesTab({ initialStationId }: Props = {}) {
   const templates       = useProcessesStore((s) => s.lotTemplates)
   const processes       = useProcessesStore((s) => s.processes)
   const stations        = useStationsStore((s) => s.stations)
@@ -49,6 +53,15 @@ export default function TemplatesTab() {
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<LotTemplate | null>(null)
+
+  // Deep-link from merge station error banner: open create modal pre-populated
+  useEffect(() => {
+    if (initialStationId) {
+      setForm({ ...blank(), startStationId: initialStationId })
+      setCreating(true)
+      setError(null)
+    }
+  }, [initialStationId])
 
   const openCreate = () => { setForm(blank()); setCreating(true); setError(null) }
   const openEdit   = (t: LotTemplate) => { setForm(templateToForm(t)); setEditing(t); setError(null) }

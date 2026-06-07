@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { color, font, size } from '../../theme/tokens'
 import StationsTab   from './StationsTab'
 import ProcessesTab  from './ProcessesTab'
@@ -17,7 +18,9 @@ const TABS: { id: Tab; label: string }[] = [
 ]
 
 export default function SettingsView() {
-  const [tab, setTab] = useState<Tab>('stations')
+  const [searchParams] = useSearchParams()
+  const [tab, setTab]  = useState<Tab>((searchParams.get('tab') as Tab) ?? 'stations')
+  const initialStation = searchParams.get('station')
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -60,7 +63,7 @@ export default function SettingsView() {
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {tab === 'stations'  && <StationsTab  />}
         {tab === 'processes' && <ProcessesTab />}
-        {tab === 'templates' && <TemplatesTab />}
+        {tab === 'templates' && <TemplatesTab initialStationId={initialStation} />}
         {tab === 'map'       && <MapConfigTab />}
         {tab === 'global'    && <GlobalTab    />}
       </div>

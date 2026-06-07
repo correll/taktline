@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useMapSettingsStore } from '../../store'
 import { color, font, size } from '../../theme/tokens'
 import { FieldLabel, inputStyle, primaryBtn, secondaryBtn, dangerBtn, ErrorMsg } from './shared'
+import axios from 'axios'
 
 export default function MapConfigTab() {
   const settings  = useMapSettingsStore((s) => s.settings)
@@ -17,6 +18,7 @@ export default function MapConfigTab() {
   const [mapHeightPx,      setMapHeightPx]      = useState<number | null>(null)
   const [saving,           setSaving]           = useState(false)
   const [uploading,        setUploading]        = useState(false)
+  const [clearing,         setClearing]         = useState(false)
   const [error,            setError]            = useState<string | null>(null)
   const [saved,            setSaved]            = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -212,6 +214,34 @@ export default function MapConfigTab() {
             Upload a floor plan image to see it here as you adjust the scale.
           </div>
         )}
+
+        {/* ── Clear map data ── */}
+        <div style={{
+          marginTop: 'auto', paddingTop: size.sp4,
+          borderTop: `1px solid ${color.border}`,
+        }}>
+          <div style={{ fontSize: 10, color: color.textDim, marginBottom: size.sp2 }}>
+            DANGER ZONE
+          </div>
+          <button
+            onClick={async () => {
+              if (!window.confirm('Delete ALL stations, routes, processes, templates, and cards? This cannot be undone.')) return
+              setClearing(true)
+              setError(null)
+              try {
+                await axios.post('/api/admin/reset')
+                window.location.reload()
+              } catch (e) {
+                setError(String(e))
+                setClearing(false)
+              }
+            }}
+            disabled={clearing}
+            style={{ ...dangerBtn, width: '100%', justifyContent: 'center', opacity: clearing ? 0.6 : 1 }}
+          >
+            {clearing ? 'Clearing…' : '🗑 Clear Map Data'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -231,16 +261,20 @@ function FloorPlanBackground({
   onDimsCapture?: (w: number, h: number) => void
 }) {
   const imgRef = useRef<HTMLImageElement>(null)
+  // displayScale = (CSS pixels per raw pixel) for the preview image
+  const [displayScale, setDisplayScale] = useState(1)
 
   const handleLoad = useCallback(() => {
     const img = imgRef.current
-    if (!img || !onDimsCapture) return
-    // Compute actual rendered image area within objectFit:contain
-    const ar  = img.naturalWidth  / img.naturalHeight
-    const acr = img.offsetWidth   / img.offsetHeight
-    const w   = ar >= acr ? img.offsetWidth                    : Math.round(img.offsetHeight * ar)
-    const h   = ar >= acr ? Math.round(img.offsetWidth  / ar) : img.offsetHeight
-    onDimsCapture(w, h)
+    if (!img) return
+    // Save raw dimensions so mapWidthPx is screen-independent (= naturalWidth)
+    onDimsCapture?.(img.naturalWidth, img.naturalHeight)
+    // Compute how the image is actually rendered in the preview container
+    // (objectFit:contain — may be letterboxed)
+    const ar  = img.naturalWidth / img.naturalHeight
+    const acr = img.offsetWidth  / img.offsetHeight
+    const renderedW = ar >= acr ? img.offsetWidth : Math.round(img.offsetHeight * ar)
+    setDisplayScale(img.naturalWidth > 0 ? renderedW / img.naturalWidth : 1)
   }, [onDimsCapture])
 
   if (!url) {
@@ -282,8 +316,8 @@ function FloorPlanBackground({
         onLoad={handleLoad}
         onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0' }}
       />
-      {/* Live scale bar driven by form state */}
-      <LiveScaleBar ppu={ppu} unit={unit} />
+      {/* Scale bar uses ppu scaled to CSS display pixels so it matches what you see */}
+      <LiveScaleBar ppu={ppu * displayScale} unit={unit} />
     </div>
   )
 }

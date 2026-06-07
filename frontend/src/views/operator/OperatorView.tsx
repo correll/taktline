@@ -9,6 +9,29 @@ import { mergeNodes } from '../../domain/graph'
 import { mergeApi } from '../../api/merge.api'
 import LotCard from '../../components/lots/LotCard'
 
+// Returns the total seconds from the most recent closed session for a card at a station.
+async function fetchDoneElapsed(stationId: string, cardId: string): Promise<number> {
+  try {
+    const sessions = await sessionsApi.list(stationId)
+    const last = sessions
+      .filter((s) => s.cardId === cardId && s.durationSec != null)
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())[0]
+    return last?.durationSec ?? 0
+  } catch {
+    return 0
+  }
+}
+
+function formatElapsed(totalSeconds: number): string {
+  const t  = Math.floor(totalSeconds)
+  const h  = Math.floor(t / 3600)
+  const m  = Math.floor((t % 3600) / 60)
+  const s  = t % 60
+  const mm = String(m).padStart(2, '0')
+  const ss = String(s).padStart(2, '0')
+  return h > 0 ? `${String(h).padStart(2, '0')}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
 // ─── Flow ─────────────────────────────────────────────────────────────────────
 // 1. pick-location  → pick your station
 // 2. pick-lot       → see lots at that station, tap one
@@ -18,12 +41,14 @@ import LotCard from '../../components/lots/LotCard'
 type Phase = 'pick-location' | 'pick-lot' | 'working' | 'done'
 
 export default function OperatorView() {
-  const [phase,     setPhase]     = useState<Phase>('pick-location')
-  const [stationId, setStationId] = useState<string | null>(null)
-  const [card,      setCard]      = useState<Card | null>(null)
-  const [session,   setSession]   = useState<WorkSession | null>(null)
-  const [elapsed,   setElapsed]   = useState(0)
+  const [phase,         setPhase]         = useState<Phase>('pick-location')
+  const [stationId,     setStationId]     = useState<string | null>(null)
+  const [card,          setCard]          = useState<Card | null>(null)
+  const [session,       setSession]       = useState<WorkSession | null>(null)
+  const [elapsed,       setElapsed]       = useState(0)
+  const [elapsedOffset, setElapsedOffset] = useState(0)
 
+  const cards       = useCardsStore((s) => s.cards)
   const routes      = useProcessesStore((s) => s.routes)
   const updateCard  = useCardsStore((s) => s.update)
 
@@ -32,21 +57,58 @@ export default function OperatorView() {
     [routes],
   )
 
+  const [selectedCard, setSelectedCard] = useState<Card | null>(null)
+  const [quantity,     setQuantity]     = useState(1)
+
   const reset = useCallback(() => {
     setPhase('pick-location')
     setStationId(null)
     setCard(null)
     setSession(null)
     setElapsed(0)
+    setElapsedOffset(0)
   }, [])
 
-  const selectLocation = useCallback((id: string) => {
+  // On mount: if there is exactly one open session, jump straight to working panel.
+  useEffect(() => {
+    sessionsApi.openSessions().then((sessions) => {
+      if (sessions.length !== 1) return
+      const s = sessions[0]
+      setStationId(s.stationId)
+      setCard(s.cardId ? (cards[s.cardId] ?? null) : null)
+      setSession(s)
+      setQuantity(s.quantity)
+      setPhase('working')
+    }).catch(() => {})
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectLocation = useCallback(async (id: string) => {
     setStationId(id)
+    // 1. Resume any in-progress (open) session at this station.
+    try {
+      const sessions = await sessionsApi.list(id, true)
+      if (sessions.length > 0) {
+        const s = sessions[0]
+        setCard(s.cardId ? (cards[s.cardId] ?? null) : null)
+        setSession(s)
+        setQuantity(s.quantity)
+        setPhase('working')
+        return
+      }
+    } catch { /* fall through */ }
+    // 2. Resume a card that was stopped but not yet moved (status = 'done').
+    const doneCard = Object.values(cards).find(
+      (c) => (c.bins[id]?.count ?? 0) > 0 && c.status === 'done'
+    )
+    if (doneCard) {
+      setCard(doneCard)
+      setQuantity(doneCard.bins[id]?.count ?? 1)
+      setElapsed(await fetchDoneElapsed(id, doneCard._id))
+      setPhase('done')
+      return
+    }
     setPhase('pick-lot')
-  }, [])
-
-  const [selectedCard, setSelectedCard] = useState<Card | null>(null)
-  const [quantity,     setQuantity]     = useState(1)
+  }, [cards])
 
   const handleSelectLot = useCallback((c: Card | null) => {
     setSelectedCard(c)
@@ -56,6 +118,13 @@ export default function OperatorView() {
   const handleStart = useCallback(async () => {
     if (!stationId) return
     const c = selectedCard
+    // Card already done (stopped but not moved) — skip straight to move screen.
+    if (c?.status === 'done') {
+      setCard(c)
+      setElapsed(await fetchDoneElapsed(stationId, c._id))
+      setPhase('done')
+      return
+    }
     setCard(c)
     const s = await sessionsApi.start({
       stationId,
@@ -73,6 +142,15 @@ export default function OperatorView() {
     if (card) await updateCard(card._id, { status: 'done' })
     setPhase('done')
   }, [session, card, quantity, updateCard])
+
+  const handleContinue = useCallback(async () => {
+    if (!stationId || !card) return
+    const s = await sessionsApi.start({ stationId, cardId: card._id, quantity })
+    await updateCard(card._id, { status: 'working' })
+    setSession(s)
+    setElapsedOffset(elapsed)   // timer resumes from where it left off
+    setPhase('working')
+  }, [stationId, card, quantity, elapsed, updateCard])
 
   const handleMove = useCallback(async (toStationId: string) => {
     if (!card || !stationId) return
@@ -140,6 +218,7 @@ export default function OperatorView() {
             stationId={stationId}
             quantity={quantity}
             elapsed={elapsed}
+            elapsedOffset={elapsedOffset}
             onSetQuantity={setQuantity}
             onElapsed={setElapsed}
             onStop={handleStop}
@@ -152,7 +231,8 @@ export default function OperatorView() {
             quantity={quantity}
             elapsed={elapsed}
             onMove={handleMove}
-            onBack={reset}
+            onContinue={handleContinue}
+            onBack={() => { setCard(null); setSession(null); setElapsed(0); setElapsedOffset(0); setPhase('pick-lot') }}
           />
         )}
       </div>
@@ -210,17 +290,18 @@ function LocationPicker({
           const lots      = lotCounts[s._id] ?? 0
           const active    = openByStation[s._id] ?? 0
           const isMerge   = mergeNodeSet.has(s._id)
-          const sideBorder = `1px solid ${active > 0 ? color.statusRunning + '60' : color.border}`
+          const accent    = s.color ?? color.bluePrimary
+          const sideBorder = `1px solid ${active > 0 ? color.statusRunning + '60' : lots > 0 ? accent + '50' : color.border}`
           return (
             <button key={s._id} onClick={() => onSelect(s._id)} style={{
-              background:   color.bgCard,
+              background:   lots > 0 ? `${accent}18` : color.bgCard,
               borderTop:    sideBorder,
               borderRight:  sideBorder,
               borderBottom: sideBorder,
-              borderLeft:   `4px solid ${s.color ?? color.bluePrimary}`,
+              borderLeft:   `4px solid ${accent}`,
               borderRadius: size.radiusMd, padding: size.sp5,
               cursor: 'pointer', textAlign: 'left',
-              boxShadow: active > 0 ? `0 0 12px ${color.statusRunning}18` : shadow.sm,
+              boxShadow: active > 0 ? `0 0 12px ${color.statusRunning}18` : lots > 0 ? `0 0 8px ${accent}20` : shadow.sm,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <div style={{ fontSize: 15, fontWeight: 600, color: color.textPrimary, flex: 1 }}>{s.name}</div>
@@ -354,35 +435,22 @@ function LotPicker({
       <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
         {selectableLots.map((c) => {
           const tmpl  = templates[c.lotTemplateId]
-          const count = c.bins[stationId]?.count ?? 0
           const isSel = selected?._id === c._id
-          const lotSideBorder = `1.5px solid ${isSel ? (tmpl?.color ?? color.bluePrimary) : color.border}`
+          const accent = tmpl?.color ?? color.bluePrimary
           return (
-            <button key={c._id} onClick={() => onSelectLot(isSel ? null : c)} style={{
-              background:   isSel ? `${tmpl?.color ?? color.bluePrimary}18` : color.bgCard,
-              borderTop:    lotSideBorder,
-              borderRight:  lotSideBorder,
-              borderBottom: lotSideBorder,
-              borderLeft:   `4px solid ${tmpl?.color ?? color.bluePrimary}`,
-              borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
-              cursor: 'pointer', textAlign: 'left',
-              display: 'flex', alignItems: 'center', gap: size.sp3,
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: color.textPrimary }}>
-                  {tmpl?.name ?? 'Unknown'}
-                  {c.lotNum != null && (
-                    <span style={{ color: color.textSecondary, fontFamily: font.mono, fontWeight: 400 }}> #{c.lotNum}</span>
-                  )}
-                </div>
-                {c.description && <div style={{ fontSize: 11, color: color.textDim, marginTop: 2 }}>{c.description}</div>}
-              </div>
-              <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
-                <div style={{ fontSize: 9, color: color.textDim }}>units</div>
-              </div>
-              {c.flagged && <span style={{ color: color.statusWarning, flexShrink: 0 }}>⚑</span>}
-            </button>
+            <div
+              key={c._id}
+              onClick={() => onSelectLot(isSel ? null : c)}
+              style={{
+                borderRadius: size.radiusMd,
+                outline: isSel ? `2px solid ${accent}` : '2px solid transparent',
+                outlineOffset: 2,
+                cursor: 'pointer',
+                transition: 'outline-color 0.12s',
+              }}
+            >
+              <LotCard card={c} template={tmpl} stationId={stationId} />
+            </div>
           )
         })}
 
@@ -468,27 +536,31 @@ function LotPicker({
         </div>
       )}
 
-      {/* START */}
-      {selected !== null && (
-        <button
-          onClick={doStart}
-          disabled={starting}
-          style={{
-            width: '100%', padding: `${size.sp5} 0`,
-            background:   starting ? `${color.statusRunning}40` : color.statusRunning,
-            border:       'none', borderRadius: size.radiusMd,
-            color:        '#fff', fontFamily: font.mono,
-            fontSize:     20, fontWeight: 700, letterSpacing: '0.12em',
-            cursor:       starting ? 'not-allowed' : 'pointer',
-            opacity:      starting ? 0.7 : 1,
-            boxShadow:    `0 4px 20px ${color.statusRunning}40`,
-            transition:   'all 0.15s ease',
-            marginTop:    size.sp2,
-          }}
-        >
-          {starting ? 'STARTING…' : 'START'}
-        </button>
-      )}
+      {/* START / MOVE */}
+      {selected !== null && (() => {
+        const isDone   = selected.status === 'done'
+        const btnColor = isDone ? color.bluePrimary : color.statusRunning
+        return (
+          <button
+            onClick={doStart}
+            disabled={starting}
+            style={{
+              width: '100%', padding: `${size.sp5} 0`,
+              background:   starting ? `${btnColor}40` : btnColor,
+              border:       'none', borderRadius: size.radiusMd,
+              color:        '#fff', fontFamily: font.mono,
+              fontSize:     20, fontWeight: 700, letterSpacing: '0.12em',
+              cursor:       starting ? 'not-allowed' : 'pointer',
+              opacity:      starting ? 0.7 : 1,
+              boxShadow:    `0 4px 20px ${btnColor}40`,
+              transition:   'all 0.15s ease',
+              marginTop:    size.sp2,
+            }}
+          >
+            {isDone ? 'MOVE' : starting ? 'STARTING…' : 'START'}
+          </button>
+        )
+      })()}
     </div>
   )
 }
@@ -496,7 +568,7 @@ function LotPicker({
 // ─── Phase 3: Working + timer ─────────────────────────────────────────────────
 
 function WorkingPanel({
-  session, card, stationId, quantity, elapsed,
+  session, card, stationId, quantity, elapsed, elapsedOffset,
   onSetQuantity, onElapsed, onStop,
 }: {
   session:       WorkSession
@@ -504,6 +576,7 @@ function WorkingPanel({
   stationId:     string
   quantity:      number
   elapsed:       number
+  elapsedOffset: number
   onSetQuantity: (n: number) => void
   onElapsed:     (n: number) => void
   onStop:        () => void
@@ -519,21 +592,15 @@ function WorkingPanel({
   )
 
   useEffect(() => {
-    const tick = () => onElapsed(Math.max(0, differenceInSeconds(new Date(), startedAt)))
+    const tick = () => onElapsed(elapsedOffset + Math.max(0, differenceInSeconds(new Date(), startedAt)))
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [session.startedAt])
+  }, [session.startedAt, elapsedOffset])
 
-  const station = stations[stationId]
-  const tmpl    = card ? templates[card.lotTemplateId] : null
-
-  const h = Math.floor(elapsed / 3600)
-  const m = Math.floor((elapsed % 3600) / 60)
-  const s = elapsed % 60
-  const timeStr = h > 0
-    ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-    : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+  const station  = stations[stationId]
+  const tmpl     = card ? templates[card.lotTemplateId] : null
+  const timeStr  = formatElapsed(elapsed)
 
   const doStop = async () => { setStopping(true); try { await onStop() } finally { setStopping(false) } }
 
@@ -605,45 +672,36 @@ function WorkingPanel({
 // ─── Phase 4: Done — show elapsed, MOVE button ────────────────────────────────
 
 function DonePanel({
-  card, stationId, quantity, elapsed, onMove, onBack,
+  card, stationId, quantity, elapsed, onMove, onContinue, onBack,
 }: {
-  card:      Card | null
-  stationId: string
-  quantity:  number
-  elapsed:   number
-  onMove:    (toStationId: string) => void
-  onBack:    () => void
+  card:        Card | null
+  stationId:   string
+  quantity:    number
+  elapsed:     number
+  onMove:      (toStationId: string) => void
+  onContinue:  () => Promise<void>
+  onBack:      () => void
 }) {
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
   const routes    = useProcessesStore((s) => s.routes)
-  const [moving,  setMoving]  = useState(false)
-  const [toId,    setToId]    = useState('')
+  const [moving,     setMoving]     = useState(false)
+  const [continuing, setContinuing] = useState(false)
 
   const station = stations[stationId]
   const tmpl    = card ? templates[card.lotTemplateId] : null
 
-  const h = Math.floor(elapsed / 3600)
-  const m = Math.floor((elapsed % 3600) / 60)
-  const s = elapsed % 60
-  const timeStr = h > 0
-    ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-    : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+  const timeStr = formatElapsed(elapsed)
 
-  const destinations = useMemo(() => {
+  const nextStation = useMemo(() => {
     const ids = getValidDestinations(stationId, routes)
-    return ids.map((id) => stations[id]).filter(Boolean)
+    return ids.length > 0 ? stations[ids[0]] : null
   }, [stationId, routes, stations])
 
-  useEffect(() => {
-    if (destinations.length === 1) setToId(destinations[0]!._id)
-  }, [destinations])
-
   const doMove = async () => {
-    const dest = toId || (destinations.length === 1 ? destinations[0]!._id : '')
-    if (!dest) return
+    if (!nextStation) return
     setMoving(true)
-    try { await onMove(dest) } finally { setMoving(false) }
+    try { await onMove(nextStation._id) } finally { setMoving(false) }
   }
 
   return (
@@ -674,60 +732,49 @@ function DonePanel({
         </div>
       )}
 
-      {destinations.length > 1 && (
-        <div style={{ width: '100%', maxWidth: 320 }}>
-          <div style={{ fontSize: 10, fontFamily: font.mono, color: color.textDim, letterSpacing: '0.1em', marginBottom: 6 }}>
-            MOVE TO
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
-            {destinations.map((dest) => (
-              <button
-                key={dest!._id}
-                onClick={() => setToId(dest!._id)}
-                style={{
-                  background:   toId === dest!._id ? `${dest!.color ?? color.bluePrimary}18` : color.bgCard,
-                  border:       `1.5px solid ${toId === dest!._id ? (dest!.color ?? color.bluePrimary) : color.border}`,
-                  borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
-                  cursor: 'pointer', textAlign: 'left', color: color.textPrimary,
-                  fontSize: 13, fontWeight: toId === dest!._id ? 600 : 400,
-                }}
-              >
-                {dest!.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {destinations.length > 0 && (
+      {nextStation && (
         <button
           onClick={doMove}
-          disabled={moving || (!toId && destinations.length > 1)}
+          disabled={moving}
           style={{
             width: '100%', maxWidth: 320, padding: `${size.sp5} 0`,
-            background:   (moving || (!toId && destinations.length > 1))
-              ? `${color.bluePrimary}40`
-              : color.bluePrimary,
+            background:   moving ? `${color.bluePrimary}40` : color.bluePrimary,
             border: 'none', borderRadius: size.radiusMd,
             color: '#fff', fontFamily: font.mono,
             fontSize: 20, fontWeight: 700, letterSpacing: '0.12em',
-            cursor: (moving || (!toId && destinations.length > 1)) ? 'not-allowed' : 'pointer',
+            cursor: moving ? 'not-allowed' : 'pointer',
             boxShadow: `0 4px 20px ${color.bluePrimary}40`,
             transition: 'all 0.15s ease',
           }}
         >
-          {moving ? 'MOVING…' : destinations.length === 1
-            ? `MOVE → ${destinations[0]!.name}`
-            : 'MOVE'}
+          {moving ? 'MOVING…' : `MOVE → ${nextStation.name}`}
         </button>
       )}
+
+      <button
+        onClick={async () => { setContinuing(true); try { await onContinue() } finally { setContinuing(false) } }}
+        disabled={continuing}
+        style={{
+          width: '100%', maxWidth: 320, padding: `${size.sp4} 0`,
+          background:   continuing ? `${color.statusRunning}40` : 'transparent',
+          border:       `1px solid ${color.statusRunning}60`,
+          borderRadius: size.radiusMd,
+          color:        color.statusRunning, fontFamily: font.mono,
+          fontSize:     16, fontWeight: 700, letterSpacing: '0.1em',
+          cursor:       continuing ? 'not-allowed' : 'pointer',
+          opacity:      continuing ? 0.7 : 1,
+          transition:   'all 0.15s ease',
+        }}
+      >
+        {continuing ? 'STARTING…' : 'CONTINUE WORKING'}
+      </button>
 
       <button onClick={onBack} style={{
         background: 'none', border: `1px solid ${color.border}`,
         borderRadius: size.radius, color: color.textSecondary,
         cursor: 'pointer', fontSize: 12, padding: '6px 20px',
       }}>
-        Back to locations
+        Back to lot view
       </button>
     </div>
   )

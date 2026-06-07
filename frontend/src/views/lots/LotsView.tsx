@@ -6,7 +6,7 @@ import LotCard from '../../components/lots/LotCard'
 import CreateLotModal from '../../components/lots/CreateLotModal'
 import MoveLotModal from '../../components/lots/MoveLotModal'
 import LotDetailModal from '../../components/lots/LotDetailModal'
-import { mergeNodes } from '../../domain/graph'
+import { mergeNodes, computeColumnGroups, computeLanes, type BarSpan } from '../../domain/graph'
 import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { cardsApi } from '../../api/cards.api'
 import type { Card, Route } from '../../models'
@@ -60,6 +60,17 @@ function LockIcon({ open }: { open: boolean }) {
   )
 }
 
+// ─── Split icon ───────────────────────────────────────────────────────────────
+function SplitIcon() {
+  return (
+    <svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor" aria-hidden="true">
+      <rect x="0" y="0"   width="13" height="4.5" rx="1.2" />
+      <rect x="0" y="6.5" width="13" height="4.5" rx="1.2" />
+    </svg>
+  )
+}
+
+
 // ─── View ─────────────────────────────────────────────────────────────────────
 
 export default function LotsView() {
@@ -73,9 +84,18 @@ export default function LotsView() {
   const [activeMove,    setActiveMove]    = useState<ActiveMove | null>(null)
   const [activeDetail,  setActiveDetail]  = useState<ActiveDetail | null>(null)
 
-  // ─── Drag-and-drop state ───────────────────────────────────────────────────
-  const [unlocked, setUnlocked] = useState(false)
-  const [dragging, setDragging] = useState<DragState | null>(null)
+  // ─── Drag-and-drop / view-mode state ─────────────────────────────────────
+  const [unlocked,  setUnlocked]  = useState(false)
+  const [dragging,  setDragging]  = useState<DragState | null>(null)
+  const [splitMode, setSplitMode] = useState(() => {
+    try { return localStorage.getItem('lots-split') === '1' } catch { return false }
+  })
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('lots-groups')
+      return stored ? new Set<string>(JSON.parse(stored)) : new Set<string>()
+    } catch { return new Set<string>() }
+  })
 
   const validDropTargets = useMemo(
     () => dragging
@@ -107,28 +127,9 @@ export default function LotsView() {
     [routes],
   )
 
-  const topoOrder = useMemo(() => {
-    const outgoing: Record<string, string[]> = {}
-    const inDeg: Record<string, number> = {}
-    for (const s of Object.values(stations)) { outgoing[s._id] = []; inDeg[s._id] = 0 }
-    for (const r of Object.values(routes)) {
-      outgoing[r.load]?.push(r.unload)
-      inDeg[r.unload] = (inDeg[r.unload] ?? 0) + 1
-    }
-    const queue = Object.keys(inDeg).filter((id) => inDeg[id] === 0)
-    const order: string[] = []
-    while (queue.length > 0) {
-      const id = queue.shift()!
-      order.push(id)
-      for (const next of outgoing[id] ?? []) {
-        inDeg[next]--
-        if (inDeg[next] === 0) queue.push(next)
-      }
-    }
-    for (const id of Object.keys(stations)) {
-      if (!order.includes(id)) order.push(id)
-    }
-    return order
+  const { order: topoOrder, solidBars, dashedBars } = useMemo(() => {
+    const edgeList = Object.values(routes).map((r) => ({ load: r.load, unload: r.unload }))
+    return computeColumnGroups(edgeList, Object.keys(stations))
   }, [stations, routes])
 
   const columns = useMemo(() => {
@@ -142,6 +143,99 @@ export default function LotsView() {
         lots: cardList.filter((c) => (c.bins[station._id]?.count ?? 0) > 0),
       }))
   }, [cards, stations, topoOrder])
+
+  // ─── Group / collapse helpers ─────────────────────────────────────────────
+
+  const colById = useMemo(
+    () => new Map(columns.map((c) => [c.stationId, c])),
+    [columns],
+  )
+
+  // Segments = solid-bar groups (each segment has ≥ 2 columns).
+  const segments = useMemo(
+    () => solidBars.map((bar) => ({
+      key:        topoOrder[bar.start] ?? `seg-${bar.start}`,
+      stationIds: topoOrder.slice(bar.start, bar.end + 1),
+    })),
+    [solidBars, topoOrder],
+  )
+
+  // Render groups: each solid-bar segment becomes one group; remaining columns
+  // are singletons.  Groups are returned in topoOrder.
+  const renderGroupsData = useMemo(() => {
+    type RG = { key: string; stationIds: string[]; hasSolidBar: boolean }
+    const result: RG[] = []
+    const inSegment = new Set<string>()
+    for (const seg of segments) {
+      result.push({ key: seg.key, stationIds: seg.stationIds, hasSolidBar: true })
+      seg.stationIds.forEach((id) => inSegment.add(id))
+    }
+    for (const id of topoOrder) {
+      if (!inSegment.has(id)) result.push({ key: id, stationIds: [id], hasSolidBar: false })
+    }
+    result.sort((a, b) => topoOrder.indexOf(a.stationIds[0]) - topoOrder.indexOf(b.stationIds[0]))
+    return result
+  }, [segments, topoOrder])
+
+  // Source nodes and merge nodes show action buttons — always stay visible when collapsed.
+  const isActionStation = (stationId: string): boolean =>
+    mergeNodeSet.has(stationId) ||
+    !Object.values(routes).some((r) => r.unload === stationId)
+
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      try { localStorage.setItem('lots-groups', JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }
+
+  const collapseAllGroups = () => {
+    const keys = splitRows
+      ? splitRows.map((lane) => lane[0]?.stationId).filter((k): k is string => !!k)
+      : segments.map((s) => s.key)
+    const next = new Set(keys)
+    try { localStorage.setItem('lots-groups', JSON.stringify([...next])) } catch {}
+    setCollapsedGroups(next)
+  }
+
+  const expandAllGroups = () => {
+    try { localStorage.setItem('lots-groups', JSON.stringify([])) } catch {}
+    setCollapsedGroups(new Set<string>())
+  }
+
+  // ─── Split-mode lanes ─────────────────────────────────────────────────────
+  // One lane per source node = peak parallelism of the process.
+  // Each lane follows its source forward; post-merge segments extend the lane
+  // that first claims the merge node (first source in topological order).
+  const splitRows = useMemo(() => {
+    if (!splitMode || columns.length === 0) return null
+    const edgeList = Object.values(routes).map((r) => ({ load: r.load, unload: r.unload }))
+    const lanes    = computeLanes(edgeList, Object.keys(stations))
+    if (lanes.length === 0) return null
+    return lanes.map((lane) => lane.map((id) => colById.get(id)!).filter(Boolean))
+  }, [splitMode, columns, stations, routes, colById])
+
+  // ─── Column-item renderer (shared by normal and split layouts) ────────────
+  const renderColumnItem = (col: (typeof columns)[number]) => {
+    const { stationId, station, lots } = col
+    const isDropTarget = validDropTargets.has(stationId)
+    const props = {
+      stationId, station, lots, templates, routes,
+      unlocked, isDragging: dragging !== null, isDropTarget,
+      onDragStart: (cardId: string) => setDragging({ cardId, fromStationId: stationId }),
+      onDragEnd:   () => setDragging(null),
+      onDrop:      () => handleDrop(stationId),
+      onCreateLot: () => setCreateStation(stationId),
+      onOpenDetail: (card: Card) => setActiveDetail({ card, stationId }),
+      onMoveLot:   (card: Card) => setActiveMove({ card, fromStationId: stationId }),
+    }
+    return mergeNodeSet.has(stationId)
+      ? <MergeColumn  key={stationId} {...props} />
+      : <KanbanColumn key={stationId} {...props} />
+  }
 
   const totalCards = Object.values(cards).length
   const isDragging = dragging !== null
@@ -164,29 +258,72 @@ export default function LotsView() {
           {totalCards} lot{totalCards !== 1 ? 's' : ''} · {columns.length} location{columns.length !== 1 ? 's' : ''}
         </span>
 
-        {/* Lock / unlock drag mode */}
-        <button
-          onClick={() => { setUnlocked((u) => !u); setDragging(null) }}
-          style={{
-            marginLeft:   'auto',
-            display:      'flex',
-            alignItems:   'center',
-            gap:          5,
-            padding:      '4px 10px',
-            background:   unlocked ? '#F59E0B18' : 'transparent',
-            border:       `1px solid ${unlocked ? '#F59E0B60' : color.border}`,
-            borderRadius: size.radius,
-            color:        unlocked ? '#F59E0B' : color.textSecondary,
-            cursor:       'pointer',
-            fontSize:     11,
-            fontFamily:   font.mono,
-            letterSpacing:'0.06em',
-            transition:   'all 0.15s ease',
-          }}
-        >
-          <LockIcon open={unlocked} />
-          {unlocked ? 'LOCK' : 'DRAG'}
-        </button>
+        {/* Right-side controls */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: size.sp2 }}>
+          {(['FOLD', 'UNFOLD'] as const).map((label) => (
+            <button
+              key={label}
+              onClick={label === 'FOLD' ? collapseAllGroups : expandAllGroups}
+              title={label === 'FOLD' ? 'Collapse all groups' : 'Expand all groups'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 10px', background: 'transparent',
+                border: `1px solid ${color.border}`, borderRadius: size.radius,
+                color: color.textSecondary, cursor: 'pointer',
+                fontSize: 11, fontFamily: font.mono, letterSpacing: '0.06em',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            onClick={() => {
+              const next = !splitMode
+              setSplitMode(next)
+              try { localStorage.setItem('lots-split', next ? '1' : '0') } catch {}
+            }}
+            title="Stack parallel branches vertically"
+            style={{
+              display:       'flex',
+              alignItems:    'center',
+              gap:           5,
+              padding:       '4px 10px',
+              background:    splitMode ? `${color.bluePrimary}18` : 'transparent',
+              border:        `1px solid ${splitMode ? `${color.bluePrimary}60` : color.border}`,
+              borderRadius:  size.radius,
+              color:         splitMode ? color.bluePrimary : color.textSecondary,
+              cursor:        'pointer',
+              fontSize:      11,
+              fontFamily:    font.mono,
+              letterSpacing: '0.06em',
+              transition:    'all 0.15s ease',
+            }}
+          >
+            <SplitIcon />
+            SPLIT
+          </button>
+          <button
+            onClick={() => { setUnlocked((u) => !u); setDragging(null) }}
+            style={{
+              display:       'flex',
+              alignItems:    'center',
+              gap:           5,
+              padding:       '4px 10px',
+              background:    unlocked ? '#F59E0B18' : 'transparent',
+              border:        `1px solid ${unlocked ? '#F59E0B60' : color.border}`,
+              borderRadius:  size.radius,
+              color:         unlocked ? '#F59E0B' : color.textSecondary,
+              cursor:        'pointer',
+              fontSize:      11,
+              fontFamily:    font.mono,
+              letterSpacing: '0.06em',
+              transition:    'all 0.15s ease',
+            }}
+          >
+            <LockIcon open={unlocked} />
+            {unlocked ? 'LOCK' : 'DRAG'}
+          </button>
+        </div>
       </div>
 
       {columns.length === 0 ? (
@@ -200,53 +337,95 @@ export default function LotsView() {
           </span>
           <span style={{ fontSize: 11, color: color.textDim }}>Add locations in Settings</span>
         </div>
-      ) : (
+      ) : splitRows ? (
+        // ── Split mode: one row per source-node lane ───────────────────────
         <div style={{
-          flex:       1,
-          display:    'flex',
-          overflowX:  'auto',
-          overflowY:  'hidden',
-          padding:    size.sp4,
-          gap:        size.sp4,
-          alignItems: 'flex-start',
+          flex:          1,
+          display:       'flex',
+          flexDirection: 'column',
+          overflowX:     'hidden',
+          overflowY:     'auto',
         }}>
-          {columns.map(({ stationId, station, lots }) => {
-            const isDropTarget = validDropTargets.has(stationId)
-            const dragProps = {
-              unlocked,
-              isDragging,
-              isDropTarget,
-              onDragStart: (cardId: string) => setDragging({ cardId, fromStationId: stationId }),
-              onDragEnd:   () => setDragging(null),
-              onDrop:      () => handleDrop(stationId),
-            }
-            return mergeNodeSet.has(stationId) ? (
-              <MergeColumn
-                key={stationId}
-                stationId={stationId}
-                station={station}
-                lots={lots}
-                templates={templates}
-                routes={routes}
-                onOpenDetail={(card) => setActiveDetail({ card, stationId })}
-                onMoveLot={(card) => setActiveMove({ card, fromStationId: stationId })}
-                {...dragProps}
-              />
-            ) : (
-              <KanbanColumn
-                key={stationId}
-                stationId={stationId}
-                station={station}
-                lots={lots}
-                templates={templates}
-                routes={routes}
-                onCreateLot={() => setCreateStation(stationId)}
-                onOpenDetail={(card) => setActiveDetail({ card, stationId })}
-                onMoveLot={(card) => setActiveMove({ card, fromStationId: stationId })}
-                {...dragProps}
-              />
+          {splitRows.map((lane, laneIdx) => {
+            const laneKey        = lane[0]?.stationId ?? `lane-${laneIdx}`
+            const isLaneCollapsed = collapsedGroups.has(laneKey)
+            const visibleLane    = isLaneCollapsed
+              ? lane.filter((col) => isActionStation(col.stationId))
+              : lane
+            return (
+              <React.Fragment key={laneIdx}>
+                {laneIdx > 0 && (
+                  <div style={{
+                    height:     8,
+                    flexShrink: 0,
+                    background: color.bgPanel,
+                    borderTop:  `1px solid ${color.border}`,
+                  }} />
+                )}
+                <div style={{
+                  display:       'flex',
+                  flexDirection: 'column',
+                  overflowX:     'auto',
+                  overflowY:     'hidden',
+                  flexShrink:    0,
+                }}>
+                  {lane.length >= 2 && (
+                    <LaneBar
+                      laneLength={visibleLane.length}
+                      collapsed={isLaneCollapsed}
+                      onClick={() => toggleGroup(laneKey)}
+                    />
+                  )}
+                  <div style={{
+                    display:    'flex',
+                    padding:    size.sp4,
+                    paddingTop: lane.length >= 2 ? 4 : size.sp4,
+                    gap:        size.sp4,
+                    alignItems: 'flex-start',
+                  }}>
+                    {visibleLane.map(renderColumnItem)}
+                  </div>
+                </div>
+              </React.Fragment>
             )
           })}
+        </div>
+      ) : (
+        // ── Normal mode: group-based layout, solid bars are collapse triggers ──
+        <div style={{
+          flex:       1,
+          overflowX:  'auto',
+          overflowY:  'hidden',
+          alignItems: 'flex-start',
+        }}>
+          <div style={{ display: 'flex', padding: size.sp4, gap: size.sp4, alignItems: 'flex-start' }}>
+            {renderGroupsData.map((group) => {
+              const isCollapsed = collapsedGroups.has(group.key)
+              const groupCols   = group.stationIds
+                .map((id) => colById.get(id))
+                .filter((c): c is (typeof columns)[0] => !!c)
+              const visibleCols = isCollapsed
+                ? groupCols.filter((col) => isActionStation(col.stationId))
+                : groupCols
+
+              if (!group.hasSolidBar) {
+                return visibleCols.length > 0 ? renderColumnItem(visibleCols[0]) : null
+              }
+
+              return (
+                <div key={group.key} style={{ display: 'flex', flexDirection: 'column' }}>
+                  <GroupBar
+                    columnCount={visibleCols.length}
+                    collapsed={isCollapsed}
+                    onClick={() => toggleGroup(group.key)}
+                  />
+                  <div style={{ display: 'flex', gap: size.sp4, alignItems: 'flex-start' }}>
+                    {visibleCols.map((col) => renderColumnItem(col))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -323,8 +502,9 @@ function KanbanColumn({
 }: KanbanColumnProps) {
   const [hovering,   setHovering]   = useState(false)
   const totalUnits  = lots.reduce((sum, c) => sum + (c.bins[stationId]?.count ?? 0), 0)
-  const hasOutgoing = Object.values(routes).some((r) => r.load  === stationId)
-  const hasIncoming = Object.values(routes).some((r) => r.unload === stationId)
+  const hasOutgoing    = Object.values(routes).some((r) => r.load   === stationId)
+  const hasIncoming    = Object.values(routes).some((r) => r.unload === stationId)
+  const isMergeStation = Object.values(routes).filter((r) => r.unload === stationId).length >= 2
   const accentColor = station.color ?? color.bluePrimary
 
   return (
@@ -415,20 +595,22 @@ function KanbanColumn({
         )}
       </div>
 
-      {/* Footer: create lot — only source nodes (no incoming routes) can originate lots */}
-      {!unlocked && !hasIncoming && (
+      {/* Footer: source nodes (no incoming) can create; merge stations can pull */}
+      {!unlocked && (!hasIncoming || isMergeStation) && (
         <div style={{ padding: size.sp2, borderTop: `1px solid ${color.border}`, flexShrink: 0 }}>
           <button
             onClick={onCreateLot}
             style={{
               width: '100%', background: 'transparent',
-              border: `1px dashed ${color.border}`, borderRadius: size.radius,
-              color: color.textDim, cursor: 'pointer', fontSize: 11, padding: '5px 0',
+              border: `1px dashed ${isMergeStation ? '#7C3AED80' : color.border}`,
+              borderRadius: size.radius,
+              color: isMergeStation ? '#A78BFA' : color.textDim,
+              cursor: 'pointer', fontSize: 11, padding: '5px 0',
             }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = color.textSecondary }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = color.textDim }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.75' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
           >
-            + create lot
+            {isMergeStation ? '⬇ pull precursors' : '+ create lot'}
           </button>
         </div>
       )}
@@ -436,12 +618,106 @@ function KanbanColumn({
   )
 }
 
+// ─── Branch group bars ────────────────────────────────────────────────────────
+// COL_W / COL_GAP must match the actual column widths and gap in the columns row.
+
+const COL_W   = 220
+const COL_GAP = 16   // px — matches size.sp4
+const UNIT    = COL_W + COL_GAP  // = 236
+
+// Clickable solid bar spanning n columns; used as a group collapse trigger in
+// normal mode.  Width = (n-1)×UNIT + COL_W which exactly matches n columns with
+// gap=COL_GAP between them (no outer padding on the group container).
+function GroupBar({
+  columnCount,
+  collapsed,
+  onClick,
+}: {
+  columnCount: number
+  collapsed:   boolean
+  onClick:     () => void
+}) {
+  if (columnCount < 1) return null
+  const width = (columnCount - 1) * UNIT + COL_W
+  const clr   = color.border
+  return (
+    <div
+      onClick={onClick}
+      title={collapsed ? 'Expand group' : 'Collapse group'}
+      style={{ position: 'relative', width, height: 28, flexShrink: 0, cursor: 'pointer' }}
+    >
+      <div style={{ position: 'absolute', top: 14, left: 0, width: '100%', height: 1.5, background: clr }} />
+      <div style={{ position: 'absolute', left:  0, top: 11, width: 1.5, height: 7, background: clr }} />
+      <div style={{ position: 'absolute', right: 0, top: 11, width: 1.5, height: 7, background: clr }} />
+      {collapsed && (
+        <span style={{
+          position: 'absolute', top: 7, left: 6,
+          fontSize: 9, color: color.textDim, userSelect: 'none',
+        }}>▶▶</span>
+      )}
+    </div>
+  )
+}
+
+function BarLine({ bar, top, dashed }: { bar: BarSpan; top: number; dashed: boolean }) {
+  const left  = 16 + bar.start * UNIT
+  const width = (bar.end - bar.start) * UNIT + COL_W
+  const clr   = dashed ? color.textDim : color.border
+  return (
+    <div style={{
+      position:   'absolute',
+      top,
+      left,
+      width,
+      height:     dashed ? 0 : 1.5,
+      background: dashed ? undefined : clr,
+      borderTop:  dashed ? `1.5px dashed ${clr}` : undefined,
+    }}>
+      <div style={{ position: 'absolute', left:  0, top: -3, width: 1.5, height: 7, background: clr }} />
+      <div style={{ position: 'absolute', right: 0, top: -3, width: 1.5, height: 7, background: clr }} />
+    </div>
+  )
+}
+
+// Clickable solid bar spanning all columns in a split-mode lane; also serves as
+// the lane's collapse trigger.
+function LaneBar({ laneLength, collapsed, onClick }: {
+  laneLength: number
+  collapsed?: boolean
+  onClick?:   () => void
+}) {
+  if (laneLength < 1) return null
+  const bar: BarSpan = { start: 0, end: laneLength - 1 }
+  const totalW = 16 + laneLength * UNIT
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        position: 'relative', width: totalW, height: 28, flexShrink: 0,
+        cursor: onClick ? 'pointer' : 'default',
+      }}
+    >
+      <BarLine bar={bar} top={14} dashed={false} />
+      {collapsed && (
+        <span style={{
+          position: 'absolute', top: 7, left: 22,
+          fontSize: 9, color: color.textDim, userSelect: 'none',
+        }}>▶▶</span>
+      )}
+    </div>
+  )
+}
+
 // ─── Merge station column ─────────────────────────────────────────────────────
 
+interface MergeColumnProps extends ColumnProps {
+  onCreateLot: () => void
+}
+
 function MergeColumn({
-  stationId, station, lots, templates, routes, onOpenDetail, onMoveLot,
+  stationId, station, lots, templates, routes, onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, onDragStart, onDragEnd, onDrop,
-}: ColumnProps) {
+}: MergeColumnProps) {
   const fetchAll    = useCardsStore((s) => s.fetchAll)
   const navigate    = useNavigate()
   const accentColor = station.color ?? '#8B5CF6'
@@ -645,6 +921,26 @@ function MergeColumn({
           </div>
         )}
       </div>
+
+      {/* Footer: pull precursors */}
+      {!unlocked && (
+        <div style={{ padding: size.sp2, borderTop: `1px solid ${color.border}`, flexShrink: 0 }}>
+          <button
+            onClick={onCreateLot}
+            style={{
+              width: '100%', background: 'transparent',
+              border: `1px dashed #7C3AED80`,
+              borderRadius: size.radius,
+              color: '#A78BFA',
+              cursor: 'pointer', fontSize: 11, padding: '5px 0',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.75' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
+          >
+            ⬇ pull precursors
+          </button>
+        </div>
+      )}
     </div>
   )
 }

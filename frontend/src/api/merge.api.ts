@@ -22,10 +22,26 @@ export interface MergeResult {
   createdCardId: string
 }
 
+export interface PullSourceInfo {
+  stationId:    string
+  stationName:  string
+  templateId:   string
+  templateName: string
+  quantity:     number
+}
+
+export interface PullResult {
+  sources:        PullSourceInfo[]
+  createdCardIds: string[]
+}
+
 export const mergeApi = {
   preview: (stationId: string): Promise<MergePreview> =>
     client.get(`/merge/${stationId}`),
 
   perform: (stationId: string): Promise<MergeResult> =>
     client.post(`/merge/${stationId}`, {}),
+
+  pull: (stationId: string, quantity: number): Promise<PullResult> =>
+    client.post(`/merge/${stationId}/pull`, { quantity }),
 }

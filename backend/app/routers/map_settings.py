@@ -1,4 +1,5 @@
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -42,11 +43,12 @@ async def upload_floor_plan(file: UploadFile = File(...), db=Depends(get_db)):
         raise HTTPException(400, "Only image files are accepted")
 
     suffix = Path(file.filename or "floor_plan.png").suffix or ".png"
-    dest = UPLOADS_DIR / f"floor_plan{suffix}"
+    ts   = int(time.time())
+    dest = UPLOADS_DIR / f"floor_plan_{ts}{suffix}"
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    url = f"/uploads/floor_plan{suffix}"
+    url = f"/uploads/floor_plan_{ts}{suffix}"
     await _get_or_create(db)
     await db.map_settings.update_one(
         {"_key": SINGLETON_KEY},
@@ -58,7 +60,7 @@ async def upload_floor_plan(file: UploadFile = File(...), db=Depends(get_db)):
 @router.put("/", response_model=MapSettings)
 async def update_map_settings(body: MapSettingsUpdate, db=Depends(get_db)):
     await _get_or_create(db)
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    patch = body.model_dump(exclude_unset=True)
     patch["updatedAt"] = utcnow()
     result = await db.map_settings.find_one_and_update(
         {"_key": SINGLETON_KEY},

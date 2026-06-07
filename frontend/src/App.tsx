@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react'
-import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
+import React, { useEffect, useRef } from 'react'
+import { Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom'
 import { connectWS, disconnectWS } from './api/ws'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore, useMapSettingsStore } from './store'
 import { color, font, size, shadow } from './theme/tokens'
@@ -31,10 +31,11 @@ export default function App() {
     <ToastProvider>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <Topbar wsConnected={wsConnected} />
+        <OrientationNavigator />
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <React.Suspense fallback={<LoadingPane />}>
             <Routes>
-              <Route path="/"          element={<Navigate to="/map" replace />} />
+              <Route path="/"          element={<PortraitAwareRedirect />} />
               <Route path="/map"       element={<MapView />} />
               <Route path="/lots"      element={<LotsView />} />
               <Route path="/operator"   element={<OperatorView />} />
@@ -116,6 +117,34 @@ function Topbar({ wsConnected }: { wsConnected: boolean }) {
       </div>
     </header>
   )
+}
+
+function isPortrait() {
+  return window.innerHeight > window.innerWidth
+}
+
+function PortraitAwareRedirect() {
+  return <Navigate to={isPortrait() ? '/operator' : '/map'} replace />
+}
+
+// Switches between /map and /operator automatically when orientation changes.
+// Does not interfere with /lots, /statistics, or /settings.
+function OrientationNavigator() {
+  const navigate    = useNavigate()
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
+
+  useEffect(() => {
+    const check = () => {
+      const path = window.location.pathname
+      if (isPortrait() && path === '/map')      navigateRef.current('/operator', { replace: true })
+      if (!isPortrait() && path === '/operator') navigateRef.current('/map',      { replace: true })
+    }
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  return null
 }
 
 function LoadingPane() {

@@ -32,6 +32,23 @@ class MergeResult(BaseModel):
     createdCardId: str
 
 
+class PullRequest(BaseModel):
+    quantity: int
+
+
+class PullSourceInfo(BaseModel):
+    stationId:    str
+    stationName:  str
+    templateId:   str
+    templateName: str
+    quantity:     int   # lots created at this source
+
+
+class PullResult(BaseModel):
+    sources:        List[PullSourceInfo]
+    createdCardIds: List[str]
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async def _source_template_ids(db, source_station_id: str) -> list[str]:
@@ -177,3 +194,74 @@ async def perform_merge(station_id: str, db=Depends(get_db)):
     result = await db.cards.insert_one(new_doc)
 
     return MergeResult(assemblies=assemblies, createdCardId=str(result.inserted_id))
+
+
+# ─── Pull: create precursor lots at all upstream source stations ──────────────
+
+async def _leaf_sources(db, station_id: str, multiplier: int = 1) -> list[dict]:
+    """Recursively find leaf stations (no incoming routes) upstream of station_id.
+    Returns list of {station_id, template, quantity} where quantity = multiplier × route.quantity.
+    """
+    incoming = await db.routes.find({"unload": station_id}).to_list(None)
+    if not incoming:
+        tmpl = await db.lot_templates.find_one({"startStationId": station_id})
+        if tmpl:
+            return [{"station_id": station_id, "template": tmpl, "quantity": multiplier}]
+        return []
+    results = []
+    for route in incoming:
+        route_qty = max(1, route.get("quantity", 1))
+        results.extend(await _leaf_sources(db, route["load"], multiplier * route_qty))
+    return results
+
+
+@router.post("/{station_id}/pull", response_model=PullResult, status_code=201)
+async def pull_for_merge(station_id: str, body: PullRequest, db=Depends(get_db)):
+    """Create precursor lots at every source station that feeds this merge station."""
+    if body.quantity < 1:
+        raise HTTPException(400, "quantity must be ≥ 1")
+
+    incoming = await db.routes.find({"unload": station_id}).to_list(None)
+    if len(incoming) < 2:
+        raise HTTPException(400, "Not a merge station")
+
+    # Determine processId from any route
+    process_id = incoming[0].get("processId", "")
+
+    sources = await _leaf_sources(db, station_id)
+    if not sources:
+        raise HTTPException(422, "No upstream source stations with templates found")
+
+    created_ids: list[str] = []
+    source_infos: list[PullSourceInfo] = []
+
+    for src in sources:
+        tmpl       = src["template"]
+        src_qty    = body.quantity * src["quantity"]
+        station_doc = await db.stations.find_one({"_id": __import__("bson").ObjectId(src["station_id"])})
+        station_name = station_doc["name"] if station_doc else src["station_id"]
+
+        new_doc = {
+            "lotTemplateId": str(tmpl["_id"]),
+            "processId":     process_id,
+            "lotNum":        None,
+            "totalQuantity": src_qty,
+            "bins":          {src["station_id"]: {"count": src_qty}},
+            "fields":        {},
+            "flagged":       False,
+            "description":   "",
+            "status":        "idle",
+            "createdAt":     utcnow(),
+            "updatedAt":     utcnow(),
+        }
+        result = await db.cards.insert_one(new_doc)
+        created_ids.append(str(result.inserted_id))
+        source_infos.append(PullSourceInfo(
+            stationId=src["station_id"],
+            stationName=station_name,
+            templateId=str(tmpl["_id"]),
+            templateName=tmpl.get("name", ""),
+            quantity=src_qty,
+        ))
+
+    return PullResult(sources=source_infos, createdCardIds=created_ids)

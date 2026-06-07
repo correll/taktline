@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .db.connection import connect_db, close_db, get_db
-from .routers import stations, routes, processes, lot_templates, cards, stats, sessions, map_settings, global_settings, merge
+from .routers import stations, routes, processes, lot_templates, cards, stats, sessions, map_settings, global_settings, merge, admin
 from .plugins.registry import plugin_registry
 from .models.machine_state import MachineState
 
@@ -88,6 +88,7 @@ app.include_router(sessions.router)
 app.include_router(map_settings.router)
 app.include_router(global_settings.router)
 app.include_router(merge.router)
+app.include_router(admin.router)
 
 # Serve uploaded floor plan files
 _UPLOADS_DIR = Path(__file__).parent.parent / "uploads"

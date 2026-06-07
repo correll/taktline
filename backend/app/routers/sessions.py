@@ -36,7 +36,12 @@ async def start_session(body: SessionCreate, db=Depends(get_db)):
         # Auto-close dangling session so the operator can always start fresh
         started = existing.get("startedAt")
         now     = utcnow()
-        duration = (now - started).total_seconds() if started else None
+        if started:
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            duration = (now - started).total_seconds()
+        else:
+            duration = None
         await db.sessions.update_one(
             {"_id": existing["_id"]},
             {"$set": {"endedAt": now, "durationSec": duration}},

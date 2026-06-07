@@ -198,10 +198,13 @@ function LocationPicker({ onSelect }: { onSelect: (id: string) => void }) {
         {list.map((s) => {
           const lots   = lotCounts[s._id] ?? 0
           const active = openByStation[s._id] ?? 0
+          const sideBorder = `1px solid ${active > 0 ? color.statusRunning + '60' : color.border}`
           return (
             <button key={s._id} onClick={() => onSelect(s._id)} style={{
               background:   color.bgCard,
-              border:       `1px solid ${active > 0 ? color.statusRunning + '60' : color.border}`,
+              borderTop:    sideBorder,
+              borderRight:  sideBorder,
+              borderBottom: sideBorder,
               borderLeft:   `4px solid ${s.color ?? color.bluePrimary}`,
               borderRadius: size.radiusMd, padding: size.sp5,
               cursor: 'pointer', textAlign: 'left',
@@ -265,10 +268,13 @@ function LotPicker({
           const tmpl  = templates[c.lotTemplateId]
           const count = c.bins[stationId]?.count ?? 0
           const isSel = selected?._id === c._id
+          const lotSideBorder = `1.5px solid ${isSel ? (tmpl?.color ?? color.bluePrimary) : color.border}`
           return (
             <button key={c._id} onClick={() => onSelectLot(isSel ? null : c)} style={{
               background:   isSel ? `${tmpl?.color ?? color.bluePrimary}18` : color.bgCard,
-              border:       `1.5px solid ${isSel ? (tmpl?.color ?? color.bluePrimary) : color.border}`,
+              borderTop:    lotSideBorder,
+              borderRight:  lotSideBorder,
+              borderBottom: lotSideBorder,
               borderLeft:   `4px solid ${tmpl?.color ?? color.bluePrimary}`,
               borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
               cursor: 'pointer', textAlign: 'left',

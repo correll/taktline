@@ -23,13 +23,8 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
   // Merge-destination templates (2+ incoming routes) are excluded — they come
   // from merge operations, not direct creation.
   const validTemplates = useMemo(() => {
-    const allRoutes = Object.values(routes)
-    return Object.values(templates).filter((t) => {
-      if (t.startStationId !== stationId) return false
-      const incomingCount = allRoutes.filter((r) => r.unload === stationId).length
-      return incomingCount < 2   // merge-destination stations: exclude
-    })
-  }, [templates, routes, stationId])
+    return Object.values(templates).filter((t) => t.startStationId === stationId)
+  }, [templates, stationId])
 
   const station = stations[stationId]
 
@@ -49,6 +44,7 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
         fields:        {},
         flagged:       false,
         description:   '',
+        status:        'idle',
       })
       onClose()
     } catch (e) {
@@ -82,7 +78,7 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
         gap:          size.sp4,
       }}>
         <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>
-          Create Lot — {station?.name ?? stationId}
+          Create Lot — <span style={{ color: color.textSecondary }}>{station?.name ?? stationId}</span>
         </div>
 
         {/* Template selector */}
@@ -102,7 +98,7 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
           </select>
           {validTemplates.length === 0 && (
             <span style={{ fontSize: 10, color: color.statusWarning }}>
-              No templates start at this station. Configure templates in Settings.
+              No templates start at this location. Configure templates in Settings.
             </span>
           )}
         </label>

@@ -17,7 +17,8 @@ class Station(TimestampedModel):
     adapterType: Optional[str] = None      # "mock" | "plc_modbus" | "plc_opc_ua" | "uav"
     adapterConfig: Dict[str, Any] = {}
     description: str = ""
-    color: Optional[str] = None            # hex colour for map rendering
+    color: Optional[str] = None
+    icon: Optional[str] = None             # lucide icon id, e.g. "Warehouse"
 
 
 class StationCreate(BaseModel):
@@ -27,6 +28,7 @@ class StationCreate(BaseModel):
     adapterConfig: Dict[str, Any] = {}
     description: str = ""
     color: Optional[str] = None
+    icon: Optional[str] = None
 
 
 class StationUpdate(BaseModel):
@@ -36,3 +38,4 @@ class StationUpdate(BaseModel):
     adapterConfig: Optional[Dict[str, Any]] = None
     description: Optional[str] = None
     color: Optional[str] = None
+    icon: Optional[str] = None

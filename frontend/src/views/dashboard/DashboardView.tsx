@@ -1,0 +1,334 @@
+import React, { useEffect, useState, useMemo } from 'react'
+import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } from '../../store'
+import { statsApi } from '../../api/cards.api'
+import { color, font, size, shadow } from '../../theme/tokens'
+import { STATUS_CSS } from '../../components/map/mapColors'
+import type { MachineStatus } from '../../models'
+import { formatDistanceToNow } from 'date-fns'
+
+type Overview = Awaited<ReturnType<typeof statsApi.overview>>
+
+// ─── Refresh interval ─────────────────────────────────────────────────────────
+const REFRESH_MS = 15_000
+
+export default function DashboardView() {
+  const [overview, setOverview] = useState<Overview | null>(null)
+  const [loading,  setLoading]  = useState(true)
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+
+  const stations  = useStationsStore((s) => s.stations)
+  const processes = useProcessesStore((s) => s.processes)
+  const cards     = useCardsStore((s) => s.cards)
+  const machines  = useMachinesStore((s) => s.states)
+
+  const fetchOverview = async () => {
+    try {
+      const data = await statsApi.overview()
+      setOverview(data)
+      setLastRefresh(new Date())
+    } catch { /* server may not be running yet */ }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchOverview()
+    const timer = setInterval(fetchOverview, REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Live stats derived from store (always up-to-date without polling)
+  const liveStats = useMemo(() => {
+    const cardList = Object.values(cards)
+    const totalLots  = cardList.length
+    const flagged    = cardList.filter((c) => c.flagged).length
+    const totalUnits = cardList.reduce((s, c) =>
+      s + Object.values(c.bins).reduce((b, bin) => b + bin.count, 0), 0)
+
+    const statusCounts: Record<string, number> = {}
+    for (const ms of Object.values(machines)) {
+      statusCounts[ms.status] = (statusCounts[ms.status] ?? 0) + 1
+    }
+
+    return { totalLots, flagged, totalUnits, statusCounts }
+  }, [cards, machines])
+
+  // Lots per station derived live from cards store
+  const lotsPerStation = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const c of Object.values(cards)) {
+      for (const [sid, bin] of Object.entries(c.bins)) {
+        if (bin.count > 0) m[sid] = (m[sid] ?? 0) + 1
+      }
+    }
+    return m
+  }, [cards])
+
+  const stationList = Object.values(stations).sort((a, b) =>
+    (lotsPerStation[b._id] ?? 0) - (lotsPerStation[a._id] ?? 0)
+  )
+  const maxLotsAtStation = Math.max(1, ...stationList.map((s) => lotsPerStation[s._id] ?? 0))
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{
+        padding:      `${size.sp3} ${size.sp6}`,
+        borderBottom: `1px solid ${color.border}`,
+        display:      'flex',
+        alignItems:   'center',
+        gap:          size.sp4,
+        flexShrink:   0,
+      }}>
+        <span style={{ fontSize: 12, fontFamily: font.mono, color: color.textSecondary, letterSpacing: '0.1em' }}>
+          DASHBOARD
+        </span>
+        <span style={{ fontSize: 11, color: color.textDim }}>
+          refreshes every 15s · last {formatDistanceToNow(lastRefresh, { addSuffix: true })}
+        </span>
+        <button
+          onClick={fetchOverview}
+          style={{
+            marginLeft:   'auto',
+            background:   'none',
+            border:       `1px solid ${color.border}`,
+            borderRadius: size.radius,
+            color:        color.textSecondary,
+            cursor:       'pointer',
+            fontSize:     11,
+            padding:      '3px 10px',
+          }}
+        >
+          ↻ Refresh
+        </button>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: size.sp6 }}>
+        {/* KPI tiles */}
+        <div style={{
+          display:             'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+          gap:                 size.sp4,
+          marginBottom:        size.sp6,
+        }}>
+          <KpiTile label="Total Lots"    value={liveStats.totalLots}  />
+          <KpiTile label="Total Units"   value={liveStats.totalUnits} />
+          <KpiTile label="Flagged"       value={liveStats.flagged}    accent={liveStats.flagged > 0 ? color.statusWarning : undefined} />
+          <KpiTile label="Stations"      value={stationList.length}   />
+          <KpiTile label="Processes"     value={Object.values(processes).length} />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: size.sp6 }}>
+
+          {/* Station queue depth */}
+          <Panel label="LOTS BY STATION">
+            {stationList.length === 0 ? (
+              <Empty />
+            ) : (
+              stationList.slice(0, 12).map((s) => {
+                const cnt = lotsPerStation[s._id] ?? 0
+                const pct = cnt / maxLotsAtStation
+                const ms  = machines[s._id]
+                const st  = (ms?.status ?? 'offline') as MachineStatus
+                return (
+                  <div key={s._id} style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <span style={{ fontSize: 12, color: color.textPrimary }}>{s.name}</span>
+                      <span style={{ fontSize: 11, color: color.textDim, fontFamily: font.mono }}>
+                        {cnt} lot{cnt !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div style={{ background: color.bgCard, borderRadius: size.radiusFull, height: 6, overflow: 'hidden' }}>
+                      <div style={{
+                        width:        `${pct * 100}%`,
+                        height:       '100%',
+                        background:   s.color ?? STATUS_CSS[st] ?? color.bluePrimary,
+                        borderRadius: size.radiusFull,
+                        transition:   'width 0.4s ease',
+                      }} />
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </Panel>
+
+          {/* Machine status summary */}
+          <Panel label="MACHINE STATUS">
+            {Object.values(machines).length === 0 ? (
+              <Empty msg="No machines with adapters" />
+            ) : (
+              <MachineStatusGrid machines={machines} />
+            )}
+          </Panel>
+
+          {/* Moves over time (last 24h) — only shown after stats load */}
+          {overview && (
+            <Panel label="MOVES — LAST 24 HOURS" wide>
+              <SparklineChart
+                data={overview.movesPerHour.map((d) => d.moves)}
+                labels={overview.movesPerHour.map((d) =>
+                  d.hoursAgo === 0 ? 'now' : d.hoursAgo === 1 ? '1h' : `${d.hoursAgo}h`
+                )}
+              />
+            </Panel>
+          )}
+
+          {/* Lots per process */}
+          <Panel label="LOTS BY PROCESS">
+            {Object.values(processes).length === 0 ? (
+              <Empty />
+            ) : (
+              Object.values(processes)
+                .map((p) => ({ p, count: overview?.lotsPerProcess?.[p._id] ?? 0 }))
+                .sort((a, b) => b.count - a.count)
+                .map(({ p, count }) => (
+                  <div key={p._id} style={{
+                    display:        'flex',
+                    justifyContent: 'space-between',
+                    padding:        `${size.sp2} 0`,
+                    borderBottom:   `1px solid ${color.border}`,
+                    fontSize:       12,
+                  }}>
+                    <span style={{ color: color.textPrimary }}>{p.name}</span>
+                    <span style={{ color: color.textDim, fontFamily: font.mono }}>{count}</span>
+                  </div>
+                ))
+            )}
+          </Panel>
+
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function KpiTile({ label, value, accent }: { label: string; value: number; accent?: string }) {
+  return (
+    <div style={{
+      background:   color.bgCard,
+      border:       `1px solid ${color.border}`,
+      borderRadius: size.radiusMd,
+      padding:      `${size.sp4} ${size.sp5}`,
+      boxShadow:    shadow.sm,
+    }}>
+      <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, letterSpacing: '0.1em', marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 700, fontFamily: font.mono, color: accent ?? color.textPrimary }}>
+        {value.toLocaleString()}
+      </div>
+    </div>
+  )
+}
+
+function Panel({ label, children, wide }: { label: string; children: React.ReactNode; wide?: boolean }) {
+  return (
+    <div style={{
+      background:   color.bgCard,
+      border:       `1px solid ${color.border}`,
+      borderRadius: size.radiusMd,
+      padding:      size.sp5,
+      boxShadow:    shadow.sm,
+      gridColumn:   wide ? '1 / -1' : undefined,
+    }}>
+      <div style={{
+        fontSize:      9,
+        fontFamily:    font.mono,
+        letterSpacing: '0.14em',
+        color:         color.textDim,
+        marginBottom:  size.sp4,
+      }}>
+        {label}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Empty({ msg = 'No data' }: { msg?: string }) {
+  return (
+    <div style={{ fontSize: 11, color: color.textDim, padding: `${size.sp4} 0`, textAlign: 'center' }}>
+      {msg}
+    </div>
+  )
+}
+
+function MachineStatusGrid({ machines }: { machines: Record<string, import('../../models').MachineState> }) {
+  const STATUS_LABELS: Record<string, string> = {
+    running: 'Running', idle: 'Idle', warning: 'Warning', fault: 'Fault', offline: 'Offline',
+  }
+  const counts: Record<string, number> = {}
+  for (const ms of Object.values(machines)) {
+    counts[ms.status] = (counts[ms.status] ?? 0) + 1
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp3 }}>
+      {Object.entries(STATUS_LABELS).map(([st, label]) => {
+        const n = counts[st] ?? 0
+        return (
+          <div key={st} style={{ display: 'flex', alignItems: 'center', gap: size.sp3 }}>
+            <span className="status-dot" style={{ background: STATUS_CSS[st as MachineStatus] }} />
+            <span style={{ flex: 1, fontSize: 12, color: n > 0 ? color.textPrimary : color.textDim }}>{label}</span>
+            <span style={{ fontSize: 13, fontFamily: font.mono, color: n > 0 ? STATUS_CSS[st as MachineStatus] : color.textDim, fontWeight: 600 }}>
+              {n}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SparklineChart({ data, labels }: { data: number[]; labels: string[] }) {
+  const h       = 80
+  const w       = 600
+  const max     = Math.max(1, ...data)
+  const barW    = w / data.length
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <svg viewBox={`0 0 ${w} ${h + 24}`} style={{ width: '100%', minWidth: 300, display: 'block' }}>
+        {data.map((v, i) => {
+          const bh   = (v / max) * h
+          const x    = i * barW
+          const fill = v > 0 ? color.bluePrimary : color.bgElevated
+          return (
+            <g key={i}>
+              <rect
+                x={x + 2} y={h - bh}
+                width={barW - 4} height={Math.max(2, bh)}
+                rx={2} fill={fill} opacity={0.85}
+              />
+              {(i % 4 === 0 || i === data.length - 1) && (
+                <text
+                  x={x + barW / 2} y={h + 16}
+                  textAnchor="middle"
+                  fontSize={8}
+                  fill={color.textDim}
+                  fontFamily={font.mono}
+                >
+                  {labels[i]}
+                </text>
+              )}
+              {v > 0 && (
+                <text
+                  x={x + barW / 2} y={h - bh - 4}
+                  textAnchor="middle"
+                  fontSize={7}
+                  fill={color.textSecondary}
+                  fontFamily={font.mono}
+                >
+                  {v}
+                </text>
+              )}
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}

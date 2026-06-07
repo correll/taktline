@@ -1,5 +1,4 @@
 import asyncio
-import random
 from typing import Dict, Any
 from ..models.machine_state import MachineState, StationCommand, MachineMetric
 from .base import StationAdapter
@@ -37,16 +36,6 @@ class MockAdapter(StationAdapter):
             stationId=self.station_id,
             status=self._status,  # type: ignore[arg-type]
             metrics={
-                "rpm": MachineMetric(
-                    value=random.randint(800, 1500) if self._running else 0,
-                    unit="RPM",
-                    label="Spindle Speed",
-                ),
-                "temp": MachineMetric(
-                    value=round(random.uniform(62, 96), 1) if self._running else 22.0,
-                    unit="°C",
-                    label="Temperature",
-                ),
                 "cycles": MachineMetric(
                     value=self._cycle_count,
                     unit="",

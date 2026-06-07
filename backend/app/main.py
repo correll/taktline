@@ -1,12 +1,14 @@
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .db.connection import connect_db, close_db, get_db
-from .routers import stations, routes, processes, lot_templates, cards
+from .routers import stations, routes, processes, lot_templates, cards, stats, sessions, map_settings, global_settings
 from .plugins.registry import plugin_registry
 from .models.machine_state import MachineState
 
@@ -81,6 +83,15 @@ app.include_router(routes.router)
 app.include_router(processes.router)
 app.include_router(lot_templates.router)
 app.include_router(cards.router)
+app.include_router(stats.router)
+app.include_router(sessions.router)
+app.include_router(map_settings.router)
+app.include_router(global_settings.router)
+
+# Serve uploaded floor plan files
+_UPLOADS_DIR = Path(__file__).parent.parent / "uploads"
+_UPLOADS_DIR.mkdir(exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(_UPLOADS_DIR)), name="uploads")
 
 
 @app.get("/health", tags=["meta"])

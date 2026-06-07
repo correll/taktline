@@ -12,6 +12,9 @@ interface ProcessesState {
   error:        string | null
 
   fetchAll:        ()                                              => Promise<void>
+  createProcess:   (body: Partial<Process>)                       => Promise<Process>
+  updateProcess:   (id: string, patch: Partial<Process>)          => Promise<Process>
+  deleteProcess:   (id: string)                                    => Promise<void>
   createRoute:     (body: Partial<Route>)                         => Promise<Route>
   updateRoute:     (id: string, patch: Partial<Route>)            => Promise<Route>
   deleteRoute:     (id: string)                                    => Promise<void>
@@ -46,6 +49,23 @@ export const useProcessesStore = create<ProcessesState>()(
         } catch (e) {
           set((s) => { s.loading = false; s.error = String(e) })
         }
+      },
+
+      createProcess: async (body) => {
+        const p = await processesApi.createProcess(body)
+        set((s) => { s.processes[p._id] = p })
+        return p
+      },
+
+      updateProcess: async (id, patch) => {
+        const p = await processesApi.updateProcess(id, patch)
+        set((s) => { s.processes[id] = p })
+        return p
+      },
+
+      deleteProcess: async (id) => {
+        await processesApi.deleteProcess(id)
+        set((s) => { delete s.processes[id] })
       },
 
       createRoute: async (body) => {

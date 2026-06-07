@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
 import { color, font, size, shadow } from '../../theme/tokens'
 import type { Card } from '../../models'
+import { getValidDestinations } from '../../views/lots/LotsView'
 
 interface Props {
   card:      Card
@@ -40,11 +41,9 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState<string | null>(null)
 
-  // Valid destinations: stations reachable via routes from this station
+  // Valid destinations: forward path up to the next merge point
   const destinations = useMemo(() => {
-    const ids = Object.values(routes)
-      .filter((r) => r.load === fromStationId)
-      .map((r) => r.unload)
+    const ids = getValidDestinations(fromStationId, routes)
     return ids.map((id) => stations[id]).filter(Boolean)
   }, [routes, fromStationId, stations])
 
@@ -54,7 +53,7 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
     setSaving(true)
     setError(null)
     try {
-      await updateCard(card._id, { bins: moveLotBins(card, fromStationId, toId, qty) })
+      await updateCard(card._id, { bins: moveLotBins(card, fromStationId, toId, qty), status: 'idle' })
       onClose()
     } catch (e) {
       setError(String(e))
@@ -82,7 +81,7 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
           Move Lot
         </div>
         <div style={{ fontSize: 12, color: color.textSecondary }}>
-          Moving from <strong style={{ color: color.textPrimary }}>{stations[fromStationId]?.name}</strong>
+          Moving from location <strong style={{ color: color.textPrimary }}>{stations[fromStationId]?.name}</strong>
           {' '}({fromCount} unit{fromCount !== 1 ? 's' : ''} available)
         </div>
 
@@ -91,14 +90,14 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
             DESTINATION
           </span>
           <select value={toId} onChange={(e) => setToId(e.target.value)} style={inputStyle}>
-            <option value="">— select station —</option>
+            <option value="">— select location —</option>
             {destinations.map((s) => (
               <option key={s!._id} value={s!._id}>{s!.name}</option>
             ))}
           </select>
           {destinations.length === 0 && (
             <span style={{ fontSize: 10, color: color.statusWarning }}>
-              No outgoing routes from this station.
+              No outgoing routes from this location.
             </span>
           )}
         </label>

@@ -21,6 +21,7 @@ export interface Station {
   adapterConfig: Record<string, unknown>
   description: string
   color: string | null
+  icon:  string | null
   createdAt: string
   updatedAt: string
 }
@@ -89,6 +90,7 @@ export interface Card {
   fields: Record<string, unknown>
   flagged: boolean
   description: string
+  status: 'idle' | 'working' | 'done'
   createdAt: string
   updatedAt: string
 }

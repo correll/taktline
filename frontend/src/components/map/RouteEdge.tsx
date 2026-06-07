@@ -6,15 +6,16 @@ import type { Route, Station } from '../../models'
 const DASH = 10
 const GAP  = 6
 const FLOW_SPEED = 0.6   // px per frame
-const ARROW_LEN  = 14
-const ARROW_HALF = 7
+const ARROW_LEN  = 4
+const ARROW_HALF = 2
 const LINE_COLOR = 0x2563EB
 const LINE_ALPHA  = 0.55
 
 interface Props {
-  route: Route
+  route:       Route
   fromStation: Station | undefined
   toStation:   Station | undefined
+  nodeSize:    number
 }
 
 function drawDashedLine(
@@ -30,7 +31,7 @@ function drawDashedLine(
   const ux = dx / len
   const uy = dy / len
   const period = DASH + GAP
-  let t = -(offset % period)
+  let t = (offset % period) - period
   while (t < len) {
     const s = Math.max(0, t)
     const e = Math.min(len, t + DASH)
@@ -42,7 +43,7 @@ function drawDashedLine(
   }
 }
 
-export default function RouteEdge({ route, fromStation, toStation }: Props) {
+export default function RouteEdge({ route, fromStation, toStation, nodeSize }: Props) {
   const gRef    = useRef<PIXI.Graphics>(null)
   const offset  = useRef(0)
 
@@ -51,15 +52,11 @@ export default function RouteEdge({ route, fromStation, toStation }: Props) {
     if (!g || !fromStation || !toStation) return
     g.clear()
 
-    const fw = fromStation.position.width  ?? 150
-    const fh = fromStation.position.height ?? 64
-    const tw = toStation.position.width    ?? 150
-    const th = toStation.position.height   ?? 64
-
-    const x1 = fromStation.position.x + fw / 2
-    const y1 = fromStation.position.y + fh / 2
-    const x2 = toStation.position.x   + tw / 2
-    const y2 = toStation.position.y   + th / 2
+    const half = nodeSize / 2
+    const x1 = fromStation.position.x + half
+    const y1 = fromStation.position.y + half
+    const x2 = toStation.position.x   + half
+    const y2 = toStation.position.y   + half
 
     const angle = Math.atan2(y2 - y1, x2 - x1)
 
@@ -81,7 +78,7 @@ export default function RouteEdge({ route, fromStation, toStation }: Props) {
     g.lineTo(x2 - ARROW_LEN * cos - ARROW_HALF * sin, y2 - ARROW_LEN * sin + ARROW_HALF * cos)
     g.closePath()
     g.endFill()
-  }, [fromStation, toStation])
+  }, [fromStation, toStation, nodeSize])
 
   // Initial draw
   useEffect(() => { redraw() }, [redraw])

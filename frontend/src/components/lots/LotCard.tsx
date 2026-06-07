@@ -7,6 +7,7 @@ interface Props {
   template:   LotTemplate | undefined
   stationId:  string
   onClick?:   () => void
+  onMove?:    () => void
 }
 
 // Time since a date string, e.g. "2h ago"

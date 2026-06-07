@@ -1,116 +1,199 @@
-import React, { useRef, useCallback, useState, useMemo } from 'react'
-import { Container, Graphics, Text } from '@pixi/react'
-import * as PIXI from 'pixi.js'
+import React, { useRef, useState, useCallback } from 'react'
+import {
+  Cog, Warehouse, Package, Wrench, FlaskConical, Truck, Layers,
+  Hammer, Scissors, Printer, Cpu, Thermometer, Box, Building2,
+  ScanSearch, ArrowLeftRight, Factory, Settings2,
+  type LucideIcon,
+} from 'lucide-react'
 import type { Station } from '../../models'
+import type { Viewport } from './MapCanvas'
 import { useStationsStore } from '../../store'
 
-export const NODE_W = 100
-export const NODE_H = 32
-const RADIUS = 4
+// ─── Icon registry ────────────────────────────────────────────────────────────
 
-// Accent bar color: green when lots are present, muted blue otherwise
-const COLOR_ACTIVE  = 0x10B981
-const COLOR_EMPTY   = 0x2D5B8E
-const COLOR_SELECTED= 0x3B82F6
-const BG_NORMAL     = 0x0D1B2E
-const BG_SELECTED   = 0x162845
+export const STATION_ICONS: { id: string; label: string; Icon: LucideIcon }[] = [
+  { id: 'Cog',           label: 'Machine',       Icon: Cog           },
+  { id: 'Factory',       label: 'Assembly',       Icon: Factory       },
+  { id: 'Warehouse',     label: 'Warehouse',      Icon: Warehouse     },
+  { id: 'Box',           label: 'Storage',        Icon: Box           },
+  { id: 'Package',       label: 'Packaging',      Icon: Package       },
+  { id: 'Truck',         label: 'Transport',      Icon: Truck         },
+  { id: 'Wrench',        label: 'Maintenance',    Icon: Wrench        },
+  { id: 'Hammer',        label: 'Fabrication',    Icon: Hammer        },
+  { id: 'Scissors',      label: 'Cutting',        Icon: Scissors      },
+  { id: 'Printer',       label: 'Printing',       Icon: Printer       },
+  { id: 'Cpu',           label: 'Automation',     Icon: Cpu           },
+  { id: 'Thermometer',   label: 'Heat treatment', Icon: Thermometer   },
+  { id: 'FlaskConical',  label: 'Lab / QC',       Icon: FlaskConical  },
+  { id: 'ScanSearch',    label: 'Inspection',     Icon: ScanSearch    },
+  { id: 'ArrowLeftRight',label: 'Transfer',       Icon: ArrowLeftRight},
+  { id: 'Layers',        label: 'Stacking',       Icon: Layers        },
+  { id: 'Building2',     label: 'Facility',       Icon: Building2     },
+  { id: 'Settings2',     label: 'Processing',     Icon: Settings2     },
+]
 
-interface Props {
-  station:      Station
-  lotCount:     number       // distinct lot cards currently at this station
-  selected:     boolean
-  onSelect:     () => void
-  onNodePointerDown: () => void
+const ICON_MAP = Object.fromEntries(STATION_ICONS.map(({ id, Icon }) => [id, Icon]))
+
+function getIcon(id: string | null): LucideIcon {
+  return (id && ICON_MAP[id]) ? ICON_MAP[id] : Cog
 }
 
-export default function StationNode({ station, lotCount, selected, onSelect, onNodePointerDown }: Props) {
+// ─── Station node (HTML overlay) ─────────────────────────────────────────────
+
+interface Props {
+  station:   Station
+  lotCount:  number
+  selected:  boolean
+  nodeSize:  number          // world-space side length in px
+  viewport:  Viewport
+  onSelect:  () => void
+}
+
+export default function StationNode({
+  station, lotCount, selected, nodeSize, viewport, onSelect,
+}: Props) {
   const updateStation = useStationsStore((s) => s.update)
 
-  const accentColor = selected ? COLOR_SELECTED : lotCount > 0 ? COLOR_ACTIVE : COLOR_EMPTY
-
-  const dragRef = useRef<{ px: number; py: number; sx: number; sy: number } | null>(null)
+  const dragRef  = useRef<{ cx: number; cy: number; ox: number; oy: number } | null>(null)
+  const didDrag  = useRef(false)
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null)
-  const pos = localPos ?? { x: station.position.x, y: station.position.y }
 
-  const drawNode = useCallback((g: PIXI.Graphics) => {
-    g.clear()
-    // Body
-    g.lineStyle(selected ? 1.5 : 1, accentColor, selected ? 1 : 0.6)
-    g.beginFill(selected ? BG_SELECTED : BG_NORMAL)
-    g.drawRoundedRect(0, 0, NODE_W, NODE_H, RADIUS)
-    g.endFill()
-    // Left accent bar
-    g.lineStyle(0)
-    g.beginFill(accentColor)
-    g.drawRoundedRect(0, 0, 3, NODE_H, RADIUS)
-    g.endFill()
-  }, [accentColor, selected])
+  const pos = localPos ?? station.position
+  const screenX    = pos.x * viewport.scale + viewport.x
+  const screenY    = pos.y * viewport.scale + viewport.y
+  const screenSize = nodeSize * viewport.scale
 
-  const nameStyle = useMemo(() => new PIXI.TextStyle({
-    fill: 0xC5D3E2,
-    fontSize: 10,
-    fontWeight: '500',
-    fontFamily: 'Inter, system-ui, sans-serif',
-    wordWrap: false,
-  }), [])
-
-  const countStyle = useMemo(() => new PIXI.TextStyle({
-    fill: lotCount > 0 ? 0x10B981 : 0x4A6080,
-    fontSize: 10,
-    fontWeight: '600',
-    fontFamily: '"JetBrains Mono", monospace',
-  }), [lotCount])
-
-  // Truncate name to fit in the node width
-  const displayName = station.name.length > 11 ? station.name.slice(0, 10) + '…' : station.name
-
-  const handlePointerDown = useCallback((e: PIXI.FederatedPointerEvent) => {
+  // All hooks must be called before any early return (Rules of Hooks)
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return
     e.stopPropagation()
-    onNodePointerDown()
-    dragRef.current = { px: e.globalX, py: e.globalY, sx: pos.x, sy: pos.y }
-  }, [pos, onNodePointerDown])
+    didDrag.current = false
+    dragRef.current = { cx: e.clientX, cy: e.clientY, ox: pos.x, oy: pos.y }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }, [pos])
 
-  const handlePointerMove = useCallback((e: PIXI.FederatedPointerEvent) => {
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragRef.current) return
-    setLocalPos({
-      x: dragRef.current.sx + (e.globalX - dragRef.current.px),
-      y: dragRef.current.sy + (e.globalY - dragRef.current.py),
-    })
-  }, [])
+    const dx = (e.clientX - dragRef.current.cx) / viewport.scale
+    const dy = (e.clientY - dragRef.current.cy) / viewport.scale
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) didDrag.current = true
+    setLocalPos({ x: dragRef.current.ox + dx, y: dragRef.current.oy + dy })
+  }, [viewport.scale])
 
   const handlePointerUp = useCallback(() => {
     if (!dragRef.current) return
-    if (localPos) {
+    if (didDrag.current && localPos) {
       updateStation(station._id, {
         position: { ...station.position, x: Math.round(localPos.x), y: Math.round(localPos.y) },
       })
+    } else if (!didDrag.current) {
+      onSelect()
     }
     dragRef.current = null
+    didDrag.current = false
     setLocalPos(null)
-  }, [station, localPos, updateStation])
+  }, [station, localPos, updateStation, onSelect])
 
-  const handleTap = useCallback((e: PIXI.FederatedPointerEvent) => {
-    e.stopPropagation()
-    if (!dragRef.current) onSelect()
-  }, [onSelect])
+  if (screenSize < 6) return null
+
+  const stationColor = station.color ?? '#2D5B8E'
+  const Icon = getIcon(station.icon)
+  const iconSize = Math.max(12, screenSize * 0.44)
+  const showLabel = screenSize >= 36
+
+  const borderWidth = selected ? 2.5 : 1.5
+  const bgOpacity   = selected ? 0.95 : 0.88
 
   return (
-    <Container
-      x={pos.x}
-      y={pos.y}
-      eventMode="static"
-      cursor="pointer"
-      pointerdown={handlePointerDown}
-      pointermove={handlePointerMove}
-      pointerup={handlePointerUp}
-      pointerupoutside={handlePointerUp}
-      pointertap={handleTap}
+    <div
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerUp}
+      style={{
+        position:     'absolute',
+        left:         screenX,
+        top:          screenY,
+        width:        screenSize,
+        height:       screenSize,
+        borderRadius: Math.max(4, screenSize * 0.08),
+        border:       `${borderWidth}px solid ${stationColor}`,
+        background:   `rgba(13,27,46,${bgOpacity})`,
+        boxShadow:    selected
+          ? `0 0 0 2px ${stationColor}55, 0 4px 16px rgba(0,0,0,0.5)`
+          : '0 2px 8px rgba(0,0,0,0.4)',
+        cursor:       'grab',
+        userSelect:   'none',
+        display:      'flex',
+        flexDirection: 'column',
+        alignItems:   'center',
+        justifyContent: 'center',
+        gap:          showLabel ? Math.max(1, screenSize * 0.04) : 0,
+        overflow:     'hidden',
+        pointerEvents: 'all',
+        // top accent stripe
+        boxSizing:    'border-box',
+      }}
     >
-      <Graphics draw={drawNode} />
-      {/* Name: padded past the accent bar */}
-      <Text text={displayName} style={nameStyle} x={8} y={11} />
-      {/* Lot count badge: right-aligned */}
-      <Text text={String(lotCount)} style={countStyle} x={NODE_W - 14} y={11} />
-    </Container>
+      {/* Top color stripe */}
+      <div style={{
+        position:  'absolute',
+        top:       0,
+        left:      0,
+        right:     0,
+        height:    Math.max(3, screenSize * 0.05),
+        background: stationColor,
+        opacity:   0.85,
+        borderRadius: `${Math.max(3, screenSize * 0.08)}px ${Math.max(3, screenSize * 0.08)}px 0 0`,
+      }} />
+
+      {/* Icon */}
+      <Icon
+        size={iconSize}
+        color={stationColor}
+        strokeWidth={1.5}
+        style={{ flexShrink: 0 }}
+      />
+
+      {/* Label */}
+      {showLabel && (
+        <span style={{
+          fontSize:    Math.max(8, Math.min(13, screenSize * 0.13)),
+          fontWeight:  600,
+          color:       '#C5D3E2',
+          fontFamily:  'Inter, system-ui, sans-serif',
+          textAlign:   'center',
+          lineHeight:  1.2,
+          maxWidth:    screenSize - 8,
+          overflow:    'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace:  screenSize > 80 ? 'normal' : 'nowrap',
+          padding:     '0 3px',
+        }}>
+          {station.name}
+        </span>
+      )}
+
+      {/* Lot count badge */}
+      {lotCount > 0 && (
+        <div style={{
+          position:     'absolute',
+          top:          Math.max(3, screenSize * 0.05) + 3,
+          right:        3,
+          background:   lotCount > 0 ? '#10B981' : '#2D5B8E',
+          color:        '#fff',
+          fontSize:     Math.max(7, Math.min(10, screenSize * 0.12)),
+          fontWeight:   700,
+          fontFamily:   '"JetBrains Mono", monospace',
+          borderRadius: 999,
+          padding:      '1px 5px',
+          lineHeight:   1.4,
+          minWidth:     16,
+          textAlign:    'center',
+        }}>
+          {lotCount}
+        </div>
+      )}
+    </div>
   )
 }

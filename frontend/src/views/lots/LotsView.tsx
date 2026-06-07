@@ -4,38 +4,99 @@ import { color, font, size } from '../../theme/tokens'
 import LotCard from '../../components/lots/LotCard'
 import CreateLotModal from '../../components/lots/CreateLotModal'
 import MoveLotModal from '../../components/lots/MoveLotModal'
-import type { Card } from '../../models'
+import LotDetailModal from '../../components/lots/LotDetailModal'
+import type { Card, Route } from '../../models'
 
-interface ActiveMove { card: Card; fromStationId: string }
+interface ActiveMove   { card: Card; fromStationId: string }
+interface ActiveDetail { card: Card; stationId: string }
+
+// ─── Routing helper ───────────────────────────────────────────────────────────
+// Returns all station IDs reachable forward from `fromStationId`,
+// up to and including the next merge point (node with >1 incoming routes).
+export function getValidDestinations(
+  fromStationId: string,
+  routes: Record<string, Route>,
+): string[] {
+  const outgoing: Record<string, string[]> = {}
+  const inDegree: Record<string, number>   = {}
+
+  for (const r of Object.values(routes)) {
+    if (!outgoing[r.load]) outgoing[r.load] = []
+    outgoing[r.load].push(r.unload)
+    inDegree[r.unload] = (inDegree[r.unload] ?? 0) + 1
+  }
+
+  const valid   = new Set<string>()
+  const visited = new Set<string>([fromStationId])
+  const queue   = [...(outgoing[fromStationId] ?? [])]
+
+  while (queue.length > 0) {
+    const sid = queue.shift()!
+    if (visited.has(sid)) continue
+    visited.add(sid)
+    valid.add(sid)
+    // Don't expand past merge nodes (they're valid targets, but paths stop there)
+    if ((inDegree[sid] ?? 0) > 1) continue
+    for (const next of outgoing[sid] ?? []) {
+      if (!visited.has(next)) queue.push(next)
+    }
+  }
+
+  return [...valid]
+}
+
+// ─── View ─────────────────────────────────────────────────────────────────────
 
 export default function LotsView() {
   const cards     = useCardsStore((s) => s.cards)
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
+  const routes    = useProcessesStore((s) => s.routes)
 
   const [createStation, setCreateStation] = useState<string | null>(null)
-  const [activeMove, setActiveMove]       = useState<ActiveMove | null>(null)
+  const [activeMove,    setActiveMove]    = useState<ActiveMove | null>(null)
+  const [activeDetail,  setActiveDetail]  = useState<ActiveDetail | null>(null)
 
-  // Build columns: one per station that has at least one lot, ordered by station name
-  const columns = useMemo(() => {
-    const cardList = Object.values(cards)
-    // Gather stationIds that have lots
-    const stationIds = new Set<string>()
-    for (const card of cardList) {
-      for (const [sid, bin] of Object.entries(card.bins)) {
-        if (bin.count > 0) stationIds.add(sid)
+  // Topological order: process start → end (left to right)
+  const topoOrder = useMemo(() => {
+    const outgoing: Record<string, string[]> = {}
+    const inDeg: Record<string, number> = {}
+    for (const s of Object.values(stations)) { outgoing[s._id] = []; inDeg[s._id] = 0 }
+    for (const r of Object.values(routes)) {
+      outgoing[r.load]?.push(r.unload)
+      inDeg[r.unload] = (inDeg[r.unload] ?? 0) + 1
+    }
+    const queue = Object.keys(inDeg).filter((id) => inDeg[id] === 0)
+    const order: string[] = []
+    while (queue.length > 0) {
+      const id = queue.shift()!
+      order.push(id)
+      for (const next of outgoing[id] ?? []) {
+        inDeg[next]--
+        if (inDeg[next] === 0) queue.push(next)
       }
     }
-    return [...stationIds]
-      .map((id) => ({
-        stationId: id,
-        station:   stations[id],
-        lots:      cardList.filter((c) => (c.bins[id]?.count ?? 0) > 0),
-      }))
-      .sort((a, b) => (a.station?.name ?? a.stationId).localeCompare(b.station?.name ?? b.stationId))
-  }, [cards, stations])
+    // Append any remaining (e.g. disconnected nodes)
+    for (const id of Object.keys(stations)) {
+      if (!order.includes(id)) order.push(id)
+    }
+    return order
+  }, [stations, routes])
 
-  const isEmpty = columns.length === 0
+  // All stations as columns (including empty ones)
+  const columns = useMemo(() => {
+    const cardList = Object.values(cards)
+    return topoOrder
+      .map((id) => stations[id])
+      .filter(Boolean)
+      .map((station) => ({
+        stationId: station._id,
+        station,
+        lots: cardList.filter((c) => (c.bins[station._id]?.count ?? 0) > 0),
+      }))
+  }, [cards, stations, topoOrder])
+
+  const totalCards = Object.values(cards).length
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -52,22 +113,20 @@ export default function LotsView() {
           LOTS
         </span>
         <span style={{ fontSize: 11, color: color.textDim }}>
-          {Object.values(cards).length} cards · {columns.length} active stations
+          {totalCards} lot{totalCards !== 1 ? 's' : ''} · {columns.length} location{columns.length !== 1 ? 's' : ''}
         </span>
       </div>
 
-      {isEmpty ? (
+      {columns.length === 0 ? (
         <div style={{
           flex: 1, display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center', gap: 12,
         }}>
           <span style={{ fontSize: 36, opacity: 0.15 }}>▤</span>
           <span style={{ fontFamily: font.mono, fontSize: 12, color: color.textDim, letterSpacing: '0.1em' }}>
-            NO LOTS IN PROGRESS
+            NO LOCATIONS YET
           </span>
-          <span style={{ fontSize: 11, color: color.textDim }}>
-            Create a lot from the Map view by selecting a station
-          </span>
+          <span style={{ fontSize: 11, color: color.textDim }}>Add locations in Settings</span>
         </div>
       ) : (
         <div style={{
@@ -83,10 +142,12 @@ export default function LotsView() {
             <KanbanColumn
               key={stationId}
               stationId={stationId}
-              stationName={station?.name ?? stationId}
+              station={station}
               lots={lots}
               templates={templates}
+              routes={routes}
               onCreateLot={() => setCreateStation(stationId)}
+              onOpenDetail={(card) => setActiveDetail({ card, stationId })}
               onMoveLot={(card) => setActiveMove({ card, fromStationId: stationId })}
             />
           ))}
@@ -103,21 +164,45 @@ export default function LotsView() {
           onClose={() => setActiveMove(null)}
         />
       )}
+      {activeDetail && (
+        <LotDetailModal
+          card={activeDetail.card}
+          onClose={() => setActiveDetail(null)}
+          onMove={(card, fromStationId) => {
+            setActiveDetail(null)
+            setActiveMove({ card, fromStationId })
+          }}
+        />
+      )}
     </div>
   )
 }
 
+// ─── Kanban column ────────────────────────────────────────────────────────────
+
 interface ColumnProps {
-  stationId:   string
-  stationName: string
-  lots:        Card[]
-  templates:   Record<string, import('../../models').LotTemplate>
-  onCreateLot: () => void
-  onMoveLot:   (card: Card) => void
+  stationId:    string
+  station:      import('../../models').Station
+  lots:         Card[]
+  templates:    Record<string, import('../../models').LotTemplate>
+  routes:       Record<string, Route>
+  onCreateLot:  () => void
+  onOpenDetail: (card: Card) => void
+  onMoveLot:    (card: Card) => void
 }
 
-function KanbanColumn({ stationId, stationName, lots, templates, onCreateLot, onMoveLot }: ColumnProps) {
+function KanbanColumn({
+  stationId, station, lots, templates, routes, onCreateLot, onOpenDetail, onMoveLot,
+}: ColumnProps) {
   const totalUnits = lots.reduce((sum, c) => sum + (c.bins[stationId]?.count ?? 0), 0)
+  const hasOutgoing = Object.values(routes).some((r) => r.load === stationId)
+  const accentColor = station.color ?? color.bluePrimary
+
+  const statusColors: Record<string, string> = {
+    idle:    color.textDim,
+    working: color.statusRunning,
+    done:    color.statusWarning,
+  }
 
   return (
     <div style={{
@@ -125,6 +210,7 @@ function KanbanColumn({ stationId, stationName, lots, templates, onCreateLot, on
       flexShrink:   0,
       background:   color.bgCard,
       border:       `1px solid ${color.border}`,
+      borderTop:    `3px solid ${accentColor}`,
       borderRadius: size.radiusMd,
       display:      'flex',
       flexDirection:'column',
@@ -132,74 +218,98 @@ function KanbanColumn({ stationId, stationName, lots, templates, onCreateLot, on
     }}>
       {/* Column header */}
       <div style={{
-        padding:      `${size.sp3} ${size.sp3} ${size.sp2}`,
+        padding:      `${size.sp3} ${size.sp4}`,
         borderBottom: `1px solid ${color.border}`,
-        display:      'flex',
-        alignItems:   'center',
-        gap:          size.sp2,
+        flexShrink:   0,
       }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize:     12,
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontWeight: 600, fontSize: 13, color: color.textPrimary }}>
+            {station.name}
+          </span>
+          <span style={{
+            background:   lots.length > 0 ? `${accentColor}22` : color.bgElevated,
+            color:        lots.length > 0 ? accentColor : color.textDim,
+            borderRadius: size.radiusFull,
+            padding:      '1px 8px',
+            fontSize:     11,
+            fontFamily:   font.mono,
             fontWeight:   600,
-            color:        color.textPrimary,
-            overflow:     'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace:   'nowrap',
           }}>
-            {stationName}
-          </div>
-          <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono }}>
-            {lots.length} card{lots.length !== 1 ? 's' : ''} · {totalUnits} unit{totalUnits !== 1 ? 's' : ''}
-          </div>
+            {lots.length}
+          </span>
         </div>
-        <button
-          onClick={onCreateLot}
-          title="Create lot at this station"
-          style={{
-            width:        20,
-            height:       20,
-            borderRadius: '50%',
-            background:   color.bgElevated,
-            border:       `1px solid ${color.border}`,
-            color:        color.textSecondary,
-            fontSize:     14,
-            lineHeight:   '18px',
-            cursor:       'pointer',
-            flexShrink:   0,
-            display:      'flex',
-            alignItems:   'center',
-            justifyContent: 'center',
-            padding:      0,
-          }}
-        >
-          +
-        </button>
+        {totalUnits > 0 && (
+          <div style={{ fontSize: 10, color: color.textDim, marginTop: 2, fontFamily: font.mono }}>
+            {totalUnits} unit{totalUnits !== 1 ? 's' : ''}
+          </div>
+        )}
       </div>
 
-      {/* Cards */}
-      <div style={{
-        overflowY: 'auto',
-        padding:   size.sp2,
-        display:   'flex',
-        flexDirection: 'column',
-        gap:       size.sp2,
-      }}>
-        {lots.length === 0 ? (
-          <div style={{ fontSize: 10, color: color.textDim, padding: size.sp2, textAlign: 'center' }}>
+      {/* Lot cards */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: size.sp2, display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+        {lots.map((card) => {
+          const tmpl = templates[card.lotTemplateId]
+          const statusDot = statusColors[card.status] ?? color.textDim
+          return (
+            <div key={card._id} style={{ position: 'relative' }}>
+              {/* Status indicator */}
+              {card.status !== 'idle' && (
+                <div style={{
+                  position:  'absolute',
+                  top:       6,
+                  right:     6,
+                  width:     6,
+                  height:    6,
+                  borderRadius: '50%',
+                  background: statusDot,
+                  zIndex:    1,
+                }} />
+              )}
+              <LotCard
+                card={card}
+                stationId={stationId}
+                template={tmpl}
+                onClick={() => onOpenDetail(card)}
+                onMove={hasOutgoing ? () => onMoveLot(card) : undefined}
+              />
+            </div>
+          )
+        })}
+        {lots.length === 0 && (
+          <div style={{
+            flex:       1,
+            display:    'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding:    size.sp5,
+            fontSize:   11,
+            color:      color.textDim,
+            fontStyle:  'italic',
+          }}>
             empty
           </div>
-        ) : (
-          lots.map((card) => (
-            <LotCard
-              key={card._id}
-              card={card}
-              template={templates[card.lotTemplateId]}
-              stationId={stationId}
-              onClick={() => onMoveLot(card)}
-            />
-          ))
         )}
+      </div>
+
+      {/* Footer: create lot */}
+      <div style={{ padding: size.sp2, borderTop: `1px solid ${color.border}`, flexShrink: 0 }}>
+        <button
+          onClick={onCreateLot}
+          style={{
+            width:        '100%',
+            background:   'transparent',
+            border:       `1px dashed ${color.border}`,
+            borderRadius: size.radius,
+            color:        color.textDim,
+            cursor:       'pointer',
+            fontSize:     11,
+            padding:      '5px 0',
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = color.textSecondary }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = color.textDim }}
+        >
+          + create lot
+        </button>
       </div>
     </div>
   )

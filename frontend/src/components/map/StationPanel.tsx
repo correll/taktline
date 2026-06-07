@@ -6,6 +6,7 @@ import { STATUS_CSS } from './mapColors'
 import LotCard from '../lots/LotCard'
 import CreateLotModal from '../lots/CreateLotModal'
 import MoveLotModal from '../lots/MoveLotModal'
+import LotDetailModal from '../lots/LotDetailModal'
 import type { Card, MachineStatus } from '../../models'
 
 interface Props {
@@ -19,8 +20,9 @@ export default function StationPanel({ stationId, onClose }: Props) {
   const allCards    = useCardsStore((s) => s.cards)
   const templates   = useProcessesStore((s) => s.lotTemplates)
 
-  const [showCreate, setShowCreate] = useState(false)
-  const [moveCard, setMoveCard]     = useState<Card | null>(null)
+  const [showCreate,  setShowCreate]  = useState(false)
+  const [moveCard,    setMoveCard]    = useState<Card | null>(null)
+  const [detailCard,  setDetailCard]  = useState<Card | null>(null)
 
   const cards = Object.values(allCards).filter(
     (c) => (c.bins[stationId]?.count ?? 0) > 0
@@ -127,7 +129,7 @@ export default function StationPanel({ stationId, onClose }: Props) {
 
           {!hasAdapter && (
             <div style={{ fontSize: 11, color: color.textDim, fontStyle: 'italic' }}>
-              No hardware adapter configured
+              No hardware adapter configured for this location
             </div>
           )}
         </Section>
@@ -171,7 +173,7 @@ export default function StationPanel({ stationId, onClose }: Props) {
         >
           {cards.length === 0 ? (
             <div style={{ fontSize: 11, color: color.textDim }}>
-              No lots here — press + to create one
+              No lots at this location — press + to create one
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
@@ -181,7 +183,7 @@ export default function StationPanel({ stationId, onClose }: Props) {
                   card={card}
                   template={templates[card.lotTemplateId]}
                   stationId={stationId}
-                  onClick={() => setMoveCard(card)}
+                  onClick={() => setDetailCard(card)}
                 />
               ))}
             </div>
@@ -195,6 +197,16 @@ export default function StationPanel({ stationId, onClose }: Props) {
       )}
       {moveCard && (
         <MoveLotModal card={moveCard} fromStationId={stationId} onClose={() => setMoveCard(null)} />
+      )}
+      {detailCard && (
+        <LotDetailModal
+          card={detailCard}
+          onClose={() => setDetailCard(null)}
+          onMove={(card, fromStationId) => {
+            setDetailCard(null)
+            setMoveCard(card)
+          }}
+        />
       )}
     </aside>
   )

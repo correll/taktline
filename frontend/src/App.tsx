@@ -1,41 +1,50 @@
 import React, { useEffect } from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
 import { connectWS, disconnectWS } from './api/ws'
-import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } from './store'
+import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore, useMapSettingsStore } from './store'
 import { color, font, size, shadow } from './theme/tokens'
+import { ToastProvider } from './components/Toast'
 
-const MapView      = React.lazy(() => import('./views/map/MapView'))
-const LotsView     = React.lazy(() => import('./views/lots/LotsView'))
-const SettingsView = React.lazy(() => import('./views/settings/SettingsView'))
+const MapView       = React.lazy(() => import('./views/map/MapView'))
+const LotsView      = React.lazy(() => import('./views/lots/LotsView'))
+const StatisticsView = React.lazy(() => import('./views/statistics/StatisticsView'))
+const OperatorView  = React.lazy(() => import('./views/operator/OperatorView'))
+const SettingsView  = React.lazy(() => import('./views/settings/SettingsView'))
 
 export default function App() {
-  const fetchStations  = useStationsStore((s) => s.fetchAll)
-  const fetchProcesses = useProcessesStore((s) => s.fetchAll)
-  const fetchCards     = useCardsStore((s) => s.fetchAll)
-  const wsConnected    = useMachinesStore((s) => s.connected)
+  const fetchStations   = useStationsStore((s) => s.fetchAll)
+  const fetchProcesses  = useProcessesStore((s) => s.fetchAll)
+  const fetchCards      = useCardsStore((s) => s.fetchAll)
+  const fetchMapConfig  = useMapSettingsStore((s) => s.fetch)
+  const wsConnected     = useMachinesStore((s) => s.connected)
 
   useEffect(() => {
     fetchStations()
     fetchProcesses()
     fetchCards()
+    fetchMapConfig()
     connectWS()
     return disconnectWS
   }, [])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Topbar wsConnected={wsConnected} />
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <React.Suspense fallback={<LoadingPane />}>
-          <Routes>
-            <Route path="/"         element={<Navigate to="/map" replace />} />
-            <Route path="/map"      element={<MapView />} />
-            <Route path="/lots"     element={<LotsView />} />
-            <Route path="/settings" element={<SettingsView />} />
-          </Routes>
-        </React.Suspense>
+    <ToastProvider>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <Topbar wsConnected={wsConnected} />
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          <React.Suspense fallback={<LoadingPane />}>
+            <Routes>
+              <Route path="/"          element={<Navigate to="/map" replace />} />
+              <Route path="/map"       element={<MapView />} />
+              <Route path="/lots"      element={<LotsView />} />
+              <Route path="/operator"   element={<OperatorView />} />
+              <Route path="/statistics" element={<StatisticsView />} />
+              <Route path="/settings"  element={<SettingsView />} />
+            </Routes>
+          </React.Suspense>
+        </div>
       </div>
-    </div>
+    </ToastProvider>
   )
 }
 
@@ -91,9 +100,11 @@ function Topbar({ wsConnected }: { wsConnected: boolean }) {
       {/* Nav */}
       <div style={{ width: 1, height: 20, background: color.border, margin: `0 ${size.sp2}` }} />
       <nav style={{ display: 'flex', gap: size.sp1 }}>
-        <NavLink to="/map"      style={navStyle}>Map</NavLink>
-        <NavLink to="/lots"     style={navStyle}>Lots</NavLink>
-        <NavLink to="/settings" style={navStyle}>Settings</NavLink>
+        <NavLink to="/map"        style={navStyle}>Map</NavLink>
+        <NavLink to="/lots"       style={navStyle}>Lots</NavLink>
+        <NavLink to="/operator"   style={navStyle}>Operator</NavLink>
+        <NavLink to="/statistics" style={navStyle}>Statistics</NavLink>
+        <NavLink to="/settings"   style={navStyle}>Settings</NavLink>
       </nav>
 
       {/* WebSocket status */}

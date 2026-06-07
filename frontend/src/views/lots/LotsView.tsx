@@ -96,6 +96,15 @@ export default function LotsView() {
       return stored ? new Set<string>(JSON.parse(stored)) : new Set<string>()
     } catch { return new Set<string>() }
   })
+  const [cardLimit, setCardLimit] = useState<number>(() => {
+    try { return parseInt(localStorage.getItem('lots-limit') ?? '3', 10) || 3 } catch { return 3 }
+  })
+  const [sortBy,  setSortBy]  = useState<'age' | 'units'>(() => {
+    try { return (localStorage.getItem('lots-sort') as 'age' | 'units') || 'age' } catch { return 'age' }
+  })
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => {
+    try { return (localStorage.getItem('lots-sort-dir') as 'asc' | 'desc') || 'asc' } catch { return 'asc' }
+  })
 
   const validDropTargets = useMemo(
     () => dragging
@@ -231,6 +240,9 @@ export default function LotsView() {
       onCreateLot: () => setCreateStation(stationId),
       onOpenDetail: (card: Card) => setActiveDetail({ card, stationId }),
       onMoveLot:   (card: Card) => setActiveMove({ card, fromStationId: stationId }),
+      cardLimit,
+      sortBy,
+      sortDir,
     }
     return mergeNodeSet.has(stationId)
       ? <MergeColumn  key={stationId} {...props} />
@@ -276,6 +288,97 @@ export default function LotsView() {
               {label}
             </button>
           ))}
+          {/* Divider */}
+          <div style={{ width: 1, height: 18, background: color.border }} />
+
+          {/* Sort-by buttons */}
+          {(['age', 'units'] as const).map((opt) => (
+            <button
+              key={opt}
+              onClick={() => {
+                setSortBy(opt)
+                try { localStorage.setItem('lots-sort', opt) } catch {}
+              }}
+              title={opt === 'age' ? 'Sort by creation date' : 'Sort by unit count'}
+              style={{
+                padding: '4px 8px', cursor: 'pointer',
+                background:   sortBy === opt ? `${color.bluePrimary}18` : 'transparent',
+                border:       `1px solid ${sortBy === opt ? `${color.bluePrimary}60` : color.border}`,
+                borderRadius: size.radius,
+                color:        sortBy === opt ? color.bluePrimary : color.textSecondary,
+                fontSize: 11, fontFamily: font.mono, letterSpacing: '0.06em',
+              }}
+            >
+              {opt === 'age' ? 'AGE' : 'UNITS'}
+            </button>
+          ))}
+
+          {/* Sort direction toggle */}
+          <button
+            onClick={() => {
+              const next = sortDir === 'asc' ? 'desc' : 'asc'
+              setSortDir(next)
+              try { localStorage.setItem('lots-sort-dir', next) } catch {}
+            }}
+            title={sortDir === 'asc' ? 'Ascending — click to reverse' : 'Descending — click to reverse'}
+            style={{
+              padding: '4px 7px', background: 'transparent',
+              border: `1px solid ${color.border}`, borderRadius: size.radius,
+              color: color.textSecondary, cursor: 'pointer', fontSize: 13, lineHeight: 1,
+            }}
+          >
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 18, background: color.border }} />
+
+          {/* Card limit stepper */}
+          <div
+            title="Max cards shown per column"
+            style={{
+              display: 'flex', alignItems: 'center',
+              border: `1px solid ${color.border}`, borderRadius: size.radius,
+              overflow: 'hidden',
+            }}
+          >
+            <button
+              onClick={() => {
+                const next = Math.max(1, cardLimit - 1)
+                setCardLimit(next)
+                try { localStorage.setItem('lots-limit', String(next)) } catch {}
+              }}
+              style={{
+                padding: '4px 8px', background: 'transparent', border: 'none',
+                borderRight: `1px solid ${color.border}`,
+                color: color.textSecondary, cursor: 'pointer',
+                fontSize: 13, lineHeight: 1, fontFamily: font.mono,
+              }}
+            >−</button>
+            <span style={{
+              fontSize: 11, fontFamily: font.mono, color: color.textPrimary,
+              minWidth: 22, textAlign: 'center', userSelect: 'none', padding: '0 2px',
+            }}>
+              {cardLimit}
+            </span>
+            <button
+              onClick={() => {
+                const next = Math.min(50, cardLimit + 1)
+                setCardLimit(next)
+                try { localStorage.setItem('lots-limit', String(next)) } catch {}
+              }}
+              style={{
+                padding: '4px 8px', background: 'transparent', border: 'none',
+                borderLeft: `1px solid ${color.border}`,
+                color: color.textSecondary, cursor: 'pointer',
+                fontSize: 13, lineHeight: 1, fontFamily: font.mono,
+              }}
+            >+</button>
+          </div>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 18, background: color.border }} />
+
           <button
             onClick={() => {
               const next = !splitMode
@@ -470,6 +573,10 @@ interface ColumnProps {
   onDragStart:  (cardId: string) => void
   onDragEnd:    () => void
   onDrop:       () => void
+  // Display
+  cardLimit:    number
+  sortBy:       'age' | 'units'
+  sortDir:      'asc' | 'desc'
 }
 
 // ─── Drop-zone styling helper ─────────────────────────────────────────────────
@@ -499,6 +606,7 @@ function KanbanColumn({
   stationId, station, lots, templates, routes,
   onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, onDragStart, onDragEnd, onDrop,
+  cardLimit, sortBy, sortDir,
 }: KanbanColumnProps) {
   const [hovering,   setHovering]   = useState(false)
   const totalUnits  = lots.reduce((sum, c) => sum + (c.bins[stationId]?.count ?? 0), 0)
@@ -506,6 +614,14 @@ function KanbanColumn({
   const hasIncoming    = Object.values(routes).some((r) => r.unload === stationId)
   const isMergeStation = Object.values(routes).filter((r) => r.unload === stationId).length >= 2
   const accentColor = station.color ?? color.bluePrimary
+
+  const displayLots = [...lots].sort((a, b) => {
+    const cmp = sortBy === 'age'
+      ? a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0
+      : (a.bins[stationId]?.count ?? 0) - (b.bins[stationId]?.count ?? 0)
+    return sortDir === 'asc' ? cmp : -cmp
+  }).slice(0, cardLimit)
+  const hiddenCount = lots.length - displayLots.length
 
   return (
     <div
@@ -564,7 +680,7 @@ function KanbanColumn({
 
       {/* Lot cards */}
       <div style={{ flex: 1, overflowY: 'auto', padding: size.sp2, display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
-        {lots.map((card) => (
+        {displayLots.map((card) => (
           <div
             key={card._id}
             draggable={unlocked}
@@ -585,6 +701,14 @@ function KanbanColumn({
             />
           </div>
         ))}
+        {hiddenCount > 0 && (
+          <div style={{
+            fontSize: 10, color: color.textDim, fontFamily: font.mono,
+            textAlign: 'center', padding: `${size.sp1} 0`, letterSpacing: '0.05em',
+          }}>
+            +{hiddenCount} more
+          </div>
+        )}
         {lots.length === 0 && (
           <div style={{
             flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -717,11 +841,20 @@ interface MergeColumnProps extends ColumnProps {
 function MergeColumn({
   stationId, station, lots, templates, routes, onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, onDragStart, onDragEnd, onDrop,
+  cardLimit, sortBy, sortDir,
 }: MergeColumnProps) {
   const fetchAll    = useCardsStore((s) => s.fetchAll)
   const navigate    = useNavigate()
   const accentColor = station.color ?? '#8B5CF6'
   const hasOutgoing = Object.values(routes).some((r) => r.load === stationId)
+
+  const displayLots = [...lots].sort((a, b) => {
+    const cmp = sortBy === 'age'
+      ? a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0
+      : (a.bins[stationId]?.count ?? 0) - (b.bins[stationId]?.count ?? 0)
+    return sortDir === 'asc' ? cmp : -cmp
+  }).slice(0, cardLimit)
+  const hiddenCount = lots.length - displayLots.length
 
   const [hovering,   setHovering]   = useState(false)
   const [preview,    setPreview]    = useState<MergePreview | null>(null)
@@ -891,7 +1024,7 @@ function MergeColumn({
 
       {/* Lot cards */}
       <div style={{ flex: 1, overflowY: 'auto', padding: size.sp2, display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
-        {lots.map((card) => (
+        {displayLots.map((card) => (
           <div
             key={card._id}
             draggable={unlocked}
@@ -912,6 +1045,14 @@ function MergeColumn({
             />
           </div>
         ))}
+        {hiddenCount > 0 && (
+          <div style={{
+            fontSize: 10, color: color.textDim, fontFamily: font.mono,
+            textAlign: 'center', padding: `${size.sp1} 0`, letterSpacing: '0.05em',
+          }}>
+            +{hiddenCount} more
+          </div>
+        )}
         {lots.length === 0 && (
           <div style={{
             flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',

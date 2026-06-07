@@ -24,3 +24,28 @@ Dashboards: if the browser window is in vertical orientation such as on a phone 
 
 Statistics: the process collects timing based on lot and per product on each station. Relevant metrics are: Takt-Time, the average time per product at each station, Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. total time, number of transport events when lot cards travel from one location to another and overal transport in meters. 
 
+# Engineering conventions
+
+## Datetime / timezone handling
+
+Motor (MongoDB async driver) returns Python `datetime` objects **without timezone info** (naive), even though MongoDB always stores in UTC. This causes two classes of bugs if not handled:
+
+1. **Arithmetic crashes**: subtracting a naive datetime from a UTC-aware `datetime.now(timezone.utc)` raises `TypeError: can't subtract offset-naive and offset-aware datetimes`.
+2. **Browser misparse**: Pydantic serializes naive datetimes without a `Z` or `+00:00` suffix. Browsers interpret bare ISO strings as **local time**, so a user in UTC-6 sees `startedAt` as 6 hours in the future, breaking any elapsed-time display.
+
+**Rule**: always normalize Motor-returned datetimes to UTC-aware before use. The canonical place is the `_to_session()` (and equivalent `_to_*()`) helper in each router:
+
+```python
+for field in ("startedAt", "endedAt"):
+    dt = d.get(field)
+    if isinstance(dt, datetime) and dt is not None and dt.tzinfo is None:
+        d[field] = dt.replace(tzinfo=timezone.utc)
+```
+
+**Frontend rule**: when parsing a datetime string received from the API, append `Z` if no timezone suffix is present, so the browser always treats it as UTC:
+
+```ts
+const iso = raw.endsWith('Z') || raw.includes('+') ? raw : raw + 'Z'
+const date = new Date(iso)
+```
+

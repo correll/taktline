@@ -315,6 +315,28 @@ SendGrid-specific. Set `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`,
 provider. `SENDGRID_API_KEY` remains as a one-variable shortcut: it fills in
 `smtp.sendgrid.net` with user `apikey` for you.
 
+**With Resend**, the API key is the SMTP *password* — there is no
+`RESEND_API_KEY` variable:
+
+```
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=587
+SMTP_USER=resend                                   # the literal string
+SMTP_PASSWORD=re_xxxxxxxxxxxxxxxxxxxx              # your API key goes here
+SMTP_FROM=Taktline <no-reply@taktline.com>
+```
+
+Set these in **Render → the `taktline` service → Environment** (the blueprint
+also prompts for them on first apply), and locally in `backend/.env`, which is
+gitignored. **Leave `SENDGRID_API_KEY` empty** — it takes precedence over the
+`SMTP_*` values, so a stray value there would send your Resend key to
+SendGrid's server and every email would fail.
+
+Until you have verified `taktline.com` in Resend, the only address it will let
+you send *from* is `onboarding@resend.dev`, and the only address it will send
+*to* is the one you signed up with — enough to prove the wiring works, not
+enough to invite anyone.
+
 **SendGrid's permanent free plan ended on 27 May 2025.** New accounts get a
 60-day trial (100 emails/day), then paid plans from about $19.95/month. Still a
 fine choice if you are already paying for it; a poor default now. Options with

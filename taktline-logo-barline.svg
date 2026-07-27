@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="196" height="34" viewBox="0 0 196 34" role="img" aria-label="Taktline">
+  <title>Taktline — barline lockup</title>
+  <g fill="currentColor">
+    <rect x="0" y="2" width="6" height="30" rx="1"/>
+    <rect x="24" y="2" width="6" height="30" rx="1"/>
+    <rect x="36" y="2" width="6" height="30" rx="1"/>
+    <rect x="48" y="2" width="6" height="30" rx="1"/>
+  </g>
+  <rect x="12" y="2" width="6" height="30" rx="1" fill="#D85A30"/>
+  <text x="74" y="26" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="27" font-weight="500" letter-spacing="-0.6" fill="currentColor">taktline</text>
+</svg>

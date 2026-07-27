@@ -39,8 +39,10 @@ export const mergeApi = {
   preview: (stationId: string): Promise<MergePreview> =>
     client.get(`/merge/${stationId}`),
 
-  perform: (stationId: string): Promise<MergeResult> =>
-    client.post(`/merge/${stationId}`, {}),
+  // No cardIds → auto mode (consume any available precursors);
+  // with cardIds → consume only from the worker-selected lot cards.
+  perform: (stationId: string, cardIds?: string[]): Promise<MergeResult> =>
+    client.post(`/merge/${stationId}`, cardIds && cardIds.length ? { cardIds } : {}),
 
   pull: (stationId: string, quantity: number): Promise<PullResult> =>
     client.post(`/merge/${stationId}/pull`, { quantity }),

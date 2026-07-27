@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { globalSettingsApi, type GlobalSettingsData } from '../api/globalSettings.api'
+import { globalSettingsApi, defaultWorkHours, type GlobalSettingsData } from '../api/globalSettings.api'
 
 interface GlobalSettingsState {
   settings: GlobalSettingsData
@@ -9,7 +9,7 @@ interface GlobalSettingsState {
 }
 
 export const useGlobalSettingsStore = create<GlobalSettingsState>((set) => ({
-  settings: { timezone: 'UTC' },
+  settings: { timezone: 'UTC', workHours: defaultWorkHours() },
   loading:  false,
 
   fetch: async () => {

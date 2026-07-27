@@ -18,9 +18,15 @@ export const cardsApi = {
   create: (body: Omit<Card, '_id' | 'createdAt' | 'updatedAt'>): Promise<Card> =>
     client.post('/cards/', body),
   update: (id: string, patch: Partial<Card>):  Promise<Card>          => client.put(`/cards/${id}`, patch),
+  setStatus: (id: string, status: 'idle' | 'working' | 'done'): Promise<Card> =>
+    client.patch(`/cards/${id}/status`, { status }),
   remove: (id: string):                         Promise<void>          => client.delete(`/cards/${id}`),
   move: (id: string, fromStationId: string, toStationId: string, quantity: number): Promise<Card> =>
     client.post(`/cards/${id}/move`, { fromStationId, toStationId, quantity }),
+  advance: (id: string, fromStationId: string, toStationId: string, quantity: number): Promise<Card> =>
+    client.post(`/cards/${id}/advance`, { fromStationId, toStationId, quantity }),
+  unmerge: (id: string, stationId: string, quantity: number): Promise<{ unmerged: number; createdCardIds: string[] }> =>
+    client.post(`/cards/${id}/unmerge`, { stationId, quantity }),
   getEvents: (id: string):                     Promise<CardEvent[]>   => client.get(`/cards/${id}/events`),
 }
 

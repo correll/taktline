@@ -65,7 +65,7 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
     <div
       style={{
         position: 'fixed', inset: 0,
-        background: 'rgba(6,14,30,0.75)',
+        background: color.backdrop,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 1000,
       }}
@@ -131,20 +131,20 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
 }
 
 const inputStyle: React.CSSProperties = {
-  background: '#0D1B2E', border: '1px solid #1E3A5F',
-  borderRadius: '4px', color: '#EBF1F8',
+  background: color.bgInput, border: `1px solid ${color.border}`,
+  borderRadius: '4px', color: color.textPrimary,
   padding: '6px 10px', fontSize: 13, outline: 'none', width: '100%',
 }
 const secondaryBtn: React.CSSProperties = {
   padding: '6px 16px', background: 'transparent',
-  border: '1px solid #1E3A5F', borderRadius: '4px',
-  color: '#8FA3BC', cursor: 'pointer', fontSize: 12,
+  border: `1px solid ${color.border}`, borderRadius: '4px',
+  color: color.textSecondary, cursor: 'pointer', fontSize: 12,
 }
 const primaryBtn = (disabled: boolean): React.CSSProperties => ({
   padding: '6px 16px',
-  background: disabled ? '#1D4ED830' : '#2563EB',
+  background: disabled ? '#993C1D30' : '#D85A30',
   border: 'none', borderRadius: '4px',
-  color: disabled ? '#4A6080' : '#fff',
+  color: disabled ? color.textDim : '#fff',
   cursor: disabled ? 'not-allowed' : 'pointer',
   fontSize: 12, fontWeight: 600,
 })

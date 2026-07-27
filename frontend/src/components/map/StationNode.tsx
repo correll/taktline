@@ -8,6 +8,7 @@ import {
 import type { Station } from '../../models'
 import type { Viewport } from './MapCanvas'
 import { useStationsStore } from '../../store'
+import { useRole } from '../../auth/useRole'
 
 // ─── Icon registry ────────────────────────────────────────────────────────────
 
@@ -34,11 +35,14 @@ export const STATION_ICONS: { id: string; label: string; Icon: LucideIcon }[] = 
 
 const ICON_MAP = Object.fromEntries(STATION_ICONS.map(({ id, Icon }) => [id, Icon]))
 
-function getIcon(id: string | null): LucideIcon {
+export function getStationIcon(id: string | null): LucideIcon {
   return (id && ICON_MAP[id]) ? ICON_MAP[id] : Cog
 }
+const getIcon = getStationIcon
 
 // ─── Station node (HTML overlay) ─────────────────────────────────────────────
+
+export type MapTool = 'select' | 'location' | 'route'
 
 interface Props {
   station:   Station
@@ -46,13 +50,21 @@ interface Props {
   selected:  boolean
   nodeSize:  number          // world-space side length in px
   viewport:  Viewport
+  tool:      MapTool
+  routeArmed: boolean         // this node is the locked source of an in-progress route
+  flashing?: boolean          // pulse to highlight an isolated-subgraph member
   onSelect:  () => void
+  onRouteAnchor: () => void   // route tool: clicked to become source / target
+  onContextMenu: (clientX: number, clientY: number) => void
 }
 
 export default function StationNode({
-  station, lotCount, selected, nodeSize, viewport, onSelect,
+  station, lotCount, selected, nodeSize, viewport, tool, routeArmed, flashing,
+  onSelect, onRouteAnchor, onContextMenu,
 }: Props) {
   const updateStation = useStationsStore((s) => s.update)
+  const nudgePosition = useStationsStore((s) => s.nudgePosition)
+  const { canEdit } = useRole()   // only admins may reposition stations
 
   const dragRef  = useRef<{ cx: number; cy: number; ox: number; oy: number } | null>(null)
   const didDrag  = useRef(false)
@@ -66,23 +78,35 @@ export default function StationNode({
   // All hooks must be called before any early return (Rules of Hooks)
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return
-    e.stopPropagation()
+    e.stopPropagation()                        // never let a node click pan the map
+    if (tool === 'route') return               // route tool: acts on click (up), no drag
     didDrag.current = false
     dragRef.current = { cx: e.clientX, cy: e.clientY, ox: pos.x, oy: pos.y }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  }, [pos])
+  }, [pos, tool])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragRef.current) return
+    if (!dragRef.current || !canEdit) return   // members can't drag-reposition
     const dx = (e.clientX - dragRef.current.cx) / viewport.scale
     const dy = (e.clientY - dragRef.current.cy) / viewport.scale
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) didDrag.current = true
-    setLocalPos({ x: dragRef.current.ox + dx, y: dragRef.current.oy + dy })
-  }, [viewport.scale])
+    const nx = dragRef.current.ox + dx
+    const ny = dragRef.current.oy + dy
+    setLocalPos({ x: nx, y: ny })
+    // Push the transient position into the store (no API call) so route edges
+    // and heat blobs track the node during the drag instead of snapping after.
+    nudgePosition(station._id, nx, ny)
+  }, [viewport.scale, canEdit, nudgePosition, station._id])
 
-  const handlePointerUp = useCallback(() => {
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    if (tool === 'route') {
+      // Only a real release anchors — NOT pointerleave, which would otherwise
+      // drop the in-progress route the instant the cursor leaves the source.
+      if (e.type === 'pointerup') onRouteAnchor()
+      return
+    }
     if (!dragRef.current) return
-    if (didDrag.current && localPos) {
+    if (canEdit && didDrag.current && localPos) {
       updateStation(station._id, {
         position: { ...station.position, x: Math.round(localPos.x), y: Math.round(localPos.y) },
       })
@@ -92,7 +116,14 @@ export default function StationNode({
     dragRef.current = null
     didDrag.current = false
     setLocalPos(null)
-  }, [station, localPos, updateStation, onSelect])
+  }, [station, localPos, updateStation, onSelect, canEdit, tool, onRouteAnchor])
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (!canEdit || tool === 'route') return
+    e.preventDefault()
+    e.stopPropagation()
+    onContextMenu(e.clientX, e.clientY)
+  }, [canEdit, tool, onContextMenu])
 
   if (screenSize < 6) return null
 
@@ -106,10 +137,12 @@ export default function StationNode({
 
   return (
     <div
+      className={flashing ? 'map-node-flash' : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
+      onContextMenu={handleContextMenu}
       style={{
         position:     'absolute',
         left:         screenX,
@@ -117,12 +150,14 @@ export default function StationNode({
         width:        screenSize,
         height:       screenSize,
         borderRadius: Math.max(4, screenSize * 0.08),
-        border:       `${borderWidth}px solid ${stationColor}`,
-        background:   `rgba(13,27,46,${bgOpacity})`,
-        boxShadow:    selected
-          ? `0 0 0 2px ${stationColor}55, 0 4px 16px rgba(0,0,0,0.5)`
-          : '0 2px 8px rgba(0,0,0,0.4)',
-        cursor:       'grab',
+        border:       `${routeArmed ? 2.5 : borderWidth}px solid ${routeArmed ? '#A78BFA' : stationColor}`,
+        background:   `rgba(var(--tk-map-node-bg-rgb), ${bgOpacity})`,
+        boxShadow:    routeArmed
+          ? '0 0 0 3px #A78BFA66, 0 4px 16px rgba(0,0,0,0.5)'
+          : selected
+            ? `0 0 0 2px ${stationColor}55, 0 4px 16px rgba(0,0,0,0.5)`
+            : '0 2px 8px rgba(0,0,0,0.4)',
+        cursor:       tool === 'route' ? 'crosshair' : 'grab',
         userSelect:   'none',
         display:      'flex',
         flexDirection: 'column',
@@ -160,7 +195,7 @@ export default function StationNode({
         <span style={{
           fontSize:    Math.max(8, Math.min(13, screenSize * 0.13)),
           fontWeight:  600,
-          color:       '#C5D3E2',
+          color:       'var(--tk-map-node-text)',
           fontFamily:  'Inter, system-ui, sans-serif',
           textAlign:   'center',
           lineHeight:  1.2,
@@ -180,7 +215,7 @@ export default function StationNode({
           position:     'absolute',
           top:          Math.max(3, screenSize * 0.05) + 3,
           right:        3,
-          background:   lotCount > 0 ? '#10B981' : '#2D5B8E',
+          background:   lotCount > 0 ? '#639922' : '#2D5B8E',
           color:        '#fff',
           fontSize:     Math.max(7, Math.min(10, screenSize * 0.12)),
           fontWeight:   700,

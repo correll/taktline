@@ -14,11 +14,23 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
   const stations    = useStationsStore((s) => s.stations)
   const createCard  = useCardsStore((s) => s.create)
   const fetchCards  = useCardsStore((s) => s.fetchAll)
+  const fetchProcesses = useProcessesStore((s) => s.fetchAll)
+  const createTemplate = useProcessesStore((s) => s.createTemplate)
 
-  // Merge station = ≥2 incoming routes
-  const isMergeStation = useMemo(
-    () => Object.values(routes).filter((r) => r.unload === stationId).length >= 2,
+  // Any station with upstream routes is a "pull" station: creating a lot here
+  // pulls precursors from the source queues (cascading back to raw materials).
+  // Only true source queues (no incoming routes) create lots directly.
+  const isPullStation = useMemo(
+    () => Object.values(routes).some((r) => r.unload === stationId),
     [routes, stationId],
+  )
+
+  // A station that still feeds something downstream is an *intermediate* node —
+  // not the end of the line. Pulling here builds work-in-process that then has
+  // to travel further; the recommended pull point is the finished-goods leaf.
+  const isIntermediate = useMemo(
+    () => isPullStation && Object.values(routes).some((r) => r.load === stationId),
+    [isPullStation, routes, stationId],
   )
 
   const validTemplates = useMemo(
@@ -39,22 +51,33 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
   const station = stations[stationId]
 
   const handleCreate = async () => {
-    if (!templateId) { setError('Select a template'); return }
+    // A template is only *required* when this source already has some to choose
+    // from; with none, we create a default one on the fly. Pulling never needs one.
+    if (!isPullStation && validTemplates.length > 0 && !templateId) { setError('Select a template'); return }
     setSaving(true)
     setError(null)
     try {
-      if (isMergeStation) {
-        // Pull precursor lots from upstream source stations
+      if (isPullStation) {
+        // Pull precursor lots from the upstream source queues (cascades to leaves).
+        // Refetch templates too — the pull auto-provisions source templates
+        // server-side; without them lots would display as "Unknown".
         const result = await mergeApi.pull(stationId, quantity)
-        await fetchCards()
+        await Promise.all([fetchCards(), fetchProcesses()])
         setPullResult(result.sources)
       } else {
-        const tmpl = templates[templateId]
-        if (!tmpl) return
+        let tid = templateId
+        let procId = tid ? (templates[tid]?.processId ?? null) : null
+        if (!tid) {
+          // No template here yet — provision a sensible default for this location.
+          const near = Object.values(routes).find((r) => r.load === stationId || r.unload === stationId)
+          const t = await createTemplate({ name: station?.name || 'Lot', startStationId: stationId, processId: near?.processId ?? null })
+          tid = t._id
+          procId = t.processId
+        }
         await createCard({
-          lotTemplateId: templateId,
-          processId:     tmpl.processId ?? '',
-          lotNum:        lotNum ? parseInt(lotNum, 10) : null,
+          lotTemplateId: tid,
+          processId:     procId ?? '',
+          lotNum:        lotNum.trim() || null,   // null → backend generates a code
           totalQuantity: quantity,
           bins:          { [stationId]: { count: quantity } },
           fields:        {},
@@ -76,7 +99,7 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
       style={{
         position:       'fixed',
         inset:          0,
-        background:     'rgba(6,14,30,0.75)',
+        background:     color.backdrop,
         display:        'flex',
         alignItems:     'center',
         justifyContent: 'center',
@@ -96,7 +119,7 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
         gap:          size.sp4,
       }}>
         <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>
-          {isMergeStation ? 'Pull Precursors' : 'Create Lot'} —{' '}
+          {isPullStation ? 'Pull Precursors' : 'Create Lot'} —{' '}
           <span style={{ color: color.textSecondary }}>{station?.name ?? stationId}</span>
         </div>
 
@@ -125,19 +148,33 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
         ) : (
           <>
             {/* Merge station: pull info banner */}
-            {isMergeStation && (
+            {isPullStation && (
               <div style={{
                 background: '#1A0E3A', border: '1px solid #6D3AED',
                 borderRadius: 4, padding: '8px 10px', fontSize: 11,
                 color: '#C4B5FD', lineHeight: 1.5,
               }}>
-                This is a merge station. Creating lots here will pull precursor
-                lots from all upstream source queues.
+                Lots here are <b>pulled</b>, not created directly. This seeds
+                precursor lots in the source queues that feed this location —
+                cascading all the way back to raw materials. No template needed.
               </div>
             )}
 
-            {/* Template selector — hidden for merge stations (pull uses all upstream templates) */}
-            {!isMergeStation && (
+            {/* WIP warning for intermediate (non-end-of-line) pull points */}
+            {isIntermediate && (
+              <div style={{
+                background: '#3A1E0A', border: '1px solid #C2660A',
+                borderRadius: 4, padding: '8px 10px', fontSize: 11,
+                color: '#FBBF77', lineHeight: 1.5,
+              }}>
+                ⚠ Note that creating intermediate products creates excessive
+                Work-in-Process. Unless intermediate assemblies are also products,
+                you should create work orders by pulling from the <b>end of the line</b>.
+              </div>
+            )}
+
+            {/* Template selector — shown only when this source has templates to choose. */}
+            {!isPullStation && validTemplates.length > 0 && (
               <label style={{ display: 'flex', flexDirection: 'column', gap: size.sp1 }}>
                 <span style={{ fontSize: 10, color: color.textSecondary, fontFamily: font.mono, letterSpacing: '0.08em' }}>
                   TEMPLATE
@@ -148,18 +185,20 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
                     <option key={t._id} value={t._id}>{t.name}</option>
                   ))}
                 </select>
-                {validTemplates.length === 0 && (
-                  <span style={{ fontSize: 10, color: color.statusWarning }}>
-                    No templates start at this location. Configure templates in Settings.
-                  </span>
-                )}
               </label>
+            )}
+            {!isPullStation && validTemplates.length === 0 && (
+              <div style={{ fontSize: 11, color: color.textSecondary, background: '#0A1628',
+                            border: `1px solid ${color.border}`, borderRadius: 4, padding: '8px 10px', lineHeight: 1.5 }}>
+                A default lot card will be created for <b style={{ color: color.textPrimary }}>{station?.name}</b>.
+                Add a template in Settings → Templates if you want custom fields.
+              </div>
             )}
 
             {/* Quantity */}
             <label style={{ display: 'flex', flexDirection: 'column', gap: size.sp1 }}>
               <span style={{ fontSize: 10, color: color.textSecondary, fontFamily: font.mono, letterSpacing: '0.08em' }}>
-                {isMergeStation ? 'ASSEMBLIES TO PULL' : 'QUANTITY'}
+                {isPullStation ? 'UNITS TO PULL' : 'QUANTITY'}
               </span>
               <input
                 type="number"
@@ -170,15 +209,16 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
               />
             </label>
 
-            {/* Lot number — only for direct creation */}
-            {!isMergeStation && (
+            {/* Lot code — only for direct creation */}
+            {!isPullStation && (
               <label style={{ display: 'flex', flexDirection: 'column', gap: size.sp1 }}>
                 <span style={{ fontSize: 10, color: color.textSecondary, fontFamily: font.mono, letterSpacing: '0.08em' }}>
-                  LOT NUMBER (OPTIONAL)
+                  LOT CODE (OPTIONAL)
                 </span>
                 <input
                   type="text"
-                  placeholder="auto-assigned if blank"
+                  maxLength={24}
+                  placeholder="auto-generated if blank, e.g. E4096A"
                   value={lotNum}
                   onChange={(e) => setLotNum(e.target.value)}
                   style={{ ...inputStyle, fontFamily: font.mono }}
@@ -194,11 +234,11 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
               <button onClick={onClose} style={secondaryBtn}>Cancel</button>
               <button
                 onClick={handleCreate}
-                disabled={saving || (!isMergeStation && !templateId)}
-                style={primaryBtn(saving || (!isMergeStation && !templateId))}
+                disabled={saving || (!isPullStation && validTemplates.length > 0 && !templateId)}
+                style={primaryBtn(saving || (!isPullStation && validTemplates.length > 0 && !templateId))}
               >
-                {saving ? (isMergeStation ? 'Pulling…' : 'Creating…')
-                        : (isMergeStation ? `Pull ${quantity}` : 'Create Lot')}
+                {saving ? (isPullStation ? 'Pulling…' : 'Creating…')
+                        : (isPullStation ? `Pull ${quantity}` : 'Create Lot')}
               </button>
             </div>
           </>
@@ -209,10 +249,10 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
 }
 
 const inputStyle: React.CSSProperties = {
-  background:   '#0D1B2E',
-  border:       '1px solid #1E3A5F',
+  background:   color.bgInput,
+  border:       `1px solid ${color.border}`,
   borderRadius: '4px',
-  color:        '#EBF1F8',
+  color:        color.textPrimary,
   padding:      '6px 10px',
   fontSize:     13,
   outline:      'none',
@@ -222,19 +262,19 @@ const inputStyle: React.CSSProperties = {
 const secondaryBtn: React.CSSProperties = {
   padding:      '6px 16px',
   background:   'transparent',
-  border:       '1px solid #1E3A5F',
+  border:       `1px solid ${color.border}`,
   borderRadius: '4px',
-  color:        '#8FA3BC',
+  color:        color.textSecondary,
   cursor:       'pointer',
   fontSize:     12,
 }
 
 const primaryBtn = (disabled: boolean): React.CSSProperties => ({
   padding:      '6px 16px',
-  background:   disabled ? '#1D4ED830' : '#2563EB',
+  background:   disabled ? '#993C1D30' : '#D85A30',
   border:       'none',
   borderRadius: '4px',
-  color:        disabled ? '#4A6080' : '#fff',
+  color:        disabled ? color.textDim : '#fff',
   cursor:       disabled ? 'not-allowed' : 'pointer',
   fontSize:     12,
   fontWeight:   600,

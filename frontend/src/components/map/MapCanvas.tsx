@@ -1,18 +1,68 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Stage, Container, Graphics, Sprite } from '@pixi/react'
+import { Stage, Container, Graphics, Sprite, useApp } from '@pixi/react'
 import * as PIXI from 'pixi.js'
 import type { Station, Route } from '../../models'
-import { color } from '../../theme/tokens'
-import { useCardsStore, useMapSettingsStore } from '../../store'
-import StationNode from './StationNode'
+import { color, shadow } from '../../theme/tokens'
+import { useCardsStore, useMapSettingsStore, useStationsStore, useProcessesStore, useThemeStore } from '../../store'
+import StationNode, { type MapTool } from './StationNode'
+import MapStationEditModal from './MapStationEditModal'
 import RouteEdge from './RouteEdge'
 
 export const DEFAULT_NODE_SIZE = 100
+
+// Pixi needs numeric colors, so the canvas background can't read the CSS
+// variables — mirror --tk-bg-deep for both themes here.
+const CANVAS_BG: Record<'night' | 'day', number> = { night: 0x121110, day: 0xF7F6F2 }
 
 export interface Viewport { x: number; y: number; scale: number }
 
 const MIN_ZOOM = 0.002
 const MAX_ZOOM = 8.0
+
+// Finds processes whose route-graph is split into ≥2 disconnected pieces
+// ("isolated subgraphs"). Returns the affected process ids plus every station in
+// them (so they can be flashed). Empty when every process is one connected flow.
+function isolatedProcessStations(routes: Record<string, Route>): { flash: Set<string>; procIds: string[] } {
+  const byProc = new Map<string, Route[]>()
+  for (const r of Object.values(routes)) {
+    const arr = byProc.get(r.processId) ?? []
+    arr.push(r)
+    byProc.set(r.processId, arr)
+  }
+  const flash = new Set<string>()
+  const procIds: string[] = []
+  for (const [procId, rs] of byProc.entries()) {
+    const adj = new Map<string, Set<string>>()
+    const nodes = new Set<string>()
+    const link = (a: string, b: string) => {
+      if (!adj.has(a)) adj.set(a, new Set())
+      adj.get(a)!.add(b)
+    }
+    for (const r of rs) { nodes.add(r.load); nodes.add(r.unload); link(r.load, r.unload); link(r.unload, r.load) }
+    const seen = new Set<string>()
+    let components = 0
+    for (const n of nodes) {
+      if (seen.has(n)) continue
+      components++
+      const queue = [n]; seen.add(n)
+      while (queue.length) {
+        const x = queue.shift()!
+        for (const y of adj.get(x) ?? []) if (!seen.has(y)) { seen.add(y); queue.push(y) }
+      }
+    }
+    if (components > 1) { procIds.push(procId); for (const n of nodes) flash.add(n) }
+  }
+  return { flash, procIds }
+}
+
+// Distance-from-point-to-segment (screen px) — for clicking a route to delete it.
+function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay
+  const len2 = dx * dx + dy * dy
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2))
+  const cx = ax + t * dx, cy = ay + t * dy
+  return Math.hypot(px - cx, py - cy)
+}
 
 interface Props {
   stations:          Record<string, Station>
@@ -20,11 +70,27 @@ interface Props {
   lotCounts:         Record<string, number>
   selectedStationId: string | null
   onSelectStation:   (id: string) => void
+  tool:              MapTool
+  routeProcessId:    string
 }
 
 export default function MapCanvas({
-  stations, routes, lotCounts, selectedStationId, onSelectStation,
+  stations, routes, lotCounts, selectedStationId, onSelectStation, tool, routeProcessId,
 }: Props) {
+  const createStation = useStationsStore((s) => s.create)
+  const removeStation = useStationsStore((s) => s.remove)
+  const createRoute   = useProcessesStore((s) => s.createRoute)
+  const deleteRoute   = useProcessesStore((s) => s.deleteRoute)
+  const refreshProc   = useProcessesStore((s) => s.fetchAll)
+  const processes     = useProcessesStore((s) => s.processes)
+
+  // ── Map-editing tool state ──
+  const [routeFrom,  setRouteFrom]  = useState<string | null>(null)
+  const [mouse,      setMouse]      = useState<{ x: number; y: number } | null>(null)   // container-relative
+  const [ctxMenu,    setCtxMenu]    = useState<{ stationId: string; x: number; y: number } | null>(null)
+  const [routeDelete, setRouteDelete] = useState<string | null>(null)
+  const [editStation, setEditStation] = useState<string | null>(null)
+  const [warnHover,   setWarnHover]   = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const [canvasSize, setCanvasSize]       = useState({ w: 800, h: 600 })
   const [viewport, setViewport]           = useState<Viewport>({ x: 60, y: 60, scale: 1 })
@@ -36,13 +102,22 @@ export default function MapCanvas({
   const csSizeRef  = useRef(canvasSize)
   fpRectRef.current = floorPlanRect
   csSizeRef.current = canvasSize
+  const toolRef     = useRef(tool);      toolRef.current = tool
+  const vpRef       = useRef(viewport);  vpRef.current = viewport
+  const routeFromRef = useRef(routeFrom); routeFromRef.current = routeFrom
+  const nodeSizeRef  = useRef(0)         // set once nodeSize is known (below)
+  const stationsRef  = useRef(stations); stationsRef.current = stations
+  const routesRef    = useRef(routes);   routesRef.current = routes
+  const didMoveRef   = useRef(false)
 
   const cards     = useCardsStore((s) => s.cards)
   const mapConfig = useMapSettingsStore((s) => s.settings)
+  const themeMode = useThemeStore((s) => s.mode)
 
   const nodeSize = mapConfig
     ? (mapConfig.stationSizeUnits ?? 1) * mapConfig.pixelsPerUnit
     : DEFAULT_NODE_SIZE
+  nodeSizeRef.current = nodeSize
 
   // Track container size
   useEffect(() => {
@@ -162,22 +237,123 @@ export default function MapCanvas({
     return () => el.removeEventListener('wheel', handler)
   }, []) // setViewport is stable; clampVP reads refs so never stale
 
+  // Screen (container-relative) → world coordinates
+  const toWorld = (sx: number, sy: number) => {
+    const vp = vpRef.current
+    return { x: (sx - vp.x) / vp.scale, y: (sy - vp.y) / vp.scale }
+  }
+
+  // A left-click (no drag) on the empty canvas runs the active tool.
+  const handleCanvasClick = useCallback((sx: number, sy: number) => {
+    const t = toolRef.current
+    setCtxMenu(null)
+    if (t === 'location') {
+      const w = toWorld(sx, sy)
+      const half = nodeSizeRef.current / 2
+      const n = Object.keys(stationsRef.current).length + 1
+      createStation({
+        name: `Location ${n}`, description: '', adapterType: null, adapterConfig: {},
+        color: null, icon: null,
+        position: { x: Math.round(w.x - half), y: Math.round(w.y - half), width: 60, height: 60 },
+      } as Omit<Station, '_id' | 'createdAt' | 'updatedAt'>)
+        .then((s) => setEditStation(s._id))   // open the edit modal to name it right away
+        .catch(() => {})
+      return
+    }
+    if (t === 'route') {
+      // Clicked empty space: hit-test routes (delete) else abort the in-progress route.
+      const half = nodeSizeRef.current / 2
+      const vp = vpRef.current
+      let hit: string | null = null
+      let best = 9
+      for (const [id, r] of Object.entries(routesRef.current)) {
+        const a = stationsRef.current[r.load], b = stationsRef.current[r.unload]
+        if (!a || !b) continue
+        const ax = (a.position.x + half) * vp.scale + vp.x
+        const ay = (a.position.y + half) * vp.scale + vp.y
+        const bx = (b.position.x + half) * vp.scale + vp.x
+        const by = (b.position.y + half) * vp.scale + vp.y
+        const d = distToSegment(sx, sy, ax, ay, bx, by)
+        if (d < best) { best = d; hit = id }
+      }
+      // Only a route hit does something; empty clicks leave the in-progress
+      // route attached to the cursor (Esc or clicking the source aborts it).
+      if (hit) setRouteDelete(hit)
+    }
+  }, [createStation])
+
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return
-    panRef.current = { startX: e.clientX, startY: e.clientY, vpX: viewport.x, vpY: viewport.y }
+    setCtxMenu(null)
+    didMoveRef.current = false
+    panRef.current = { startX: e.clientX, startY: e.clientY, vpX: vpRef.current.x, vpY: vpRef.current.y }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  }, [viewport])
+  }, [])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!panRef.current) return
-    setViewport((v) => clampVP({
-      ...v,
-      x: panRef.current!.vpX + (e.clientX - panRef.current!.startX),
-      y: panRef.current!.vpY + (e.clientY - panRef.current!.startY),
-    }))
+    const dx = e.clientX - panRef.current.startX
+    const dy = e.clientY - panRef.current.startY
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didMoveRef.current = true
+    setViewport((v) => clampVP({ ...v, x: panRef.current!.vpX + dx, y: panRef.current!.vpY + dy }))
   }, [])
 
-  const handlePointerUp = useCallback(() => { panRef.current = null }, [])
+  // While drawing a route, follow the cursor at the window level — the PixiJS
+  // canvas swallows hover moves, so a container-only listener drops the line.
+  useEffect(() => {
+    if (tool !== 'route' || !routeFrom) { setMouse(null); return }
+    const onMove = (e: PointerEvent) => {
+      const el = containerRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setMouse({ x: e.clientX - r.left, y: e.clientY - r.top })
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  }, [tool, routeFrom])
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    const wasClick = !!panRef.current && !didMoveRef.current
+    panRef.current = null
+    if (wasClick && toolRef.current !== 'select') {
+      const el = containerRef.current
+      if (el) { const r = el.getBoundingClientRect(); handleCanvasClick(e.clientX - r.left, e.clientY - r.top) }
+    }
+  }, [handleCanvasClick])
+
+  // Route tool: click a station to lock it as source, then a second to connect.
+  const handleRouteAnchor = useCallback((stationId: string) => {
+    const from = routeFromRef.current
+    if (!from) { setRouteFrom(stationId); return }       // lock source
+    if (from === stationId) { setRouteFrom(null); return } // click same → abort
+    if (routeProcessId) {
+      createRoute({ processId: routeProcessId, load: from, unload: stationId, quantity: 1 }).catch(() => {})
+    }
+    setRouteFrom(null)                                     // done → ready for the next
+  }, [routeProcessId, createRoute])
+
+  // Escape aborts an in-progress route / closes menus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setRouteFrom(null); setCtxMenu(null); setRouteDelete(null); setEditStation(null) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Reset transient tool state when the tool changes.
+  useEffect(() => { setRouteFrom(null); setCtxMenu(null) }, [tool])
+
+  const confirmDeleteStation = useCallback(async (id: string) => {
+    setCtxMenu(null)
+    await removeStation(id)
+    await refreshProc()   // drop cascade-deleted routes from the board/map
+  }, [removeStation, refreshProc])
+
+  const confirmDeleteRoute = useCallback(async () => {
+    if (routeDelete) await deleteRoute(routeDelete)
+    setRouteDelete(null)
+  }, [routeDelete, deleteRoute])
 
   // WIP ratios for heatmap
   const wipRatios = React.useMemo(() => {
@@ -196,6 +372,8 @@ export default function MapCanvas({
   const stationList = Object.values(stations)
   const routeList   = Object.values(routes)
   const isEmpty     = stationList.length === 0
+  const isolated = React.useMemo(() => isolatedProcessStations(routes), [routes])
+  const isolatedNames = isolated.procIds.map((id) => processes[id]?.name).filter(Boolean) as string[]
 
   // Raw pixelsPerUnit is correct when floor plan is rendered at mapWidthPx canvas pixels
   // (which equals the settings-preview CSS display width, the frame ppu was calibrated in).
@@ -207,13 +385,14 @@ export default function MapCanvas({
       style={{
         flex:     1,
         overflow: 'hidden',
-        cursor:   panRef.current ? 'grabbing' : 'default',
+        cursor:   tool !== 'select' ? 'crosshair' : 'default',
         position: 'relative',
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
+      onContextMenu={(e) => { if (tool !== 'select') e.preventDefault() }}
     >
       {/* ── PixiJS: floor plan + heatmap + edges ── */}
       {canvasSize.w > 0 && (
@@ -221,12 +400,13 @@ export default function MapCanvas({
           width={canvasSize.w}
           height={canvasSize.h}
           options={{
-            background:  0x060E1E,
+            background:  CANVAS_BG[themeMode],
             antialias:   true,
             resolution:  window.devicePixelRatio || 1,
             autoDensity: true,
           }}
         >
+          <StageBackground color={CANVAS_BG[themeMode]} />
           <Container x={viewport.x} y={viewport.y} scale={viewport.scale}>
             {mapConfig?.floorPlanUrl && floorPlanRect && (
               <FloorPlanSprite url={mapConfig.floorPlanUrl} rect={floorPlanRect} />
@@ -269,7 +449,12 @@ export default function MapCanvas({
             selected={selectedStationId === station._id}
             nodeSize={nodeSize}
             viewport={viewport}
+            tool={tool}
+            routeArmed={routeFrom === station._id}
+            flashing={warnHover && isolated.flash.has(station._id)}
             onSelect={() => onSelectStation(station._id)}
+            onRouteAnchor={() => handleRouteAnchor(station._id)}
+            onContextMenu={(cx, cy) => setCtxMenu({ stationId: station._id, x: cx, y: cy })}
           />
         ))}
       </div>
@@ -294,10 +479,10 @@ export default function MapCanvas({
             right:        16,
             width:        32,
             height:       32,
-            background:   'rgba(6,14,30,0.72)',
-            border:       '1px solid rgba(255,255,255,0.15)',
+            background:   color.glass,
+            border:       `1px solid ${color.glassBorder}`,
             borderRadius: 4,
-            color:        'rgba(235,241,248,0.8)',
+            color:        color.glassText,
             cursor:       'pointer',
             fontSize:     16,
             display:      'flex',
@@ -319,12 +504,145 @@ export default function MapCanvas({
         }}>
           <div style={{ fontSize: 40, opacity: 0.15 }}>⬡</div>
           <div style={{ color: color.textDim, fontSize: 13 }}>
-            No locations yet — add them in Settings
+            No locations yet — add one with the location tool, or in Settings
           </div>
         </div>
       )}
+
+      {/* Isolated-subgraph warning — hover to flash the disconnected pieces */}
+      {isolated.procIds.length > 0 && (
+        <div onMouseEnter={() => setWarnHover(true)} onMouseLeave={() => setWarnHover(false)}
+             style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+                      background: color.glass, border: '1px solid #EF9F2766', borderRadius: 6,
+                      padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'default',
+                      fontSize: 12.5, color: color.warnText, fontFamily: 'Inter, system-ui, sans-serif', maxWidth: '72%' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+            <path d="M12 9v4" /><path d="M12 17h.01" />
+          </svg>
+          {isolatedNames.length <= 1
+            ? `Warning — the process “${isolatedNames[0] ?? '—'}” contains isolated subgraphs.`
+            : `Warning — the processes ${isolatedNames.map((n) => `“${n}”`).join(', ')} contain isolated subgraphs.`}
+          <span style={{ color: color.textSecondary }}>Hover to highlight.</span>
+        </div>
+      )}
+
+      {/* Tool hint bar */}
+      {tool !== 'select' && (
+        <div style={{
+          position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
+          background: color.glass, borderRadius: 6, padding: '6px 12px', fontSize: 12,
+          pointerEvents: 'none', fontFamily: 'Inter, system-ui, sans-serif',
+          border: `1px solid ${tool === 'route' ? '#7C3AED66' : '#D85A3066'}`,
+          color: tool === 'route' ? 'var(--tk-hint-route)' : 'var(--tk-hint-location)',
+        }}>
+          {tool === 'location'
+            ? 'Click to add a location · drag one to move · right-click to edit or delete'
+            : routeFrom
+              ? 'Click a target location to connect · Esc or click the source to cancel'
+              : 'Click a source location to start a route · click a route to delete it'}
+        </div>
+      )}
+
+      {/* Route rubber-band from the locked source to the cursor */}
+      {tool === 'route' && routeFrom && mouse && stations[routeFrom] && (() => {
+        const src = stations[routeFrom]
+        const sx = (src.position.x + nodeSize / 2) * viewport.scale + viewport.x
+        const sy = (src.position.y + nodeSize / 2) * viewport.scale + viewport.y
+        const ang = (Math.atan2(mouse.y - sy, mouse.x - sx) * 180) / Math.PI
+        return (
+          <svg width={canvasSize.w} height={canvasSize.h}
+               style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+            <line x1={sx} y1={sy} x2={mouse.x} y2={mouse.y} stroke="#A78BFA" strokeWidth={2} strokeDasharray="6 5" />
+            <polygon points="0,-5 10,0 0,5" fill="#A78BFA"
+                     transform={`translate(${mouse.x},${mouse.y}) rotate(${ang})`} />
+          </svg>
+        )
+      })()}
+
+      {/* Right-click station context menu */}
+      {ctxMenu && stations[ctxMenu.stationId] && (() => {
+        const rect = containerRef.current?.getBoundingClientRect()
+        const mx = ctxMenu.x - (rect?.left ?? 0)
+        const my = ctxMenu.y - (rect?.top ?? 0)
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onPointerDown={() => setCtxMenu(null)} />
+            <div onPointerDown={(e) => e.stopPropagation()}
+                 style={{ position: 'absolute', left: mx, top: my, zIndex: 61, minWidth: 140,
+                          background: color.bgPanel, border: `1px solid ${color.border}`, borderRadius: 6,
+                          boxShadow: shadow.md, padding: 4 }}>
+              <div style={{ padding: '5px 10px', fontSize: 11, color: color.textDim,
+                            fontFamily: 'JetBrains Mono, monospace', borderBottom: `1px solid ${color.border}`, marginBottom: 2 }}>
+                {stations[ctxMenu.stationId].name}
+              </div>
+              <button style={CTX_ITEM} onClick={() => { setEditStation(ctxMenu.stationId); setCtxMenu(null) }}>Edit…</button>
+              <button style={{ ...CTX_ITEM, color: '#E24B4A' }} onClick={() => confirmDeleteStation(ctxMenu.stationId)}>Delete</button>
+            </div>
+          </>
+        )
+      })()}
+
+      {/* Delete-route confirm */}
+      {routeDelete && (() => {
+        const r = routes[routeDelete]
+        const a = r ? stations[r.load] : undefined
+        const b = r ? stations[r.unload] : undefined
+        return (
+          <div onPointerDown={() => setRouteDelete(null)} style={MODAL_BG}>
+            <div onPointerDown={(e) => e.stopPropagation()} style={MODAL_CARD}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>Delete route?</div>
+              <div style={{ fontSize: 13, color: color.textSecondary, fontFamily: 'JetBrains Mono, monospace' }}>
+                {a?.name ?? '?'} → {b?.name ?? '?'}
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button style={BTN_SEC} onClick={() => setRouteDelete(null)}>Cancel</button>
+                <button style={BTN_DANGER} onClick={confirmDeleteRoute}>Delete</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Station edit modal */}
+      {editStation && stations[editStation] && (
+        <MapStationEditModal stationId={editStation} onClose={() => setEditStation(null)} />
+      )}
     </div>
   )
+}
+
+const CTX_ITEM: React.CSSProperties = {
+  display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none',
+  color: color.textPrimary, padding: '7px 10px', fontSize: 13, cursor: 'pointer', borderRadius: 4,
+  fontFamily: 'Inter, system-ui, sans-serif',
+}
+const MODAL_BG: React.CSSProperties = {
+  position: 'absolute', inset: 0, zIndex: 70, background: color.backdrop,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+}
+const MODAL_CARD: React.CSSProperties = {
+  background: color.bgPanel, border: `1px solid ${color.border}`, borderRadius: 8, padding: 20,
+  width: 300, display: 'flex', flexDirection: 'column', gap: 12, boxShadow: shadow.lg,
+}
+const BTN_SEC: React.CSSProperties = {
+  padding: '6px 14px', background: 'transparent', border: `1px solid ${color.border}`, borderRadius: 4,
+  color: color.textSecondary, cursor: 'pointer', fontSize: 12,
+}
+const BTN_DANGER: React.CSSProperties = {
+  padding: '6px 14px', background: '#E24B4A', border: 'none', borderRadius: 4,
+  color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+}
+
+// ─── Stage background ─────────────────────────────────────────────────────────
+
+// Stage `options` only apply at construction; this updates the renderer when
+// the day/night theme flips without recreating the canvas.
+function StageBackground({ color: bg }: { color: number }) {
+  const app = useApp()
+  useEffect(() => { app.renderer.background.color = bg }, [app, bg])
+  return null
 }
 
 // ─── Floor plan sprite ────────────────────────────────────────────────────────
@@ -358,21 +676,30 @@ function FloorPlanSprite({
 
 // ─── Heatmap blob ─────────────────────────────────────────────────────────────
 
+// Station busyness gets its own violet ramp (BRANDING.md §3): warm hues are
+// reserved for andon status, so heat must never read as an alarm.
+const HEAT_RAMP = [0xEEEDFE, 0xCECBF6, 0xAFA9EC, 0x7F77DD, 0x534AB7, 0x26215C] as const
+
+function heatTint(load: number): number {
+  const i = Math.min(HEAT_RAMP.length - 1, Math.max(0, Math.floor(load * HEAT_RAMP.length)))
+  return HEAT_RAMP[i]
+}
+
 function HeatBlob({
   x, y, ratio, nodeSize,
 }: { x: number; y: number; ratio: number; nodeSize: number }) {
   const radius = nodeSize * 0.6 + ratio * nodeSize * 0.8
-  const alpha  = 0.12 + ratio * 0.22
+  const alpha  = 0.16 + ratio * 0.26
 
   const draw = useCallback((g: PIXI.Graphics) => {
     g.clear()
-    g.beginFill(0xFF6600, alpha * 0.5)
+    g.beginFill(heatTint(ratio * 0.7), alpha * 0.5)   // outer glow, one step cooler
     g.drawCircle(0, 0, radius * 1.4)
     g.endFill()
-    g.beginFill(0xFF3300, alpha)
+    g.beginFill(heatTint(ratio), alpha)
     g.drawCircle(0, 0, radius)
     g.endFill()
-  }, [radius, alpha])
+  }, [radius, alpha, ratio])
 
   return <Graphics x={x} y={y} draw={draw} />
 }
@@ -400,9 +727,9 @@ function ScaleBar({
     <div style={{
       position:      'absolute',
       bottom:        16,
-      left:          16,
-      background:    'rgba(6,14,30,0.72)',
-      border:        '1px solid rgba(255,255,255,0.15)',
+      left:          60,   /* clear of the fixed day/night toggle in the corner */
+      background:    color.glass,
+      border:        `1px solid ${color.glassBorder}`,
       borderRadius:  4,
       padding:       '5px 8px 6px',
       pointerEvents: 'none',
@@ -410,7 +737,7 @@ function ScaleBar({
     }}>
       <div style={{
         fontSize:      10,
-        color:         'rgba(235,241,248,0.7)',
+        color:         color.glassText,
         textAlign:     'center',
         marginBottom:  3,
         fontFamily:    '"JetBrains Mono", monospace',
@@ -419,7 +746,7 @@ function ScaleBar({
         {count} {unit}
       </div>
       <svg width={barLength + 2} height={AH * 2 + 4} style={{ display: 'block', overflow: 'visible' }}>
-        <g transform={`translate(0,${AH + 2})`} stroke="#EBF1F8" fill="#EBF1F8">
+        <g transform={`translate(0,${AH + 2})`} stroke={color.textPrimary} fill={color.textPrimary}>
           <polygon points={`0,0 ${AL},${-AH} ${AL},${AH}`} />
           <line x1={AL} y1={0} x2={barLength - AL} y2={0} strokeWidth={1.5} />
           <polygon points={`${barLength},0 ${barLength - AL},${-AH} ${barLength - AL},${AH}`} />

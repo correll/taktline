@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import type { MapSettingsData } from '../api/mapSettings.api'
 import { mapSettingsApi } from '../api/mapSettings.api'
+import { loadSlice, saveSlice } from './offlineCache'
 
 interface MapSettingsState {
   settings: MapSettingsData | null
@@ -24,8 +25,10 @@ export const useMapSettingsStore = create<MapSettingsState>()(
         try {
           const data = await mapSettingsApi.get()
           set((s) => { s.settings = data; s.loading = false })
+          saveSlice('mapSettings', data)
         } catch {
-          set((s) => { s.loading = false })
+          const cached = loadSlice<MapSettingsData>('mapSettings')
+          set((s) => { if (cached) s.settings = cached; s.loading = false })
         }
       },
 
@@ -42,6 +45,6 @@ export const useMapSettingsStore = create<MapSettingsState>()(
         return url
       },
     })),
-    { name: 'veridion/mapSettings' }
+    { name: 'taktline/mapSettings' }
   )
 )

@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import type { Card } from '../models'
 import { cardsApi } from '../api/cards.api'
+import { loadSlice, saveSlice } from './offlineCache'
 
 interface CardsState {
   cards:   Record<string, Card>
@@ -12,9 +13,11 @@ interface CardsState {
   fetchAll: ()                                                           => Promise<void>
   fetchOne: (id: string)                                                 => Promise<void>
   create:   (body: Omit<Card, '_id' | 'createdAt' | 'updatedAt'>)       => Promise<Card>
-  update:   (id: string, patch: Partial<Card>)                          => Promise<Card>
+  update:    (id: string, patch: Partial<Card>)                          => Promise<Card>
+  setStatus: (id: string, status: 'idle' | 'working' | 'done')          => Promise<Card>
   remove:   (id: string)                                                 => Promise<void>
   upsert:   (card: Card)                                                 => void
+  drop:     (id: string)                                                 => void   // local-only (WS card_delete)
 }
 
 export const useCardsStore = create<CardsState>()(
@@ -32,8 +35,16 @@ export const useCardsStore = create<CardsState>()(
             s.cards = Object.fromEntries(list.map((c) => [c._id, c]))
             s.loading = false
           })
+          saveSlice('cards', list)
         } catch (e) {
-          set((s) => { s.loading = false; s.error = String(e) })
+          // Server unreachable → fall back to the last-known snapshot (stale
+          // banner shows) so a reload during an outage isn't a blank board.
+          const cached = loadSlice<Card[]>('cards')
+          set((s) => {
+            if (cached) s.cards = Object.fromEntries(cached.map((c) => [c._id, c]))
+            s.loading = false
+            s.error = cached ? null : String(e)
+          })
         }
       },
 
@@ -54,13 +65,21 @@ export const useCardsStore = create<CardsState>()(
         return card
       },
 
+      setStatus: async (id, status) => {
+        const card = await cardsApi.setStatus(id, status)
+        set((s) => { s.cards[id] = card })
+        return card
+      },
+
       remove: async (id) => {
         await cardsApi.remove(id)
         set((s) => { delete s.cards[id] })
       },
 
       upsert: (card) => set((s) => { s.cards[card._id] = card }),
+
+      drop: (id) => set((s) => { delete s.cards[id] }),
     })),
-    { name: 'veridion/cards' }
+    { name: 'taktline/cards' }
   )
 )

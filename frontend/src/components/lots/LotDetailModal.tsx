@@ -4,6 +4,7 @@ import { cardsApi, type CardEvent } from '../../api/cards.api'
 import { color, font, size, shadow } from '../../theme/tokens'
 import type { Card } from '../../models'
 import { formatDistanceToNow } from 'date-fns'
+import { lotLabel } from './LotCard'
 
 interface Props {
   card:     Card
@@ -72,7 +73,7 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
     <div
       style={{
         position: 'fixed', inset: 0,
-        background: 'rgba(6,14,30,0.78)',
+        background: color.backdrop,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 1000,
       }}
@@ -100,11 +101,11 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
           {/* Colour swatch */}
           <div style={{
             width: 10, height: 10, borderRadius: '50%', marginTop: 4, flexShrink: 0,
-            background: template?.color ?? color.bluePrimary,
+            background: template?.color ?? color.lotBlue,
           }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>
-              Lot {card.lotNum != null ? `#${card.lotNum}` : card._id.slice(-6).toUpperCase()}
+              Lot {lotLabel(card)}
             </div>
             <div style={{ fontSize: 11, color: color.textSecondary, marginTop: 2 }}>
               {template?.name ?? 'Unknown template'}
@@ -145,7 +146,7 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: size.sp3 }}>
                 <Stat label="Total Qty"   value={card.totalQuantity} />
                 <Stat label="Bins"        value={activeBins.length} />
-                <Stat label="Lot #"       value={card.lotNum != null ? String(card.lotNum) : '—'} />
+                <Stat label="Lot Code"    value={lotLabel(card)} />
               </div>
 
               {/* Bins */}

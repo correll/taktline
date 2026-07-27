@@ -19,7 +19,7 @@ export function Modal({
       style={{
         position:       'fixed',
         inset:          0,
-        background:     'rgba(6,14,30,0.78)',
+        background:     color.backdrop,
         display:        'flex',
         alignItems:     'center',
         justifyContent: 'center',

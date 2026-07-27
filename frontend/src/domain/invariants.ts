@@ -6,7 +6,7 @@ const DEV = import.meta.env.DEV
 
 export function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
-    const full = `[Veridion] ${message}`
+    const full = `[Taktline] ${message}`
     if (DEV) throw new Error(full)
     else console.error(full)
   }

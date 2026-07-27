@@ -4,10 +4,12 @@ import { useCardsStore, useStationsStore, useProcessesStore } from '../../store'
 import { color, font, size } from '../../theme/tokens'
 import LotCard from '../../components/lots/LotCard'
 import CreateLotModal from '../../components/lots/CreateLotModal'
+import MergeLotModal from '../../components/lots/MergeLotModal'
 import MoveLotModal from '../../components/lots/MoveLotModal'
 import LotDetailModal from '../../components/lots/LotDetailModal'
 import { mergeNodes, computeColumnGroups, computeLanes, type BarSpan } from '../../domain/graph'
 import { mergeApi, type MergePreview } from '../../api/merge.api'
+import { useRole } from '../../auth/useRole'
 import { cardsApi } from '../../api/cards.api'
 import type { Card, Route } from '../../models'
 
@@ -47,6 +49,17 @@ export function getValidDestinations(
   return [...valid]
 }
 
+// Immediate upstream stations (direct predecessors) — valid *backward* drop
+// targets in the lot board (moving a lot one step back / triggering an unmerge).
+export function getBackwardDestinations(
+  fromStationId: string,
+  routes: Record<string, Route>,
+): string[] {
+  return Object.values(routes)
+    .filter((r) => r.unload === fromStationId)
+    .map((r) => r.load)
+}
+
 // ─── Lock icon ────────────────────────────────────────────────────────────────
 function LockIcon({ open }: { open: boolean }) {
   return (
@@ -79,6 +92,10 @@ export default function LotsView() {
   const templates  = useProcessesStore((s) => s.lotTemplates)
   const routes     = useProcessesStore((s) => s.routes)
   const upsertCard = useCardsStore((s) => s.upsert)
+  const fetchAllCards = useCardsStore((s) => s.fetchAll)
+  // canEdit (super-admin): structural board editing — drag, move, unmerge.
+  // canManageLots (admin+): create lots, pull precursors, merge.
+  const { canEdit, canManageLots } = useRole()
 
   const [createStation, setCreateStation] = useState<string | null>(null)
   const [activeMove,    setActiveMove]    = useState<ActiveMove | null>(null)
@@ -86,6 +103,7 @@ export default function LotsView() {
 
   // ─── Drag-and-drop / view-mode state ─────────────────────────────────────
   const [unlocked,  setUnlocked]  = useState(false)
+  const [lockFlash, setLockFlash] = useState(false)
   const [dragging,  setDragging]  = useState<DragState | null>(null)
   const [splitMode, setSplitMode] = useState(() => {
     try { return localStorage.getItem('lots-split') === '1' } catch { return false }
@@ -106,28 +124,65 @@ export default function LotsView() {
     try { return (localStorage.getItem('lots-sort-dir') as 'asc' | 'desc') || 'asc' } catch { return 'asc' }
   })
 
+  const triggerLockFlash = useCallback(() => {
+    setLockFlash(true)
+    setTimeout(() => setLockFlash(false), 550)
+  }, [])
+
   const validDropTargets = useMemo(
     () => dragging
-      ? new Set(getValidDestinations(dragging.fromStationId, routes))
+      ? new Set([
+          ...getValidDestinations(dragging.fromStationId, routes),    // forward
+          ...getBackwardDestinations(dragging.fromStationId, routes), // one step back
+        ])
       : new Set<string>(),
     [dragging, routes],
   )
 
   const handleDrop = useCallback(async (toStationId: string) => {
     if (!dragging || !validDropTargets.has(toStationId)) return
+    const from = dragging.fromStationId
     const card = cards[dragging.cardId]
     if (!card) return
-    const qty = card.bins[dragging.fromStationId]?.count ?? 0
+    const qty = card.bins[from]?.count ?? 0
     if (qty <= 0) return
     // Clear drag state immediately so UI resets even if the API call takes time
     setDragging(null)
+
+    const isBackward = Object.values(routes).some((r) => r.load === toStationId && r.unload === from)
+    const fromIncoming = Object.values(routes).filter((r) => r.unload === from).length
+
     try {
-      const updated = await cardsApi.move(dragging.cardId, dragging.fromStationId, toStationId, qty)
+      // Backward-dragging out of a merge station: if this lot was assembled here,
+      // dissolve it into ALL its precursor branches. We ask the backend rather
+      // than checking the template client-side — an auto-created assembly template
+      // may not be in the store yet, and misclassifying it as a plain lot would do
+      // a bare move and strand the other precursors (data loss). The backend
+      // rejects (400) when it isn't an assembly here, so we fall back to a move.
+      if (isBackward && fromIncoming >= 2) {
+        try {
+          await cardsApi.unmerge(card._id, from, qty)
+          await fetchAllCards()
+          return
+        } catch (e) {
+          // Fall back to a plain move ONLY when the backend says this lot is not
+          // an assembly here. Any other failure (stale quantity, race, network)
+          // must NOT retry as a move — the unmerge may have partially applied
+          // state we can't see, and a blind move can duplicate or strand lots.
+          const msg = String(e)
+          if (!msg.includes('not assembled') && !msg.includes('Not a merge station')) {
+            console.error('unmerge failed:', e)
+            await fetchAllCards()   // resync whatever the server state is
+            return
+          }
+        }
+      }
+      const updated = await cardsApi.move(card._id, from, toStationId, qty)
       upsertCard(updated)
     } catch (e) {
       console.error('Drag-move failed:', e)
     }
-  }, [dragging, validDropTargets, cards, upsertCard])
+  }, [dragging, validDropTargets, cards, routes, upsertCard, fetchAllCards])
 
   // ─── Merge nodes ──────────────────────────────────────────────────────────
 
@@ -232,8 +287,8 @@ export default function LotsView() {
     const { stationId, station, lots } = col
     const isDropTarget = validDropTargets.has(stationId)
     const props = {
-      stationId, station, lots, templates, routes,
-      unlocked, isDragging: dragging !== null, isDropTarget,
+      stationId, station, lots, templates, routes, canEdit, canManageLots, onLockedDrag: triggerLockFlash,
+      unlocked: canEdit && unlocked, isDragging: dragging !== null, isDropTarget,
       onDragStart: (cardId: string) => setDragging({ cardId, fromStationId: stationId }),
       onDragEnd:   () => setDragging(null),
       onDrop:      () => handleDrop(stationId),
@@ -405,17 +460,19 @@ export default function LotsView() {
             <SplitIcon />
             SPLIT
           </button>
+          {canEdit && (
           <button
+            className={lockFlash ? 'lock-flash' : undefined}
             onClick={() => { setUnlocked((u) => !u); setDragging(null) }}
             style={{
               display:       'flex',
               alignItems:    'center',
               gap:           5,
               padding:       '4px 10px',
-              background:    unlocked ? '#F59E0B18' : 'transparent',
-              border:        `1px solid ${unlocked ? '#F59E0B60' : color.border}`,
+              background:    unlocked ? '#EF9F2718' : 'transparent',
+              border:        `1px solid ${unlocked ? '#EF9F2760' : color.border}`,
               borderRadius:  size.radius,
-              color:         unlocked ? '#F59E0B' : color.textSecondary,
+              color:         unlocked ? '#EF9F27' : color.textSecondary,
               cursor:        'pointer',
               fontSize:      11,
               fontFamily:    font.mono,
@@ -426,6 +483,7 @@ export default function LotsView() {
             <LockIcon open={unlocked} />
             {unlocked ? 'LOCK' : 'DRAG'}
           </button>
+          )}
         </div>
       </div>
 
@@ -577,12 +635,15 @@ interface ColumnProps {
   cardLimit:    number
   sortBy:       'age' | 'units'
   sortDir:      'asc' | 'desc'
+  canEdit:      boolean   // super-admin: drag / move / unmerge
+  canManageLots: boolean  // admin+: create lots, pull precursors, merge
+  onLockedDrag: () => void
 }
 
 // ─── Drop-zone styling helper ─────────────────────────────────────────────────
 
 function columnBorderTop(accentColor: string, isDragging: boolean, isDropTarget: boolean, hovering: boolean): string {
-  if (isDragging && isDropTarget) return `3px solid #10B981`
+  if (isDragging && isDropTarget) return `3px solid #639922`
   return `3px solid ${accentColor}`
 }
 
@@ -592,7 +653,7 @@ function columnOpacity(isDragging: boolean, isDropTarget: boolean): number {
 }
 
 function columnBackground(isDragging: boolean, isDropTarget: boolean, hovering: boolean, base: string): string {
-  if (isDragging && isDropTarget && hovering) return '#10B98110'
+  if (isDragging && isDropTarget && hovering) return '#63992210'
   return base
 }
 
@@ -606,14 +667,14 @@ function KanbanColumn({
   stationId, station, lots, templates, routes,
   onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, onDragStart, onDragEnd, onDrop,
-  cardLimit, sortBy, sortDir,
+  cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag,
 }: KanbanColumnProps) {
   const [hovering,   setHovering]   = useState(false)
   const totalUnits  = lots.reduce((sum, c) => sum + (c.bins[stationId]?.count ?? 0), 0)
   const hasOutgoing    = Object.values(routes).some((r) => r.load   === stationId)
   const hasIncoming    = Object.values(routes).some((r) => r.unload === stationId)
   const isMergeStation = Object.values(routes).filter((r) => r.unload === stationId).length >= 2
-  const accentColor = station.color ?? color.bluePrimary
+  const accentColor = station.color ?? color.lotBlue
 
   const displayLots = [...lots].sort((a, b) => {
     const cmp = sortBy === 'age'
@@ -629,7 +690,7 @@ function KanbanColumn({
         width:         220,
         flexShrink:    0,
         background:    columnBackground(isDragging, isDropTarget, hovering, color.bgCard),
-        border:        `1px solid ${isDragging && isDropTarget ? '#10B98150' : color.border}`,
+        border:        `1px solid ${isDragging && isDropTarget ? '#63992250' : color.border}`,
         borderTop:     columnBorderTop(accentColor, isDragging, isDropTarget, hovering),
         borderRadius:  size.radiusMd,
         display:       'flex',
@@ -683,8 +744,9 @@ function KanbanColumn({
         {displayLots.map((card) => (
           <div
             key={card._id}
-            draggable={unlocked}
+            draggable={canEdit}
             onDragStart={(e) => {
+              if (!unlocked) { e.preventDefault(); onLockedDrag(); return }
               e.dataTransfer.effectAllowed = 'move'
               e.dataTransfer.setData('text/plain', card._id)
               onDragStart(card._id)
@@ -697,7 +759,7 @@ function KanbanColumn({
               stationId={stationId}
               template={templates[card.lotTemplateId]}
               onClick={unlocked ? undefined : () => onOpenDetail(card)}
-              onMove={hasOutgoing ? () => onMoveLot(card) : undefined}
+              onMove={canEdit && hasOutgoing ? () => onMoveLot(card) : undefined}
             />
           </div>
         ))}
@@ -719,22 +781,26 @@ function KanbanColumn({
         )}
       </div>
 
-      {/* Footer: source nodes (no incoming) can create; merge stations can pull */}
-      {!unlocked && (!hasIncoming || isMergeStation) && (
+      {/* Footer: source queues create a lot directly; a finished-goods leaf (no
+          outgoing route) pulls precursors. Pass-through stations do neither —
+          their lots arrive by being advanced from upstream. (Merges have their
+          own column with a pull button.) */}
+      {canManageLots && (!hasIncoming || !hasOutgoing) && (
         <div style={{ padding: size.sp2, borderTop: `1px solid ${color.border}`, flexShrink: 0 }}>
           <button
+            data-tour={hasIncoming && !hasOutgoing ? 'lots-pull' : undefined}
             onClick={onCreateLot}
             style={{
               width: '100%', background: 'transparent',
-              border: `1px dashed ${isMergeStation ? '#7C3AED80' : color.border}`,
+              border: `1px dashed ${hasIncoming ? '#7C3AED80' : color.border}`,
               borderRadius: size.radius,
-              color: isMergeStation ? '#A78BFA' : color.textDim,
+              color: hasIncoming ? '#A78BFA' : color.textDim,
               cursor: 'pointer', fontSize: 11, padding: '5px 0',
             }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.75' }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
           >
-            {isMergeStation ? '⬇ pull precursors' : '+ create lot'}
+            {hasIncoming ? '⬇ pull precursors' : '+ create lot'}
           </button>
         </div>
       )}
@@ -841,9 +907,8 @@ interface MergeColumnProps extends ColumnProps {
 function MergeColumn({
   stationId, station, lots, templates, routes, onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, onDragStart, onDragEnd, onDrop,
-  cardLimit, sortBy, sortDir,
+  cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag,
 }: MergeColumnProps) {
-  const fetchAll    = useCardsStore((s) => s.fetchAll)
   const navigate    = useNavigate()
   const accentColor = station.color ?? '#8B5CF6'
   const hasOutgoing = Object.values(routes).some((r) => r.load === stationId)
@@ -856,10 +921,9 @@ function MergeColumn({
   }).slice(0, cardLimit)
   const hiddenCount = lots.length - displayLots.length
 
-  const [hovering,   setHovering]   = useState(false)
-  const [preview,    setPreview]    = useState<MergePreview | null>(null)
-  const [merging,    setMerging]    = useState(false)
-  const [mergeError, setMergeError] = useState<string | null>(null)
+  const [hovering,  setHovering]  = useState(false)
+  const [preview,   setPreview]   = useState<MergePreview | null>(null)
+  const [showMerge, setShowMerge] = useState(false)
 
   const lotsKey = useMemo(
     () => lots.map((c) => `${c._id}:${c.bins[stationId]?.count ?? 0}`).join('|'),
@@ -872,22 +936,7 @@ function MergeColumn({
 
   useEffect(() => { refreshPreview() }, [refreshPreview, lotsKey])
 
-  const handleMerge = async () => {
-    setMerging(true)
-    setMergeError(null)
-    try {
-      await mergeApi.perform(stationId)
-      await fetchAll()
-      refreshPreview()
-    } catch (e) {
-      setMergeError(String(e))
-    } finally {
-      setMerging(false)
-    }
-  }
-
   const canMerge   = (preview?.assembliesPossible ?? 0) > 0
-  const noTemplate = preview?.isMergeStation && !preview.hasAssemblyTemplate
 
   return (
     <div
@@ -895,7 +944,7 @@ function MergeColumn({
         width:         220,
         flexShrink:    0,
         background:    columnBackground(isDragging, isDropTarget, hovering, color.bgCard),
-        border:        `1px solid ${isDragging && isDropTarget ? '#10B98150' : color.border}`,
+        border:        `1px solid ${isDragging && isDropTarget ? '#63992250' : color.border}`,
         borderTop:     columnBorderTop(accentColor, isDragging, isDropTarget, hovering),
         borderRadius:  size.radiusMd,
         display:       'flex',
@@ -956,7 +1005,7 @@ function MergeColumn({
                   <div style={{
                     height: '100%',
                     width: `${Math.min(100, (req.canMake / Math.max(1, preview.assembliesPossible || req.canMake)) * 100)}%`,
-                    background: req.availableUnits >= req.requiredPerAssembly ? '#10B981' : color.textDim,
+                    background: req.availableUnits >= req.requiredPerAssembly ? '#639922' : color.textDim,
                     borderRadius: 2,
                   }} />
                 </div>
@@ -969,57 +1018,37 @@ function MergeColumn({
         )}
       </div>
 
-      {/* Missing template error */}
-      {noTemplate && (
-        <div style={{
-          margin: size.sp2, padding: `${size.sp2} ${size.sp3}`,
-          background: '#EF444415', border: `1px solid #EF444440`,
-          borderRadius: size.radius, fontSize: 11, color: '#EF4444', lineHeight: 1.4,
-        }}>
-          No assembly template.{' '}
-          <button
-            onClick={() => navigate(`/settings?tab=templates&station=${stationId}`)}
-            style={{
-              color: color.bluePrimary, background: 'none', border: 'none',
-              cursor: 'pointer', padding: 0, fontSize: 11, textDecoration: 'underline',
-            }}
-          >
-            Create one
-          </button>
-        </div>
-      )}
-
       {/* Merge ready banner */}
-      {canMerge && (
+      {canManageLots && canMerge && (
         <div style={{
           margin: `${size.sp2} ${size.sp2} 0`,
           padding: `${size.sp2} ${size.sp3}`,
-          background: '#10B98115', border: `1px solid #10B98140`,
+          background: '#63992215', border: `1px solid #63992240`,
           borderRadius: size.radius,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: size.sp2,
         }}>
-          <span style={{ fontSize: 11, color: '#10B981', fontFamily: font.mono }}>
+          <span style={{ fontSize: 11, color: '#639922', fontFamily: font.mono }}>
             {preview!.assembliesPossible}× ready
           </span>
           <button
-            onClick={handleMerge}
-            disabled={merging}
+            onClick={() => setShowMerge(true)}
             style={{
-              background: '#10B981', color: '#fff', border: 'none',
+              background: '#639922', color: '#fff', border: 'none',
               borderRadius: size.radius, padding: '3px 10px',
-              fontSize: 11, fontFamily: font.mono,
-              cursor: merging ? 'wait' : 'pointer', opacity: merging ? 0.7 : 1,
+              fontSize: 11, fontFamily: font.mono, cursor: 'pointer',
             }}
           >
-            {merging ? '…' : 'Merge'}
+            Merge…
           </button>
         </div>
       )}
 
-      {mergeError && (
-        <div style={{ margin: `${size.sp1} ${size.sp2} 0`, fontSize: 10, color: '#EF4444' }}>
-          {mergeError}
-        </div>
+      {showMerge && (
+        <MergeLotModal
+          stationId={stationId}
+          onClose={() => setShowMerge(false)}
+          onMerged={refreshPreview}
+        />
       )}
 
       {/* Lot cards */}
@@ -1027,8 +1056,9 @@ function MergeColumn({
         {displayLots.map((card) => (
           <div
             key={card._id}
-            draggable={unlocked}
+            draggable={canEdit}
             onDragStart={(e) => {
+              if (!unlocked) { e.preventDefault(); onLockedDrag(); return }
               e.dataTransfer.effectAllowed = 'move'
               e.dataTransfer.setData('text/plain', card._id)
               onDragStart(card._id)
@@ -1041,7 +1071,7 @@ function MergeColumn({
               stationId={stationId}
               template={templates[card.lotTemplateId]}
               onClick={unlocked ? undefined : () => onOpenDetail(card)}
-              onMove={hasOutgoing ? () => onMoveLot(card) : undefined}
+              onMove={canEdit && hasOutgoing ? () => onMoveLot(card) : undefined}
             />
           </div>
         ))}
@@ -1064,7 +1094,7 @@ function MergeColumn({
       </div>
 
       {/* Footer: pull precursors */}
-      {!unlocked && (
+      {canManageLots && (
         <div style={{ padding: size.sp2, borderTop: `1px solid ${color.border}`, flexShrink: 0 }}>
           <button
             onClick={onCreateLot}

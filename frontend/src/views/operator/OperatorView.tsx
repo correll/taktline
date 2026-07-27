@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import { Heart } from 'lucide-react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
 import { sessionsApi, type WorkSession } from '../../api/sessions.api'
 import { color, font, size, shadow } from '../../theme/tokens'
@@ -6,8 +7,9 @@ import type { Card } from '../../models'
 import { formatDistanceToNow, differenceInSeconds } from 'date-fns'
 import { getValidDestinations } from '../lots/LotsView'
 import { mergeNodes } from '../../domain/graph'
-import { mergeApi } from '../../api/merge.api'
-import LotCard from '../../components/lots/LotCard'
+import { mergeApi, type MergePreview } from '../../api/merge.api'
+import { cardsApi } from '../../api/cards.api'
+import LotCard, { lotLabel } from '../../components/lots/LotCard'
 
 // Returns the total seconds from the most recent closed session for a card at a station.
 async function fetchDoneElapsed(stationId: string, cardId: string): Promise<number> {
@@ -50,7 +52,8 @@ export default function OperatorView() {
 
   const cards       = useCardsStore((s) => s.cards)
   const routes      = useProcessesStore((s) => s.routes)
-  const updateCard  = useCardsStore((s) => s.update)
+  const setStatus   = useCardsStore((s) => s.setStatus)
+  const upsertCard  = useCardsStore((s) => s.upsert)
 
   const mergeNodeSet = useMemo(
     () => mergeNodes(Object.values(routes) as { load: string; unload: string }[]),
@@ -82,8 +85,9 @@ export default function OperatorView() {
     }).catch(() => {})
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selectLocation = useCallback(async (id: string) => {
+  const selectLocation = useCallback(async (id: string, preferred?: Card | null) => {
     setStationId(id)
+    setSelectedCard(null)
     // 1. Resume any in-progress (open) session at this station.
     try {
       const sessions = await sessionsApi.list(id, true)
@@ -96,16 +100,23 @@ export default function OperatorView() {
         return
       }
     } catch { /* fall through */ }
-    // 2. Resume a card that was stopped but not yet moved (status = 'done').
-    const doneCard = Object.values(cards).find(
-      (c) => (c.bins[id]?.count ?? 0) > 0 && c.status === 'done'
-    )
+    // 2. Resume a card that was stopped but not yet moved (status = 'done') —
+    //    preferring the card the worker tapped to get here (feeding-station jump).
+    const atHere = (c: Card | null | undefined) => (c?.bins[id]?.count ?? 0) > 0
+    const doneCard =
+      (preferred && preferred.status === 'done' && atHere(preferred) ? preferred : null)
+      ?? Object.values(cards).find((c) => atHere(c) && c.status === 'done')
     if (doneCard) {
       setCard(doneCard)
       setQuantity(doneCard.bins[id]?.count ?? 1)
       setElapsed(await fetchDoneElapsed(id, doneCard._id))
       setPhase('done')
       return
+    }
+    // 3. Otherwise pick-lot — with the tapped card pre-selected if it's here.
+    if (preferred && atHere(preferred)) {
+      setSelectedCard(preferred)
+      setQuantity(preferred.bins[id]?.count ?? 1)
     }
     setPhase('pick-lot')
   }, [cards])
@@ -131,26 +142,26 @@ export default function OperatorView() {
       cardId:   c?._id ?? null,
       quantity: quantity,
     })
-    if (c) await updateCard(c._id, { status: 'working' })
+    if (c) await setStatus(c._id, 'working')
     setSession(s)
     setPhase('working')
-  }, [stationId, selectedCard, quantity, updateCard])
+  }, [stationId, selectedCard, quantity, setStatus])
 
   const handleStop = useCallback(async () => {
     if (!session) return
     await sessionsApi.end(session._id, quantity)
-    if (card) await updateCard(card._id, { status: 'done' })
+    if (card) await setStatus(card._id, 'done')
     setPhase('done')
-  }, [session, card, quantity, updateCard])
+  }, [session, card, quantity, setStatus])
 
   const handleContinue = useCallback(async () => {
     if (!stationId || !card) return
     const s = await sessionsApi.start({ stationId, cardId: card._id, quantity })
-    await updateCard(card._id, { status: 'working' })
+    await setStatus(card._id, 'working')
     setSession(s)
     setElapsedOffset(elapsed)   // timer resumes from where it left off
     setPhase('working')
-  }, [stationId, card, quantity, elapsed, updateCard])
+  }, [stationId, card, quantity, elapsed, setStatus])
 
   const handleMove = useCallback(async (toStationId: string) => {
     if (!card || !stationId) return
@@ -158,18 +169,18 @@ export default function OperatorView() {
     const moveQty   = Math.min(quantity, fromCount)
     if (moveQty <= 0) { reset(); return }
 
-    const newBins = { ...card.bins }
-    const remaining = (newBins[stationId]?.count ?? 0) - moveQty
-    if (remaining <= 0) {
-      delete newBins[stationId]
-    } else {
-      newBins[stationId] = { count: remaining }
+    // Route-constrained advance — allowed for operators (members) and admins.
+    try {
+      const moved = await cardsApi.advance(card._id, stationId, toStationId, moveQty)
+      // Store the response directly: if the follow-up status call or the WS
+      // echo is lost, the local board still reflects the committed move.
+      upsertCard(moved)
+      await setStatus(card._id, 'idle')
+    } catch (e) {
+      console.error('advance failed:', e)
     }
-    newBins[toStationId] = { count: (newBins[toStationId]?.count ?? 0) + moveQty }
-
-    await updateCard(card._id, { bins: newBins, status: 'idle' })
     reset()
-  }, [card, stationId, quantity, updateCard, reset])
+  }, [card, stationId, quantity, setStatus, upsertCard, reset])
 
   return (
     <div style={{
@@ -209,6 +220,7 @@ export default function OperatorView() {
             onSelectLot={handleSelectLot}
             onSetQuantity={setQuantity}
             onStart={handleStart}
+            onGoToStation={(id, preferred) => selectLocation(id, preferred)}
           />
         )}
         {phase === 'working' && session && stationId && (
@@ -248,13 +260,17 @@ function LocationPicker({
   onSelect:     (id: string) => void
   mergeNodeSet: Set<string>
 }) {
-  const stations = useStationsStore((s) => s.stations)
+  const stations       = useStationsStore((s) => s.stations)
+  const favorites      = useStationsStore((s) => s.favorites)
+  const toggleFavorite = useStationsStore((s) => s.toggleFavorite)
+  const fetchFavorites = useStationsStore((s) => s.fetchFavorites)
   const cards    = useCardsStore((s) => s.cards)
   const [openSessions, setOpenSessions] = useState<WorkSession[]>([])
 
   useEffect(() => {
     sessionsApi.openSessions().then(setOpenSessions).catch(() => {})
-  }, [])
+    fetchFavorites()
+  }, [fetchFavorites])
 
   const lotCounts = useMemo(() => {
     const m: Record<string, number> = {}
@@ -272,7 +288,11 @@ function LocationPicker({
     return m
   }, [openSessions])
 
-  const list = Object.values(stations).sort((a, b) => a.name.localeCompare(b.name))
+  // Favorites first, then alphabetical — a worker's own stations lead the grid.
+  const list = Object.values(stations).sort((a, b) => {
+    const favDiff = (favorites[a._id] ? 0 : 1) - (favorites[b._id] ? 0 : 1)
+    return favDiff !== 0 ? favDiff : a.name.localeCompare(b.name)
+  })
 
   if (list.length === 0) return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 300, gap: 12 }}>
@@ -290,7 +310,7 @@ function LocationPicker({
           const lots      = lotCounts[s._id] ?? 0
           const active    = openByStation[s._id] ?? 0
           const isMerge   = mergeNodeSet.has(s._id)
-          const accent    = s.color ?? color.bluePrimary
+          const accent    = s.color ?? color.lotBlue
           const sideBorder = `1px solid ${active > 0 ? color.statusRunning + '60' : lots > 0 ? accent + '50' : color.border}`
           return (
             <button key={s._id} onClick={() => onSelect(s._id)} style={{
@@ -305,6 +325,21 @@ function LocationPicker({
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <div style={{ fontSize: 15, fontWeight: 600, color: color.textPrimary, flex: 1 }}>{s.name}</div>
+                {/* span, not button: the tile itself is already a <button> */}
+                <span
+                  role="button"
+                  aria-label={favorites[s._id] ? 'Remove from favorites' : 'Add to favorites'}
+                  title={favorites[s._id] ? 'Remove from favorites' : 'Add to favorites'}
+                  onClick={(e) => { e.stopPropagation(); toggleFavorite(s._id) }}
+                  style={{ display: 'flex', alignItems: 'center', padding: 4, margin: -4, flexShrink: 0, cursor: 'pointer' }}
+                >
+                  <Heart
+                    size={15}
+                    color={favorites[s._id] ? color.bluePrimary : color.textDim}
+                    fill={favorites[s._id] ? color.bluePrimary : 'none'}
+                    strokeWidth={1.8}
+                  />
+                </span>
                 {isMerge && (
                   <span style={{
                     fontSize: 8, fontFamily: font.mono, letterSpacing: '0.08em',
@@ -331,7 +366,7 @@ function LocationPicker({
 
 function LotPicker({
   stationId, selected, quantity, isMergeStation,
-  onSelectLot, onSetQuantity, onStart,
+  onSelectLot, onSetQuantity, onStart, onGoToStation,
 }: {
   stationId:      string
   selected:       Card | null
@@ -340,37 +375,58 @@ function LotPicker({
   onSelectLot:    (c: Card | null) => void
   onSetQuantity:  (n: number) => void
   onStart:        () => void
+  onGoToStation:  (id: string, preferred?: Card | null) => void
 }) {
-  const stations  = useStationsStore((s) => s.stations)
-  const cards     = useCardsStore((s) => s.cards)
-  const templates = useProcessesStore((s) => s.lotTemplates)
-  const routes    = useProcessesStore((s) => s.routes)
-  const fetchAll  = useCardsStore((s) => s.fetchAll)
+  const stations       = useStationsStore((s) => s.stations)
+  const cards          = useCardsStore((s) => s.cards)
+  const templates      = useProcessesStore((s) => s.lotTemplates)
+  const routes         = useProcessesStore((s) => s.routes)
+  const fetchAll       = useCardsStore((s) => s.fetchAll)
+  const fetchProcesses = useProcessesStore((s) => s.fetchAll)
 
-  const [starting,   setStarting]   = useState(false)
-  const [error,      setError]      = useState<string | null>(null)
-  const [merging,    setMerging]    = useState(false)
-  const [mergeError, setMergeError] = useState<string | null>(null)
+  const [starting,    setStarting]    = useState(false)
+  const [error,       setError]       = useState<string | null>(null)
+  const [merging,     setMerging]     = useState(false)
+  const [mergeError,  setMergeError]  = useState<string | null>(null)
+  const [selectedPre, setSelectedPre] = useState<Set<string>>(new Set())
+  const [preview,     setPreview]     = useState<MergePreview | null>(null)
 
   const station = stations[stationId]
   const lots    = Object.values(cards).filter((c) => (c.bins[stationId]?.count ?? 0) > 0)
 
-  // Auto-merge when entering a merge station
+  // Merging is deliberate: the worker selects the precursor lot cards and
+  // presses MERGE (or AUTO to let the system pick). On entry we only load the
+  // preview, which tells the worker the recipe (units needed per branch).
   useEffect(() => {
     if (!isMergeStation) return
+    mergeApi.preview(stationId).then(setPreview).catch(() => {})
+  }, [stationId, isMergeStation])
+
+  const doMerge = async (cardIds?: string[]) => {
     setMerging(true)
     setMergeError(null)
-    mergeApi.perform(stationId)
-      .then(() => fetchAll())
-      .catch((e: unknown) => {
-        const msg = String(e)
-        if (msg.includes('No assembly template')) {
-          setMergeError('No assembly template configured for this station.')
-        }
-        // "not enough units" (400) is expected when precursors are incomplete — not shown as error
-      })
-      .finally(() => setMerging(false))
-  }, [stationId, isMergeStation])   // intentionally not re-running on fetchAll change
+    try {
+      await mergeApi.perform(stationId, cardIds)
+      setSelectedPre(new Set())
+      // Refetch templates too — the merge may have auto-provisioned the assembly
+      // template server-side; without it in the store the new assembly card
+      // couldn't be classified and the station looked empty.
+      await Promise.all([fetchAll(), fetchProcesses()])
+      mergeApi.preview(stationId).then(setPreview).catch(() => {})
+    } catch (e: unknown) {
+      setMergeError(String(e))
+    } finally {
+      setMerging(false)
+    }
+  }
+
+  const togglePre = (id: string) => {
+    setSelectedPre((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
   // Identify which lots are assembly cards vs. unconsumed precursors
   const incomingSourceIds = useMemo(() => {
@@ -378,17 +434,38 @@ function LotPicker({
     return new Set(Object.values(routes).filter((r) => r.unload === stationId).map((r) => r.load))
   }, [isMergeStation, routes, stationId])
 
-  const assemblyLots  = useMemo(() => lots.filter(
-    (c) => templates[c.lotTemplateId]?.startStationId === stationId,
-  ), [lots, templates, stationId])
-
   const precursorLots = useMemo(() => lots.filter((c) => {
     const sid = templates[c.lotTemplateId]?.startStationId
     return sid && incomingSourceIds.has(sid)
   }), [lots, templates, incomingSourceIds])
 
-  // At a normal station show all lots; at a merge station show only assembly lots
-  const selectableLots = isMergeStation ? assemblyLots : lots
+  // At a merge station a card is only workable once we can PROVE it's an
+  // assembly. A card whose template isn't in the store yet can't be classified
+  // — treating it as workable let operators start on unmerged precursors, so
+  // those wait in a brief "identifying" state instead (the template cache
+  // self-heals via ensureTemplates within a second or two).
+  const unclassifiedLots = useMemo(() => {
+    if (!isMergeStation) return []
+    return lots.filter((c) => !templates[c.lotTemplateId])
+  }, [isMergeStation, lots, templates])
+
+  const selectableLots = useMemo(() => {
+    if (!isMergeStation) return lots
+    const excluded = new Set([...precursorLots, ...unclassifiedLots].map((c) => c._id))
+    return lots.filter((c) => !excluded.has(c._id))
+  }, [isMergeStation, lots, precursorLots, unclassifiedLots])
+
+  // Lots still at the stations that feed this one — the material a worker may
+  // need to go fetch. Tapping one switches the operator view to that station.
+  const feedingLots = useMemo(() => {
+    const feedIds = [...new Set(
+      Object.values(routes).filter((r) => r.unload === stationId).map((r) => r.load)
+    )]
+    return feedIds.flatMap((fid) =>
+      Object.values(cards)
+        .filter((c) => (c.bins[fid]?.count ?? 0) > 0)
+        .map((c) => ({ card: c, feedStationId: fid })))
+  }, [routes, cards, stationId])
 
   const doStart = async () => {
     setStarting(true)
@@ -404,7 +481,7 @@ function LotPicker({
         <div style={{ fontSize: 20, fontWeight: 700, color: color.textPrimary }}>{station?.name}</div>
         <div style={{ fontSize: 11, color: color.textDim, marginTop: 2 }}>
           {isMergeStation
-            ? 'Select an assembled lot, then press START'
+            ? 'Select precursor lots and press MERGE to build the assembly, then work on it'
             : 'Select a lot to work on, then press START'}
         </div>
       </div>
@@ -436,7 +513,7 @@ function LotPicker({
         {selectableLots.map((c) => {
           const tmpl  = templates[c.lotTemplateId]
           const isSel = selected?._id === c._id
-          const accent = tmpl?.color ?? color.bluePrimary
+          const accent = tmpl?.color ?? color.lotBlue
           return (
             <div
               key={c._id}
@@ -454,7 +531,17 @@ function LotPicker({
           )
         })}
 
-        {selectableLots.length === 0 && !merging && (
+        {unclassifiedLots.length > 0 && (
+          <div style={{
+            padding: `${size.sp2} ${size.sp3}`, background: color.bgCard,
+            border: `1px dashed ${color.border}`, borderRadius: size.radiusMd,
+            color: color.textDim, fontSize: 11, fontFamily: font.mono,
+          }}>
+            Identifying {unclassifiedLots.length} lot{unclassifiedLots.length !== 1 ? 's' : ''}…
+          </div>
+        )}
+
+        {selectableLots.length === 0 && unclassifiedLots.length === 0 && !merging && (
           <div style={{
             padding: size.sp5, background: color.bgCard, borderRadius: size.radiusMd,
             color: color.textDim, fontSize: 12, textAlign: 'center',
@@ -467,40 +554,158 @@ function LotPicker({
         )}
       </div>
 
-      {/* Unconsumed precursor lots — grayed out, not selectable */}
+      {/* Precursor lots — worker selects which cards to merge */}
       {isMergeStation && precursorLots.length > 0 && (
         <div>
           <div style={{
             fontSize: 9, fontFamily: font.mono, color: color.textDim,
             letterSpacing: '0.1em', marginBottom: size.sp2,
           }}>
-            WAITING FOR MORE PRECURSORS
+            PRECURSORS HERE — SELECT, THEN MERGE
           </div>
+          {preview && preview.requirements.length > 0 && (
+            <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, marginBottom: size.sp2 }}>
+              1 assembly needs {preview.requirements
+                .map((r) => `${r.requiredPerAssembly} × ${stations[r.sourceStationId]?.name ?? '?'}`)
+                .join('  +  ')}
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
             {precursorLots.map((c) => {
               const tmpl  = templates[c.lotTemplateId]
               const count = c.bins[stationId]?.count ?? 0
+              const isSel = selectedPre.has(c._id)
+              const accent = tmpl?.color ?? '#8B5CF6'
               return (
-                <div key={c._id} style={{
-                  background:   color.bgCard,
-                  border:       `1px solid ${color.border}`,
-                  borderLeft:   `4px solid ${color.textDim}`,
-                  borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
-                  display: 'flex', alignItems: 'center', gap: size.sp3,
-                  opacity: 0.45, pointerEvents: 'none',
-                }}>
+                <div
+                  key={c._id}
+                  onClick={() => togglePre(c._id)}
+                  style={{
+                    background:   isSel ? '#8B5CF615' : color.bgCard,
+                    border:       `1px solid ${isSel ? '#8B5CF680' : color.border}`,
+                    borderLeft:   `4px solid ${accent}`,
+                    borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
+                    display: 'flex', alignItems: 'center', gap: size.sp3,
+                    cursor: 'pointer', transition: 'border-color 0.12s, background 0.12s',
+                  }}
+                >
+                  {/* selection check */}
+                  <div style={{
+                    width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                    border: `2px solid ${isSel ? '#8B5CF6' : color.border}`,
+                    background: isSel ? '#8B5CF6' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#fff', fontSize: 11, fontWeight: 700,
+                  }}>
+                    {isSel ? '✓' : ''}
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: color.textPrimary }}>
                       {tmpl?.name ?? 'Unknown'}
-                      {c.lotNum != null && (
-                        <span style={{ color: color.textSecondary, fontFamily: font.mono, fontWeight: 400 }}> #{c.lotNum}</span>
-                      )}
+                      <span style={{ color: color.textSecondary, fontFamily: font.mono, fontWeight: 400 }}> {lotLabel(c)}</span>
                     </div>
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
                     <div style={{ fontSize: 9, color: color.textDim }}>units</div>
                   </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* MERGE selected / AUTO */}
+          <div style={{ display: 'flex', gap: size.sp2, marginTop: size.sp3 }}>
+            <button
+              onClick={() => doMerge([...selectedPre])}
+              disabled={merging || selectedPre.size === 0}
+              style={{
+                flex: 1, padding: `${size.sp3} 0`,
+                background: merging || selectedPre.size === 0 ? '#8B5CF630' : '#8B5CF6',
+                border: 'none', borderRadius: size.radiusMd,
+                color: '#fff', fontFamily: font.mono, fontSize: 14, fontWeight: 700,
+                letterSpacing: '0.08em',
+                cursor: merging || selectedPre.size === 0 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {merging ? 'MERGING…' : `MERGE${selectedPre.size > 0 ? ` (${selectedPre.size})` : ''}`}
+            </button>
+            <button
+              onClick={() => doMerge()}
+              disabled={merging}
+              title="Merge automatically from any available precursors"
+              style={{
+                padding: `${size.sp3} ${size.sp5}`,
+                background: 'transparent',
+                border: '1px solid #8B5CF660', borderRadius: size.radiusMd,
+                color: '#8B5CF6', fontFamily: font.mono, fontSize: 14, fontWeight: 700,
+                letterSpacing: '0.08em',
+                cursor: merging ? 'not-allowed' : 'pointer',
+              }}
+            >
+              AUTO
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Lots waiting at the stations that feed this one — tap to go fetch */}
+      {feedingLots.length > 0 && (
+        <div>
+          <div style={{
+            fontSize: 9, fontFamily: font.mono, color: color.textDim,
+            letterSpacing: '0.1em', marginBottom: size.sp2,
+          }}>
+            AT FEEDING LOCATIONS — TAP TO GO THERE
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+            {feedingLots.map(({ card: c, feedStationId }) => {
+              const tmpl   = templates[c.lotTemplateId]
+              const feed   = stations[feedStationId]
+              const count  = c.bins[feedStationId]?.count ?? 0
+              const accent = tmpl?.color ?? color.lotBlue
+              const badge  = c.status === 'done'
+                ? { text: 'FINISHED', color: color.statusRunning }
+                : c.status === 'working'
+                  ? { text: 'IN WORK', color: '#EF9F27' }
+                  : null
+              return (
+                <div
+                  key={`${c._id}:${feedStationId}`}
+                  onClick={() => onGoToStation(feedStationId, c)}
+                  style={{
+                    background:   color.bgCard,
+                    border:       `1px solid ${color.border}`,
+                    borderLeft:   `4px solid ${accent}`,
+                    borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
+                    display: 'flex', alignItems: 'center', gap: size.sp3,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: color.textPrimary }}>
+                      {tmpl?.name ?? 'Lot'}
+                      <span style={{ color: color.textSecondary, fontFamily: font.mono, fontWeight: 400 }}> {lotLabel(c)}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, marginTop: 2 }}>
+                      at {feed?.name ?? '—'}
+                    </div>
+                  </div>
+                  {badge && (
+                    <span style={{
+                      fontSize: 8, fontFamily: font.mono, letterSpacing: '0.08em', flexShrink: 0,
+                      color: badge.color, background: `${badge.color}20`,
+                      border: `1px solid ${badge.color}40`,
+                      borderRadius: size.radiusFull, padding: '1px 6px',
+                    }}>
+                      {badge.text}
+                    </span>
+                  )}
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
+                    <div style={{ fontSize: 9, color: color.textDim }}>units</div>
+                  </div>
+                  <span style={{ color: color.textDim, fontSize: 14, flexShrink: 0 }}>→</span>
                 </div>
               )
             })}
@@ -707,7 +912,7 @@ function DonePanel({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: size.sp6, paddingTop: size.sp8 }}>
       <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 40, marginBottom: 8, filter: 'drop-shadow(0 0 12px #10B981)' }}>✓</div>
+        <div style={{ fontSize: 40, marginBottom: 8, filter: 'drop-shadow(0 0 12px #639922)' }}>✓</div>
         <div style={{ fontSize: 22, fontWeight: 700, color: color.statusRunning }}>DONE</div>
         <div style={{ fontSize: 13, color: color.textSecondary, marginTop: 4 }}>{station?.name}</div>
       </div>
@@ -728,7 +933,7 @@ function DonePanel({
       {card && (
         <div style={{ fontSize: 12, color: color.textSecondary, textAlign: 'center' }}>
           {tmpl?.name ?? 'Lot'}
-          {card.lotNum != null && <span style={{ fontFamily: font.mono }}> #{card.lotNum}</span>}
+          <span style={{ fontFamily: font.mono }}> {lotLabel(card)}</span>
         </div>
       )}
 

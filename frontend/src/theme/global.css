@@ -4,14 +4,109 @@
   padding: 0;
 }
 
-:root {
+/* ── Theme variables (BRANDING.md §2) ───────────────────────────────────────
+   Day is the default; a signed-in user's stored preference (user.preferences
+   .theme, mirrored to localStorage for pre-paint) switches it via data-theme
+   on <html>. Andon status colors and the heatmap ramp are identical in both
+   themes and therefore stay literal in tokens.ts / mapColors.ts — never theme
+   them. */
+
+:root[data-theme='night'] {
   color-scheme: dark;
+
+  /* Surfaces */
+  --tk-bg-deep:     #121110;
+  --tk-bg-panel:    #191817;
+  --tk-bg-card:     #1D1C1A;
+  --tk-bg-elevated: #2A2825;
+  --tk-bg-hover:    #343230;
+  --tk-bg-input:    #211F1D;
+
+  /* Borders */
+  --tk-border:        #33312D;
+  --tk-border-strong: #4A4741;
+  --tk-border-bright: #F0997B;
+
+  /* Text */
+  --tk-text-primary:   #EFEDE7;
+  --tk-text-secondary: #B4B1A9;
+  --tk-text-dim:       #8A8781;
+  --tk-text-disabled:  #5C5952;
+
+  /* Brand accent text — coral-200 on dark, coral-600 on light (contrast notes) */
+  --tk-brand-text: #F0997B;
+
+  /* Floating map chrome (toolbars, scale bar, hint pills) + modal backdrops */
+  --tk-glass:        rgba(10, 9, 8, 0.82);
+  --tk-glass-border: rgba(255, 255, 255, 0.15);
+  --tk-glass-text:   rgba(235, 241, 248, 0.8);
+  --tk-backdrop:     rgba(10, 9, 8, 0.72);
+
+  /* Map station tiles (HTML overlay on the floor plan) */
+  --tk-map-node-bg-rgb: 13, 27, 46;
+  --tk-map-node-text:   #C5D3E2;
+
+  /* Readable-on-surface variants of hues that fail contrast on white */
+  --tk-warn-text:       #EF9F27;
+  --tk-hint-route:      #C4B5FD;
+  --tk-hint-location:   #93C5FD;
+
+  /* Shadows */
+  --tk-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --tk-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.55);
+  --tk-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.65);
+
+  --tk-scroll-track: #191817;
+  --tk-scroll-thumb: #33312D;
+}
+
+:root,
+:root[data-theme='day'] {
+  color-scheme: light;
+
+  /* Surfaces — warm inks (light mode) */
+  --tk-bg-deep:     #F7F6F2;   /* ink-50 page */
+  --tk-bg-panel:    #FFFFFF;   /* surface */
+  --tk-bg-card:     #FFFFFF;
+  --tk-bg-elevated: #EFEDE7;   /* ink-100 raised */
+  --tk-bg-hover:    #E7E4DC;
+  --tk-bg-input:    #FFFFFF;
+
+  --tk-border:        #D8D5CD; /* ink-200 hairline */
+  --tk-border-strong: #B4B1A9; /* ink-300 */
+  --tk-border-bright: #D85A30;
+
+  --tk-text-primary:   #1A1917; /* ink-900 */
+  --tk-text-secondary: #6B6862; /* ink-500 */
+  --tk-text-dim:       #7C7972;
+  --tk-text-disabled:  #B4B1A9;
+
+  --tk-brand-text: #993C1D;    /* coral-600 — AA on white */
+
+  --tk-glass:        rgba(255, 255, 255, 0.88);
+  --tk-glass-border: rgba(26, 25, 23, 0.18);
+  --tk-glass-text:   rgba(61, 59, 55, 0.9);
+  --tk-backdrop:     rgba(26, 25, 23, 0.45);
+
+  --tk-map-node-bg-rgb: 255, 255, 255;
+  --tk-map-node-text:   #3D3B37;
+
+  --tk-warn-text:       #955D00;
+  --tk-hint-route:      #6D28D9;
+  --tk-hint-location:   #1D4ED8;
+
+  --tk-shadow-sm: 0 1px 3px rgba(26, 25, 23, 0.12);
+  --tk-shadow-md: 0 4px 12px rgba(26, 25, 23, 0.15);
+  --tk-shadow-lg: 0 8px 32px rgba(26, 25, 23, 0.2);
+
+  --tk-scroll-track: #EFEDE7;
+  --tk-scroll-thumb: #D8D5CD;
 }
 
 html, body {
   height: 100%;
-  background: #060E1E;
-  color: #EBF1F8;
+  background: var(--tk-bg-deep);
+  color: var(--tk-text-primary);
   font-family: "Inter", system-ui, -apple-system, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -28,14 +123,14 @@ html, body {
 /* ── Scrollbars ─────────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar        { width: 5px; height: 5px; }
-::-webkit-scrollbar-track  { background: #0B1627; }
-::-webkit-scrollbar-thumb  { background: #1E3A5F; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #2D6EDF; }
+::-webkit-scrollbar-track  { background: var(--tk-scroll-track); }
+::-webkit-scrollbar-thumb  { background: var(--tk-scroll-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #D85A30; }
 
 /* ── Focus / selection ──────────────────────────────────────────────────── */
 
-:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }
-::selection    { background: rgba(37, 99, 235, 0.3); color: #EBF1F8; }
+:focus-visible { outline: 2px solid #D85A30; outline-offset: 2px; }
+::selection    { background: rgba(216, 90, 48, 0.3); color: var(--tk-text-primary); }
 
 /* ── Utility classes ────────────────────────────────────────────────────── */
 
@@ -60,18 +155,57 @@ html, body {
   display: inline-block;
   flex-shrink: 0;
 }
-.status-dot.running { background: #10B981; box-shadow: 0 0 6px #10B981; animation: pulse-green 2s infinite; }
-.status-dot.idle    { background: #6B7280; }
-.status-dot.warning { background: #F59E0B; box-shadow: 0 0 6px #F59E0B; }
-.status-dot.fault   { background: #EF4444; box-shadow: 0 0 6px #EF4444; animation: pulse-red 1s infinite; }
-.status-dot.offline { background: #374151; }
+.status-dot.running { background: #639922; box-shadow: 0 0 6px #639922; animation: pulse-green 2s infinite; }
+.status-dot.idle    { background: #888780; }
+.status-dot.warning { background: #EF9F27; box-shadow: 0 0 6px #EF9F27; }
+.status-dot.fault   { background: #E24B4A; box-shadow: 0 0 6px #E24B4A; animation: pulse-red 1s infinite; }
+.status-dot.offline { background: #4A4741; }
 
 @keyframes pulse-green {
-  0%, 100% { box-shadow: 0 0 4px #10B981; }
-  50%       { box-shadow: 0 0 10px #10B981; }
+  0%, 100% { box-shadow: 0 0 4px #639922; }
+  50%       { box-shadow: 0 0 10px #639922; }
 }
 
 @keyframes pulse-red {
-  0%, 100% { box-shadow: 0 0 4px #EF4444; }
-  50%       { box-shadow: 0 0 12px #EF4444; }
+  0%, 100% { box-shadow: 0 0 4px #E24B4A; }
+  50%       { box-shadow: 0 0 12px #E24B4A; }
+}
+
+/* Lock/DRAG button flash — feedback when a card drag is attempted while locked. */
+@keyframes taktline-lock-flash {
+  0%, 100% { transform: scale(1); }
+  20%      { transform: scale(1.14); box-shadow: 0 0 14px rgba(245, 158, 11, 0.85); }
+  45%      { transform: scale(0.95); }
+  70%      { transform: scale(1.08); box-shadow: 0 0 10px rgba(245, 158, 11, 0.6); }
+}
+.lock-flash {
+  animation: taktline-lock-flash 0.5s ease;
+  border-color: #EF9F27 !important;
+  color: #EF9F27 !important;
+  background: rgba(245, 158, 11, 0.15) !important;
+}
+
+/* Product-tour highlight ring — pulses around the element the user should click.
+   No screen dimming: the rest of the app stays at normal brightness so people can
+   still read it while the ring draws the eye. */
+@keyframes taktline-tour-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0.55), 0 0 14px 2px rgba(59,130,246,0.35); }
+  70%  { box-shadow: 0 0 0 10px rgba(59,130,246,0), 0 0 14px 2px rgba(59,130,246,0.20); }
+  100% { box-shadow: 0 0 0 0 rgba(59,130,246,0), 0 0 14px 2px rgba(59,130,246,0.20); }
+}
+/* Map: flash isolated-subgraph stations when hovering the warning. */
+@keyframes taktline-node-flash {
+  0%, 100% { outline: 3px solid rgba(245,158,11,0);   outline-offset: 3px; }
+  50%      { outline: 3px solid rgba(245,158,11,0.95); outline-offset: 3px; }
+}
+.map-node-flash { animation: taktline-node-flash 0.8s ease-in-out infinite; }
+
+.tour-ring {
+  position: fixed;
+  border: 2px solid #F0997B;
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 9998;
+  transition: top 0.15s ease, left 0.15s ease, width 0.15s ease, height 0.15s ease;
+  animation: taktline-tour-pulse 1.6s ease-out infinite;
 }

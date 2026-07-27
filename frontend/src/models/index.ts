@@ -84,7 +84,9 @@ export interface Card {
   _id: ID
   lotTemplateId: ID
   processId: ID
-  lotNum: number | null
+  // Human lot code (e.g. "E4096A") — user-defined at creation or generated;
+  // kept by every piece when a lot is split apart.
+  lotNum: string | null
   totalQuantity: number
   bins: Record<ID, Bin>           // stationId → Bin
   fields: Record<string, unknown>

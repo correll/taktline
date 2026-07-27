@@ -105,7 +105,7 @@ export default function MapConfigTab() {
         width:       320,
         flexShrink:  0,
         overflowY:   'auto',
-        background:  'rgba(6,14,30,0.82)',
+        background:  color.glass,
         backdropFilter: 'blur(8px)',
         borderRight: `1px solid ${color.border}`,
         padding:     `${size.sp6} ${size.sp5}`,
@@ -344,8 +344,8 @@ function LiveScaleBar({ ppu, unit }: { ppu: number; unit: 'ft' | 'm' }) {
       position:      'absolute',
       bottom:        16,
       left:          16,
-      background:    'rgba(6,14,30,0.80)',
-      border:        `1px solid rgba(255,255,255,0.18)`,
+      background:    color.glass,
+      border:        `1px solid ${color.glassBorder}`,
       borderRadius:  4,
       padding:       '5px 8px 6px',
       pointerEvents: 'none',
@@ -353,7 +353,7 @@ function LiveScaleBar({ ppu, unit }: { ppu: number; unit: 'ft' | 'm' }) {
     }}>
       <div style={{
         fontSize:      10,
-        color:         'rgba(235,241,248,0.75)',
+        color:         color.glassText,
         textAlign:     'center',
         marginBottom:  3,
         fontFamily:    '"JetBrains Mono", monospace',
@@ -366,7 +366,7 @@ function LiveScaleBar({ ppu, unit }: { ppu: number; unit: 'ft' | 'm' }) {
         height={AH * 2 + 4}
         style={{ display: 'block', overflow: 'visible' }}
       >
-        <g transform={`translate(0,${AH + 2})`} stroke="#EBF1F8" fill="#EBF1F8">
+        <g transform={`translate(0,${AH + 2})`} stroke={color.textPrimary} fill={color.textPrimary}>
           <polygon points={`0,0 ${AL},${-AH} ${AL},${AH}`} />
           <line x1={AL} y1={0} x2={barLength - AL} y2={0} strokeWidth={1.5} />
           <polygon points={`${barLength},0 ${barLength - AL},${-AH} ${barLength - AL},${AH}`} />

@@ -4,7 +4,7 @@ import { color, font, size } from '../../theme/tokens'
 import type { LotTemplate, FieldDefinition, FieldType } from '../../models'
 import { Modal, FieldLabel, inputStyle, primaryBtn, secondaryBtn, dangerBtn, ErrorMsg, ListRow } from './shared'
 
-const LOT_COLORS = ['#3B82F6','#10B981','#F59E0B','#8B5CF6','#EF4444','#06B6D4','#F97316','#EC4899']
+const LOT_COLORS = ['#F0997B','#639922','#EF9F27','#8B5CF6','#E24B4A','#06B6D4','#F97316','#EC4899']
 const FIELD_TYPES: FieldType[] = ['text', 'number', 'date', 'select']
 
 type FormState = {
@@ -57,13 +57,19 @@ export default function TemplatesTab({ initialStationId }: Props = {}) {
   // Deep-link from merge station error banner: open create modal pre-populated
   useEffect(() => {
     if (initialStationId) {
-      setForm({ ...blank(), startStationId: initialStationId })
+      setForm({ ...blank(), startStationId: initialStationId, processId: soleProcessId() })
       setCreating(true)
       setError(null)
     }
   }, [initialStationId])
 
-  const openCreate = () => { setForm(blank()); setCreating(true); setError(null) }
+  // Default the process to the only one that exists, so single-process setups
+  // (the common case) don't have to pick it every time.
+  const soleProcessId = () => {
+    const ps = Object.values(processes)
+    return ps.length === 1 ? ps[0]._id : ''
+  }
+  const openCreate = () => { setForm({ ...blank(), processId: soleProcessId() }); setCreating(true); setError(null) }
   const openEdit   = (t: LotTemplate) => { setForm(templateToForm(t)); setEditing(t); setError(null) }
   const closeModal = () => { setCreating(false); setEditing(null) }
 

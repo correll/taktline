@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import type { Process, Route, LotTemplate } from '../models'
 import { processesApi } from '../api/processes.api'
+import { loadSlice, saveSlice } from './offlineCache'
 
 interface ProcessesState {
   processes:    Record<string, Process>
@@ -21,11 +22,19 @@ interface ProcessesState {
   createTemplate:  (body: Partial<LotTemplate>)                   => Promise<LotTemplate>
   updateTemplate:  (id: string, patch: Partial<LotTemplate>)      => Promise<LotTemplate>
   deleteTemplate:  (id: string)                                    => Promise<void>
+  // Self-healing template cache: the server auto-provisions templates during
+  // pulls/merges/order releases, so cards can arrive (fetch or WS) referencing
+  // templates this client has never seen. Call with the template ids in use —
+  // any unknown id triggers a debounced refetch, so lots never stay "Unknown"
+  // and merge-station precursor classification can't silently fail.
+  ensureTemplates: (templateIds: (string | undefined)[])           => void
 }
+
+let _lastEnsureFetch = 0
 
 export const useProcessesStore = create<ProcessesState>()(
   devtools(
-    immer((set) => ({
+    immer((set, get) => ({
       processes:    {},
       routes:       {},
       lotTemplates: {},
@@ -46,8 +55,18 @@ export const useProcessesStore = create<ProcessesState>()(
             s.lotTemplates = Object.fromEntries(templates.map((t) => [t._id, t]))
             s.loading = false
           })
+          saveSlice('graph', { processes, routes, templates })
         } catch (e) {
-          set((s) => { s.loading = false; s.error = String(e) })
+          const cached = loadSlice<{ processes: Process[]; routes: Route[]; templates: LotTemplate[] }>('graph')
+          set((s) => {
+            if (cached) {
+              s.processes    = Object.fromEntries(cached.processes.map((p) => [p._id, p]))
+              s.routes       = Object.fromEntries(cached.routes.map((r) => [r._id, r]))
+              s.lotTemplates = Object.fromEntries(cached.templates.map((t) => [t._id, t]))
+            }
+            s.loading = false
+            s.error = cached ? null : String(e)
+          })
         }
       },
 
@@ -101,7 +120,17 @@ export const useProcessesStore = create<ProcessesState>()(
         await processesApi.deleteTemplate(id)
         set((s) => { delete s.lotTemplates[id] })
       },
+
+      ensureTemplates: (templateIds) => {
+        const known = get().lotTemplates
+        if (!templateIds.some((id) => id && !known[id])) return
+        if (get().loading) return
+        const now = Date.now()
+        if (now - _lastEnsureFetch < 4000) return   // debounce refetch storms
+        _lastEnsureFetch = now
+        void get().fetchAll()
+      },
     })),
-    { name: 'veridion/processes' }
+    { name: 'taktline/processes' }
   )
 )

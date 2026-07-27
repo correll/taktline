@@ -2,7 +2,17 @@ import { client } from './client'
 
 export interface GlobalSettingsData {
   timezone: string
+  // 7×24 grid; each cell is a 4-bit quarter mask (0–15), bit i = the i-th 15-min
+  // quarter of the hour (bit 0 = :00–:15 … bit 3 = :45–:00). Day 0 = Monday.
+  workHours: number[][]
 }
+
+export const FULL_HOUR = 0b1111   // all four quarters open
+
+// Mon–Fri 9am–5pm fully open; weekends closed.
+export const defaultWorkHours = (): number[][] =>
+  Array.from({ length: 7 }, (_, d) =>
+    Array.from({ length: 24 }, (_, h) => (d < 5 && h >= 9 && h < 17 ? FULL_HOUR : 0)))
 
 export const globalSettingsApi = {
   get: (): Promise<GlobalSettingsData> => client.get('/global-settings/'),

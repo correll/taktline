@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useStationsStore } from '../../store'
+import { useStationsStore, useProcessesStore, useMapSettingsStore } from '../../store'
 import { color, font, size } from '../../theme/tokens'
 import type { Station, AdapterType } from '../../models'
 import { Modal, FieldLabel, inputStyle, primaryBtn, secondaryBtn, dangerBtn, ErrorMsg, ListRow } from './shared'
@@ -13,7 +13,7 @@ const ADAPTER_TYPES: { value: AdapterType; label: string }[] = [
   { value: 'uav',         label: 'UAV / Drone'         },
 ]
 
-const LOT_COLORS = ['#3B82F6','#10B981','#F59E0B','#8B5CF6','#EF4444','#06B6D4','#F97316','#EC4899']
+const LOT_COLORS = ['#F0997B','#639922','#EF9F27','#8B5CF6','#E24B4A','#06B6D4','#F97316','#EC4899']
 
 type FormState = {
   name:         string
@@ -50,6 +50,9 @@ export default function StationsTab() {
   const createStation = useStationsStore((s) => s.create)
   const updateStation = useStationsStore((s) => s.update)
   const removeStation = useStationsStore((s) => s.remove)
+  const routes         = useProcessesStore((s) => s.routes)
+  const refreshProcess = useProcessesStore((s) => s.fetchAll)
+  const mapSettings    = useMapSettingsStore((s) => s.settings)
 
   const [editing, setEditing]   = useState<Station | null>(null)
   const [creating, setCreating] = useState(false)
@@ -58,7 +61,20 @@ export default function StationsTab() {
   const [error, setError]       = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Station | null>(null)
 
-  const openCreate = () => { setForm(blank()); setCreating(true); setError(null) }
+  // Place each new location 3 units (e.g. 3 ft) to the right of the most recent
+  // one, so they line up along the flow instead of stacking on top of each other.
+  const nextPosition = () => {
+    const list = Object.values(stations)
+    if (list.length === 0) return { x: 100, y: 100 }
+    const ppu  = mapSettings?.pixelsPerUnit ?? 100
+    const prev = list.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b))
+    return { x: Math.round(prev.position.x + 3 * ppu), y: Math.round(prev.position.y) }
+  }
+  const openCreate = () => {
+    const p = nextPosition()
+    setForm({ ...blank(), x: String(p.x), y: String(p.y) })
+    setCreating(true); setError(null)
+  }
   const openEdit   = (s: Station) => { setForm(stationToForm(s)); setEditing(s); setError(null) }
   const closeModal = () => { setCreating(false); setEditing(null) }
 
@@ -100,6 +116,9 @@ export default function StationsTab() {
 
   const handleDelete = async (s: Station) => {
     await removeStation(s._id)
+    // The DB cascades away routes touching this station; refresh so they don't
+    // linger in the board/map (and templates whose origin was reset).
+    await refreshProcess()
     setConfirmDelete(null)
   }
 
@@ -118,7 +137,7 @@ export default function StationsTab() {
         <span style={{ flex: 1, fontSize: 11, color: color.textDim }}>
           {list.length} location{list.length !== 1 ? 's' : ''}
         </span>
-        <button onClick={openCreate} style={primaryBtn()}>+ Add Location</button>
+        <button data-tour="add-location" onClick={openCreate} style={primaryBtn()}>+ Add Location</button>
       </div>
 
       {/* List */}
@@ -233,21 +252,21 @@ export default function StationsTab() {
                       gap:            3,
                       padding:        '6px 4px',
                       borderRadius:   size.radius,
-                      background:     active ? `${form.color ?? '#3B82F6'}22` : color.bgCard,
+                      background:     active ? `${form.color ?? '#F0997B'}22` : color.bgCard,
                       border:         active
-                        ? `1.5px solid ${form.color ?? '#3B82F6'}`
+                        ? `1.5px solid ${form.color ?? '#F0997B'}`
                         : `1px solid ${color.border}`,
                       cursor:         'pointer',
                     }}
                   >
                     <Icon
                       size={18}
-                      color={active ? (form.color ?? '#3B82F6') : color.textSecondary}
+                      color={active ? (form.color ?? '#F0997B') : color.textSecondary}
                       strokeWidth={1.5}
                     />
                     <span style={{
                       fontSize:   8,
-                      color:      active ? (form.color ?? '#3B82F6') : color.textDim,
+                      color:      active ? (form.color ?? '#F0997B') : color.textDim,
                       textAlign:  'center',
                       lineHeight: 1.2,
                       whiteSpace: 'nowrap',
@@ -289,18 +308,37 @@ export default function StationsTab() {
       )}
 
       {/* Confirm delete */}
-      {confirmDelete && (
-        <Modal title="Delete Station?" onClose={() => setConfirmDelete(null)} width={360}>
+      {confirmDelete && (() => {
+        const nameOf = (id: string) => stations[id]?.name ?? '—'
+        const affected = Object.entries(routes)
+          .filter(([, r]) => r.load === confirmDelete._id || r.unload === confirmDelete._id)
+        return (
+        <Modal title="Delete Station?" onClose={() => setConfirmDelete(null)} width={380}>
           <p style={{ fontSize: 13, color: color.textSecondary, margin: 0 }}>
             Delete <strong style={{ color: color.textPrimary }}>{confirmDelete.name}</strong>?
             This cannot be undone. Lots at this location will lose their bin entry.
           </p>
-          <div style={{ display: 'flex', gap: size.sp2, justifyContent: 'flex-end' }}>
+          {affected.length > 0 && (
+            <div style={{ marginTop: size.sp3, padding: `${size.sp2} ${size.sp3}`,
+                          background: '#EF9F2714', border: `1px solid #EF9F2740`, borderRadius: size.radius }}>
+              <div style={{ fontSize: 12.5, color: '#EF9F27', fontWeight: 600, marginBottom: 4 }}>
+                {affected.length} connected route{affected.length === 1 ? '' : 's'} will also be deleted:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: color.textSecondary, lineHeight: 1.55 }}>
+                {affected.slice(0, 6).map(([id, r]) => (
+                  <li key={id}>{nameOf(r.load)} → {nameOf(r.unload)}</li>
+                ))}
+                {affected.length > 6 && <li>…and {affected.length - 6} more</li>}
+              </ul>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: size.sp2, justifyContent: 'flex-end', marginTop: size.sp4 }}>
             <button onClick={() => setConfirmDelete(null)} style={secondaryBtn}>Cancel</button>
             <button onClick={() => handleDelete(confirmDelete)} style={dangerBtn}>Delete</button>
           </div>
         </Modal>
-      )}
+        )
+      })()}
     </div>
   )
 }

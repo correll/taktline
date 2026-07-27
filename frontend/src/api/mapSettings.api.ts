@@ -1,4 +1,3 @@
-import axios from 'axios'
 import { client } from './client'
 
 export interface MapSettingsData {
@@ -19,12 +18,14 @@ export const mapSettingsApi = {
   update: (patch: Partial<MapSettingsData>): Promise<MapSettingsData> =>
     client.put('/map-settings/', patch),
 
-  uploadFloorPlan: async (file: File): Promise<{ url: string }> => {
+  // Routed through the shared client so it inherits withCredentials, the
+  // X-Company-Id header, and CSRF. Content-Type is cleared so the browser sets
+  // the multipart boundary itself.
+  uploadFloorPlan: (file: File): Promise<{ url: string }> => {
     const form = new FormData()
     form.append('file', file)
-    const res = await axios.post('/api/map-settings/upload-floor-plan', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+    return client.post('/map-settings/upload-floor-plan', form, {
+      headers: { 'Content-Type': undefined as unknown as string },
     })
-    return res.data
   },
 }

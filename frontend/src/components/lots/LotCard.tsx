@@ -21,8 +21,8 @@ function timeAgo(iso: string): string {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  working: '#10B981',
-  done:    '#3B82F6',
+  working: '#639922',
+  done:    '#F0997B',
   idle:    color.textDim,
 }
 const STATUS_LABEL: Record<string, string> = {
@@ -31,14 +31,18 @@ const STATUS_LABEL: Record<string, string> = {
   idle:    '',
 }
 
+/** The lot's human identifier: its stored code (e.g. "E4096A"), `#`-prefixed
+ * when it's a legacy numeric value, or a short id for un-coded cards. */
+export const lotLabel = (card: Pick<Card, 'lotNum' | '_id'>): string => {
+  const code = card.lotNum
+  if (code == null || code === '') return card._id.slice(-6).toUpperCase()
+  return /^\d+$/.test(code) ? `#${code}` : code
+}
+
 export default function LotCard({ card, template, stationId, onClick }: Props) {
   const count  = card.bins[stationId]?.count ?? 0
-  const accent = template?.color ?? color.bluePrimary
+  const accent = template?.color ?? color.lotBlue
   const pct    = card.totalQuantity > 0 ? count / card.totalQuantity : 0
-
-  const lotLabel = card.lotNum != null
-    ? `#${card.lotNum}`
-    : card._id.slice(-6).toUpperCase()
 
   return (
     <div
@@ -102,7 +106,7 @@ export default function LotCard({ card, template, stationId, onClick }: Props) {
             fontFamily: font.mono, fontSize: 18, fontWeight: 700,
             color: color.textPrimary, lineHeight: 1,
           }}>
-            {lotLabel}
+            {lotLabel(card)}
           </div>
           <div style={{ textAlign: 'right', lineHeight: 1 }}>
             <span style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>

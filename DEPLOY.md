@@ -19,14 +19,26 @@ no CORS, and no cross-site WebSocket handling.
 
 ## 1. Check the branch
 
-A Blueprint follows your repo's **default branch**, and `Dockerfile` +
-`render.yaml` must be on it — deploying a branch without them fails with a
-build error that does not explain itself. Either merge your release branch into
-`main`, or set the branch under Service → Settings once the blueprint exists.
+You pick the branch when you create the Blueprint, so it does not have to be
+`main` — but `Dockerfile` and `render.yaml` must exist on whichever branch you
+choose. Deploying one without them fails with a build error that does not
+explain itself.
 
 ## 2. Create the blueprint
 
-In Render: **New → Blueprint** → connect the repo → **Apply**.
+**A Blueprint is created at the workspace level, not inside a Project.** If you
+have just made a Project and are looking at its "add a service" menu, you will
+only be offered Web Service, Static Site, Postgres and so on — Blueprint is not
+there. Go back to the dashboard root.
+
+From [dashboard.render.com](https://dashboard.render.com): the **New** button
+in the top navigation → **Blueprint**. (Direct link:
+[dashboard.render.com/blueprints](https://dashboard.render.com/blueprints) →
+**New Blueprint**.)
+
+Then: select the repository → **Connect** → name the Blueprint and **choose the
+branch** → leave Blueprint Path empty (it defaults to `render.yaml` at the
+root) → review the proposed changes → **Deploy Blueprint**.
 
 Render reads `render.yaml` and creates:
 

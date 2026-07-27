@@ -48,11 +48,16 @@ services:
       - key: COOKIE_SAMESITE
         value: lax                     # same-origin hosting → no cross-site cookies
 
-      # ── Set these after the first deploy (Render prompts) ─────────────────
-      # Your service URL, e.g. https://taktline.onrender.com (or your custom
-      # domain). Used for the links in verification / invite / reset emails.
+      # The public URL of this deployment — it is what the links in
+      # verification / invite / password-reset emails are built from. Set to the
+      # custom domain up front so those links are right from the first account;
+      # until the domain resolves (see DEPLOY.md step 5) a link can still be
+      # used by swapping the host for the .onrender.com one — the token is the
+      # same. Change this if you deploy somewhere else.
       - key: FRONTEND_BASE_URL
-        sync: false
+        value: https://taktline.com
+
+      # ── Set these after the first deploy (Render prompts) ─────────────────
       # Platform staff (customer-service dashboard at /platform). Deliberately
       # env-only: no API path can mint an owner.
       - key: PLATFORM_OWNER_EMAILS

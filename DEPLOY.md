@@ -80,11 +80,12 @@ reads `render.yaml` and provisions two things: the web service `taktline` and a
 Postgres database `taktline-db`. It wires `DATABASE_URL` between them and
 generates `SECRET_KEY` itself, so neither ever touches your repo.
 
-The blueprint asks for four values it cannot invent:
+`FRONTEND_BASE_URL` is pre-set to `https://taktline.com` in `render.yaml` —
+change that line if you are deploying anywhere else. The blueprint asks for
+three values it cannot invent:
 
 | Variable | What to put | If you skip it |
 |---|---|---|
-| `FRONTEND_BASE_URL` | your service URL — you do not know it yet, see step 2 | verification and invite emails link to `localhost` |
 | `PLATFORM_OWNER_EMAILS` | your email | no access to the `/platform` support dashboard |
 | `SENDGRID_API_KEY` | a SendGrid API key | email is logged instead of sent — see step 4 |
 | `SMTP_FROM` | a **verified** sender, e.g. `Taktline <no-reply@taktline.com>` | SendGrid rejects the message |
@@ -92,14 +93,16 @@ The blueprint asks for four values it cannot invent:
 Leave any of them blank for now; you can fill them in later under
 Service → Environment. Saving an env var triggers a redeploy automatically.
 
-### 2. Set `FRONTEND_BASE_URL` once you know the URL
+### 2. Know which URL your emails point at
 
-This is the one ordering wrinkle: Render assigns the URL
-(`https://<service>.onrender.com`) only after the service exists, but the app
-needs it to build the links it puts in emails. So after the first deploy, copy
-the URL from the top of the service page into `FRONTEND_BASE_URL` and let it
-redeploy. If you plan to use a custom domain (step 5), set it to the custom
-domain instead and skip a round trip.
+`FRONTEND_BASE_URL` is what the app builds verification, invite and
+password-reset links from. It is committed as `https://taktline.com`, so those
+links are right from the very first account — but until the custom domain
+actually resolves (step 5) they point somewhere that does not answer yet.
+
+That is harmless and easy to work around: the token in the link is what
+matters, not the host. Swap `taktline.com` for your `*.onrender.com` hostname
+and the same link works. Or just do step 5 before creating your account.
 
 ### 3. Watch the first deploy
 
@@ -143,9 +146,13 @@ it wants. At your registrar:
   no ALIAS at the apex, so either use the A record or host DNS at Cloudflare.
 - **subdomain** (`app.taktline.com`) — a `CNAME` to the `onrender.com` hostname.
 
+Add **both** `taktline.com` and `www.taktline.com` — Render redirects one to
+the other, so a visitor who types `www` still lands on the app and on the same
+origin your cookies are set for.
+
 Render issues the TLS certificate automatically once the record resolves
-(usually minutes; DNS propagation can take longer). Afterwards, update
-`FRONTEND_BASE_URL` to the custom domain so email links point at it.
+(usually minutes; DNS propagation can take longer). `FRONTEND_BASE_URL` already
+points here, so nothing else changes once it is live.
 
 ### 6. Before you put real work on it
 

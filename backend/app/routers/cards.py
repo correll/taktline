@@ -232,15 +232,12 @@ async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id
     return branches
 
 
-async def _branch_units(session, company_id, row: CardRow, branch: RouteRow, quantity: int) -> int:
-    """Pieces produced on one branch of a split. On a *merge feed* the weight
-    means units consumed per assembly and is applied at the merge, not here."""
-    merge_feed = (await session.execute(
+async def _is_merge_station(session, company_id, station_uuid, process_id) -> bool:
+    return (await session.execute(
         select(func.count()).select_from(RouteRow).where(
-            RouteRow.companyId == company_id, RouteRow.unload == branch.unload,
-            RouteRow.processId == row.processId)
+            RouteRow.companyId == company_id, RouteRow.unload == station_uuid,
+            RouteRow.processId == process_id)
     )).scalar_one() >= 2
-    return quantity * (1 if merge_feed else max(1, branch.quantity))
 
 
 async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id: str,
@@ -285,8 +282,20 @@ async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id:
 
     requested: Card | None = None
     for branch in branches:
-        units = await _branch_units(session, company_id, row, branch, quantity)
-        tmpl = await _ensure_origination_template(session, company_id, branch.unload, process_id)
+        into_merge = await _is_merge_station(session, company_id, branch.unload, process_id)
+        # On a merge feed the weight counts units consumed per assembly and is
+        # applied at the merge, so the branch itself moves 1:1.
+        units = quantity * (1 if into_merge else max(1, branch.quantity))
+        # Which product the piece *is*. Normally it is whatever that branch
+        # originates. But a branch landing on a merge station must stay
+        # identifiable as "the piece that came from this branch": the merge
+        # matches precursors by their template's origin, and the target's own
+        # template is the one it mints assemblies with — so a piece carrying it
+        # would be invisible as a precursor and would masquerade as finished
+        # output. Pin it to the branch's source instead, exactly like a lot that
+        # simply travels into a merge.
+        tmpl_station = branch.load if into_merge else branch.unload
+        tmpl = await _ensure_origination_template(session, company_id, tmpl_station, process_id)
         piece = CardRow(
             companyId=company_id, lotTemplateId=tmpl.id, processId=process_id,
             lotNum=inherit_num, totalQuantity=units,

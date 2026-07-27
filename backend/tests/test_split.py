@@ -224,3 +224,72 @@ def test_warehouse_is_excluded_from_oee():
 
     one = a.req("GET", f"/sessions/stats/{wh['_id']}").json()
     assert one["isWarehouse"] is True and one["oee"] is None
+
+
+def test_split_branch_landing_on_a_merge_station_stays_a_precursor():
+    """loc1 splits, one branch lands on loc3 — which is itself a merge fed by
+    loc5. The minted piece must read as "the loc1 branch's precursor", not as
+    loc3's own product (that template is what loc3 mints assemblies with)."""
+    a = Actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    l1, l3, l5, l9 = st("loc1"), st("loc3"), st("loc5"), st("loc9")
+    p = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
+    for load, unload in ((l1, l9), (l1, l3), (l5, l3)):
+        assert a.req("POST", "/routes/", {"processId": p, "load": load["_id"],
+                                          "unload": unload["_id"], "quantity": 1}).status_code == 201
+    mk_t = lambda n, sid: a.req("POST", "/lot-templates/", {
+        "name": n, "processId": p, "startStationId": sid}).json()
+    t1, t5 = mk_t("Bar", l1["_id"]), mk_t("Widget", l5["_id"])
+    mk_c = lambda t, sid: a.req("POST", "/cards/", {
+        "lotTemplateId": t["_id"], "processId": p, "totalQuantity": 1,
+        "bins": {sid: {"count": 1}}, "fields": {}, "flagged": False,
+        "description": "", "status": "idle"}).json()
+
+    a.req("POST", f"/cards/{mk_c(t1, l1['_id'])['_id']}/advance",
+          {"fromStationId": l1["_id"], "toStationId": l3["_id"], "quantity": 1})
+    a.req("POST", f"/cards/{mk_c(t5, l5['_id'])['_id']}/advance",
+          {"fromStationId": l5["_id"], "toStationId": l3["_id"], "quantity": 1})
+
+    tmpls = {t["_id"]: t for t in a.req("GET", "/lot-templates/").json()}
+    at3 = [c for c in a.req("GET", "/cards/").json()
+           if c["bins"].get(l3["_id"], {}).get("count", 0) > 0]
+    # Neither piece wears loc3's own (assembly) template.
+    assert all(tmpls[c["lotTemplateId"]]["startStationId"] != l3["_id"] for c in at3)
+    assert {tmpls[c["lotTemplateId"]]["startStationId"] for c in at3} == {l1["_id"], l5["_id"]}
+
+    assert a.req("GET", f"/merge/{l3['_id']}").json()["assembliesPossible"] == 1
+    r = a.req("POST", f"/merge/{l3['_id']}")
+    assert r.status_code == 201, r.text
+    assert r.json()["assemblies"] == 1
+    # The assembly is loc3's own product, and the precursors are gone.
+    after = [c for c in a.req("GET", "/cards/").json()
+             if c["bins"].get(l3["_id"], {}).get("count", 0) > 0]
+    assert len(after) == 1
+    assert tmpls.get(after[0]["lotTemplateId"], a.req("GET", "/lot-templates/").json()
+                     and next(t for t in a.req("GET", "/lot-templates/").json()
+                              if t["_id"] == after[0]["lotTemplateId"]))["startStationId"] == l3["_id"]
+
+
+def test_two_split_fed_branches_into_one_merge_stay_distinct():
+    """Both branches are minted by splits; each must keep its own source's
+    identity or the merge would count one pile twice."""
+    a = Actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    bar, plate, scrapA, scrapB, asm = st("bar"), st("plate"), st("scrapA"), st("scrapB"), st("asm")
+    p = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
+    for load, unload in ((bar, scrapA), (bar, asm), (plate, scrapB), (plate, asm)):
+        assert a.req("POST", "/routes/", {"processId": p, "load": load["_id"],
+                                          "unload": unload["_id"], "quantity": 1}).status_code == 201
+    for src in (bar, plate):
+        t = a.req("POST", "/lot-templates/", {"name": f"{src['name']} stock",
+                                              "processId": p, "startStationId": src["_id"]}).json()
+        c = a.req("POST", "/cards/", {
+            "lotTemplateId": t["_id"], "processId": p, "totalQuantity": 1,
+            "bins": {src["_id"]: {"count": 1}}, "fields": {}, "flagged": False,
+            "description": "", "status": "idle"}).json()
+        a.req("POST", f"/cards/{c['_id']}/advance",
+              {"fromStationId": src["_id"], "toStationId": asm["_id"], "quantity": 1})
+
+    prev = a.req("GET", f"/merge/{asm['_id']}").json()
+    assert [r["availableUnits"] for r in prev["requirements"]] == [1, 1]   # not [2, 0]
+    assert prev["assembliesPossible"] == 1

@@ -109,8 +109,10 @@ export function ManualContent() {
               how they connect — and every view (map, board, statistics) derives from it.</LI>
             <LI><B>Work travels on cards.</B> A lot card is attached to a physical lot of products and
               moves with it from station to station, carrying quantity and history.</LI>
-            <LI><B>Assemblies are merges.</B> When several parts come together into one product, their
-              precursor cards are consumed and a new assembly card is born.</LI>
+            <LI><B>Assemblies are merges, disassemblies are splits.</B> When several parts come
+              together into one product, their precursor cards are consumed and a new assembly card
+              is born. When one piece of material becomes many — a bar cut into tubes — the card
+              multiplies along the split route instead.</LI>
             <LI><B>Map today, improve tomorrow.</B> Taktline maps your workflow exactly as it runs today.
               Don’t change anything yet — start using the system as-is, watch where work actually piles up,
               then reshape your process to maximize flow.</LI>
@@ -263,7 +265,12 @@ export function ManualContent() {
             <LI><B>Queue / source</B> — a location with no incoming routes. New lots originate here from a
               lot template.</LI>
             <LI><B>Merge station</B> — a location with two or more incoming routes. Precursor lots are
-              consumed there and a new assembly lot is created.</LI>
+              consumed there and a new assembly lot is created; each route's weight is how many
+              upstream units go into one assembly.</LI>
+            <LI><B>Split station</B> — the mirror image: a location with two or more outgoing routes,
+              where one unit becomes several pieces. A route's weight is how many pieces each unit
+              yields (one steel bar cut into four tubes), so advancing a lot along it multiplies the
+              card — and pulling four tubes orders just one bar.</LI>
             <LI><B>Warehouse</B> — a leaf with no outgoing routes: where finished goods end up.</LI>
             <LI><B>Lot template</B> — the card design for a product, pinned to the source location that
               originates it.</LI>

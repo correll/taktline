@@ -103,11 +103,11 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
     if len(incoming) >= 2:
         # Assembled product → pull precursor lots at the leaf source queues, tagged.
         process_id = incoming[0].processId
-        sources = await _leaf_sources(session, company_id, target, 1, process_id)
+        sources = await _leaf_sources(session, company_id, target, body.quantity, process_id)
         if not sources:
             raise HTTPException(422, "No source queues feed this product")
         for src in sources:
-            units = body.quantity * src["quantity"]
+            units = src["quantity"]
             await _spawn_lot(session, company_id, src["template"].id, process_id,
                              src["station_id"], units, order.id, lot_code)
     else:

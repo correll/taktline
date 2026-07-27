@@ -201,12 +201,17 @@ export function computeColumnGroups(
   return { order, solidBars, dashedBars }
 }
 
-// Computes display lanes for the split view: one lane per source node.
-// Post-merge segments are appended to the first lane that "claims" the merge
-// node (first-come-first-served in source order), so the longest lane is the
-// one whose source feeds the first merge. The lane count equals the number of
-// source nodes, which is also the peak parallelism of the process.
-export function computeLanes(edges: Edge[], allNodeIds: string[]): string[][] {
+// Computes display lanes for the split view: one lane per parallel path.
+//
+// A lane starts at each source node, and forks: when a station splits (two or
+// more outgoing routes) the lane follows its first successor while every other
+// successor starts a lane of its own — otherwise the split branches would be
+// invisible in this view. Merge nodes are claimed first-come-first-served, so
+// a post-merge segment extends exactly one lane. `offset` is the column depth
+// the lane begins at, so a branch can be indented under the station it leaves.
+export interface Lane { nodes: string[]; offset: number }
+
+export function computeLanes(edges: Edge[], allNodeIds: string[]): Lane[] {
   if (allNodeIds.length === 0) return []
 
   const adj   = new Map<string, string[]>()
@@ -218,37 +223,78 @@ export function computeLanes(edges: Edge[], allNodeIds: string[]): string[][] {
     inDeg.set(e.unload, (inDeg.get(e.unload) ?? 0) + 1)
   }
 
+  // Longest downstream chain per node, so a lane can follow the "trunk" of a
+  // split instead of whichever branch happened to be drawn first (a two-step
+  // scrap branch shouldn't hijack the lane from the main line).
+  const reach = new Map<string, number>()
+  const depthOf = (id: string, seen = new Set<string>()): number => {
+    const cached = reach.get(id)
+    if (cached !== undefined) return cached
+    if (seen.has(id)) return 0            // defensive: cycles are rejected elsewhere
+    seen.add(id)
+    const d = 1 + Math.max(0, ...(adj.get(id) ?? []).map((n) => depthOf(n, seen)))
+    seen.delete(id)
+    reach.set(id, d)
+    return d
+  }
+  for (const id of allNodeIds) depthOf(id)
+  const trunkFirst = (ids: string[]) =>
+    [...ids].sort((a, b) => (reach.get(b) ?? 0) - (reach.get(a) ?? 0))
+
   const sources       = allNodeIds.filter((id) => (inDeg.get(id) ?? 0) === 0)
   const mergeAssigned = new Set<string>()
-  const lanes: string[][] = []
+  const lanes: Lane[] = []
+  const pending: { start: string; offset: number }[] =
+    trunkFirst(sources).map((id) => ({ start: id, offset: 0 }))
+  const started = new Set<string>()
 
-  for (const src of sources) {
-    const lane: string[] = []
-    let cur: string | null = src
+  while (pending.length > 0) {
+    const { start, offset } = pending.shift()!
+    if (started.has(start)) continue
+    started.add(start)
+
+    const nodes: string[] = []
+    const branches: { start: string; offset: number }[] = []
+    let cur: string | null = start
+    let depth = offset
 
     while (cur !== null) {
-      const node = cur  // const narrows to string; cur is mutable so TS won't narrow it
-      lane.push(node)
-      const nexts: string[] = adj.get(node) ?? []
+      const node: string = cur
+      nodes.push(node)
+      depth += 1
+      const nexts: string[] = trunkFirst(adj.get(node) ?? [])
+
+      // The trunk continues into the deepest successor; every other successor
+      // starts its own lane, indented to the column it branches from.
+      for (const branch of nexts.slice(1)) {
+        if (!started.has(branch) && (inDeg.get(branch) ?? 0) < 2) {
+          branches.push({ start: branch, offset: depth })
+        }
+      }
 
       if (nexts.length === 0) {
-        cur = null  // sink — end of lane
+        cur = null                       // sink — end of lane
       } else {
-        const next: string = nexts[0]  // follow first successor; forks: first edge wins
+        const next: string = nexts[0]
         if ((inDeg.get(next) ?? 0) >= 2) {
           if (!mergeAssigned.has(next)) {
             mergeAssigned.add(next)
-            cur = next  // claim merge node and continue this lane through it
+            cur = next                   // claim the merge and continue through it
           } else {
-            cur = null  // another lane already owns this merge — stop here
+            cur = null                   // another lane owns it — stop here
           }
+        } else if (started.has(next)) {
+          cur = null                     // already shown in another lane
         } else {
+          started.add(next)
           cur = next
         }
       }
     }
 
-    if (lane.length > 0) lanes.push(lane)
+    if (nodes.length > 0) lanes.push({ nodes, offset })
+    // Branches read best directly under the lane they leave, before the next source.
+    pending.unshift(...branches)
   }
 
   return lanes

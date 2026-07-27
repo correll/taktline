@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Map, TabletSmartphone, TrendingUp, Boxes, Timer, Printer, GitMerge, WifiOff, Gauge } from 'lucide-react'
+import { Map, TabletSmartphone, TrendingUp, Boxes, Timer, Printer, GitMerge, GitBranch, WifiOff, Gauge } from 'lucide-react'
 import { authApi } from '../../api/auth.api'
 import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
@@ -96,8 +96,8 @@ function Hero() {
           color: color.textSecondary,
         }}>
           Taktline models your production as a living graph — locations, routes, and lot
-          cards that flow through them. Takt time and OEE update as work moves.
-          No installs, no consultants.
+          cards that flow through them, splitting and merging exactly like your material
+          does. Takt time and OEE update as work moves. No installs, no consultants.
         </p>
         <div style={{ marginTop: size.sp8, display: 'flex', gap: size.sp3, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Link to="/signup" style={{ ...primaryBtn, fontSize: 16, padding: '12px 28px' }}>
@@ -143,7 +143,7 @@ const STEPS = [
   {
     Icon: Map,
     title: 'Map your value stream in minutes',
-    body: 'Draw your locations and routes right on the floor plan — the same graph your material actually follows, merges included.',
+    body: 'Draw your locations and routes right on the floor plan — the same graph your material actually follows, splits and merges included.',
   },
   {
     Icon: TabletSmartphone,
@@ -194,7 +194,8 @@ function Steps() {
 
 const FEATURES = [
   { Icon: Boxes,    title: 'Lot cards, digital and printed', body: 'Kanban cards travel with the material — on the board and as barcode labels off a thermal printer.' },
-  { Icon: GitMerge, title: 'Assemblies done right', body: 'Merge stations consume precursors by your edge weights: one frame + one drivetrain = one e-bike.' },
+  { Icon: GitMerge,  title: 'Merges: assemblies done right', body: 'A merge station consumes precursors by your edge weights — one frame + three motors = one e-bike, never “a few extra”.' },
+  { Icon: GitBranch, title: 'Splits: one input, many pieces', body: 'A split station multiplies a lot the other way: one steel bar becomes four tubes, and pulling four tubes orders exactly one bar.' },
   { Icon: Timer,    title: 'Timing without timekeeping', body: 'Start/stop at the station drives takt time and OEE per location. No stopwatch, no forms.' },
   { Icon: Gauge,    title: 'The bottleneck, visibly', body: 'A violet heatmap over your floor plan shows where work piles up — status colors stay reserved for status.' },
   { Icon: Printer,  title: 'Print & scan to advance', body: 'Scan a lot label and it moves down the route. A scanner and a phone are all a station needs.' },

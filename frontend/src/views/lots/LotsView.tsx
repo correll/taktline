@@ -258,7 +258,7 @@ export default function LotsView() {
 
   const collapseAllGroups = () => {
     const keys = splitRows
-      ? splitRows.map((lane) => lane[0]?.stationId).filter((k): k is string => !!k)
+      ? splitRows.map((lane) => lane.cols[0]?.stationId).filter((k): k is string => !!k)
       : segments.map((s) => s.key)
     const next = new Set(keys)
     try { localStorage.setItem('lots-groups', JSON.stringify([...next])) } catch {}
@@ -279,7 +279,12 @@ export default function LotsView() {
     const edgeList = Object.values(routes).map((r) => ({ load: r.load, unload: r.unload }))
     const lanes    = computeLanes(edgeList, Object.keys(stations))
     if (lanes.length === 0) return null
-    return lanes.map((lane) => lane.map((id) => colById.get(id)!).filter(Boolean))
+    return lanes
+      .map((lane) => ({
+        offset: lane.offset,
+        cols:   lane.nodes.map((id) => colById.get(id)!).filter(Boolean),
+      }))
+      .filter((lane) => lane.cols.length > 0)
   }, [splitMode, columns, stations, routes, colById])
 
   // ─── Column-item renderer (shared by normal and split layouts) ────────────
@@ -507,7 +512,7 @@ export default function LotsView() {
           overflowX:     'hidden',
           overflowY:     'auto',
         }}>
-          {splitRows.map((lane, laneIdx) => {
+          {splitRows.map(({ cols: lane, offset }, laneIdx) => {
             const laneKey        = lane[0]?.stationId ?? `lane-${laneIdx}`
             const isLaneCollapsed = collapsedGroups.has(laneKey)
             const visibleLane    = isLaneCollapsed
@@ -544,6 +549,11 @@ export default function LotsView() {
                     gap:        size.sp4,
                     alignItems: 'flex-start',
                   }}>
+                    {/* A split branch starts mid-graph: indent it so it sits
+                        under the station it leaves from. */}
+                    {offset > 0 && !isLaneCollapsed && (
+                      <div aria-hidden style={{ width: offset * (COL_W + 16) - 16, flexShrink: 0 }} />
+                    )}
                     {visibleLane.map(renderColumnItem)}
                   </div>
                 </div>

@@ -2,7 +2,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.connection import get_session, require_uuid
@@ -320,6 +320,13 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
 
 # ─── Pull: create precursor lots at all upstream source stations ──────────────
 
+async def _outgoing_count(session, company_id, load_uuid) -> int:
+    return (await session.execute(
+        select(func.count()).select_from(RouteRow).where(
+            RouteRow.companyId == company_id, RouteRow.load == load_uuid)
+    )).scalar_one()
+
+
 async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, process_id=None) -> list[dict]:
     incoming = await _incoming_routes(session, company_id, station_uuid)
     if not incoming:
@@ -330,8 +337,16 @@ async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, 
     results: list[dict] = []
     for route in incoming:
         route_qty = max(1, route.quantity)
+        if len(incoming) == 1 and await _outgoing_count(session, company_id, route.load) >= 2:
+            # Split: the upstream unit becomes route_qty pieces, so demand for N
+            # pieces needs only ceil(N / route_qty) of it — one bar, four tubes.
+            upstream = -(-multiplier // route_qty)
+        else:
+            # Merge feed (or a plain 1:1 hop): each downstream unit consumes
+            # route_qty upstream units.
+            upstream = multiplier * route_qty
         results.extend(await _leaf_sources(
-            session, company_id, route.load, multiplier * route_qty,
+            session, company_id, route.load, upstream,
             process_id if process_id is not None else route.processId,
         ))
     return results
@@ -351,7 +366,7 @@ async def pull_for_merge(station_id: str, body: PullRequest,
         raise HTTPException(400, "This location has no upstream sources to pull from")
 
     process_id = incoming[0].processId
-    sources = await _leaf_sources(session, ctx.company_id, station_uuid, 1, process_id)
+    sources = await _leaf_sources(session, ctx.company_id, station_uuid, body.quantity, process_id)
     if not sources:
         raise HTTPException(422, "No upstream source stations found")
 
@@ -362,7 +377,7 @@ async def pull_for_merge(station_id: str, body: PullRequest,
 
     for src in sources:
         tmpl = src["template"]
-        src_qty = body.quantity * src["quantity"]
+        src_qty = src["quantity"]
         station_row = await session.get(StationRow, require_uuid(src["station_id"]))
         station_name = station_row.name if station_row else src["station_id"]
 

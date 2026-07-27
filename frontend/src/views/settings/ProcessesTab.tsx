@@ -246,10 +246,10 @@ function RouteRow({ route, label, selected, isMergeFeed, onEditEndpoints }: {
         {label}
       </span>
       {isMergeFeed ? (
-        <QtyStepper value={route.quantity} onChange={saveQty} title="Edge weight — upstream units required per cycle" />
+        <QtyStepper value={route.quantity} onChange={saveQty} title="Edge weight — units consumed per assembly (merge) or pieces produced per unit (split)" />
       ) : (
         <span
-          title="Weights apply only to routes that are one of multiple feeds into a merge station"
+          title="Weights apply where the graph branches — a feed into a merge station, or one of several routes out of a split station"
           style={{ fontSize: 11, color: color.textDim, fontFamily: font.mono, padding: '0 8px' }}
         >
           ×1
@@ -281,11 +281,16 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
   const stationList   = Object.values(stations).sort((a, b) => a.name.localeCompare(b.name))
   const stationName   = (id: string) => stations[id]?.name ?? id
 
-  // Weights only exist on merge feeds: a station with ≥2 incoming routes
-  // (counted across all processes, matching the backend rule).
+  // A weight only means something where the graph branches (matching the
+  // backend rule): a feed into a merge station — units consumed per assembly —
+  // or one of several routes out of a split station — pieces produced per unit.
   const incomingCount = (stationId: string, excludeRouteId?: string | null) =>
     Object.values(routes).filter((r) => r.unload === stationId && r._id !== excludeRouteId).length
-  const formWeightEditable = !!toId && incomingCount(toId, editingId) >= 1
+  const outgoingCount = (stationId: string, excludeRouteId?: string | null) =>
+    Object.values(routes).filter((r) => r.load === stationId && r._id !== excludeRouteId).length
+  const formWeightEditable =
+    (!!toId   && incomingCount(toId,   editingId) >= 1) ||
+    (!!fromId && outgoingCount(fromId, editingId) >= 1)
 
   const resetForm = () => { setEditingId(null); setFromId(''); setToId(''); setQty(1); setError(null) }
   const loadForEdit = (r: Route) => { setEditingId(r._id); setFromId(r.load); setToId(r.unload); setQty(r.quantity); setError(null) }
@@ -336,7 +341,7 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
                   key={r._id}
                   route={r}
                   selected={editingId === r._id}
-                  isMergeFeed={incomingCount(r.unload) >= 2}
+                  isMergeFeed={incomingCount(r.unload) >= 2 || outgoingCount(r.load) >= 2}
                   onEditEndpoints={() => loadForEdit(r)}
                   label={<>
                     {stationName(r.load)}
@@ -347,8 +352,9 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
               ))}
             </div>
             <div style={{ fontSize: 10, color: color.textDim, marginTop: 4 }}>
-              Use the <span style={{ fontFamily: font.mono }}>▲▼</span> arrows to set each route's weight
-              (upstream units required per cycle); click a route to change its from/to locations.
+              Use the <span style={{ fontFamily: font.mono }}>▲▼</span> arrows to set each route's weight —
+              units consumed per assembly at a merge, pieces produced per unit at a split;
+              click a route to change its from/to locations.
             </div>
           </>
         )}
@@ -368,10 +374,10 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
             {stationList.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
           </select>
           {formWeightEditable ? (
-            <QtyStepper value={qty} onChange={setQty} title="Edge weight — upstream units required per cycle" />
+            <QtyStepper value={qty} onChange={setQty} title="Edge weight — units consumed per assembly (merge) or pieces produced per unit (split)" />
           ) : (
             <span
-              title="Weights apply only to routes that are one of multiple feeds into a merge station"
+              title="Weights apply where the graph branches — a feed into a merge station, or one of several routes out of a split station"
               style={{ fontSize: 11, color: color.textDim, fontFamily: font.mono, padding: '0 8px' }}
             >
               ×1
@@ -380,8 +386,8 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
         </div>
         <div style={{ fontSize: 10, color: color.textDim, marginTop: 4 }}>
           {formWeightEditable
-            ? 'Weight = units of the upstream product required per assembly cycle.'
-            : 'Weights become editable once the target station has a second incoming route (a merge).'}
+            ? 'Weight = units consumed per assembly at a merge, or pieces produced per unit at a split.'
+            : 'Weights become editable once this route branches — a second route into the target (merge) or out of the source (split).'}
         </div>
         <ErrorMsg msg={error} />
         <div style={{ marginTop: size.sp2, display: 'flex', justifyContent: 'flex-end', gap: size.sp2 }}>

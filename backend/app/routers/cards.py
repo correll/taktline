@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import PlainTextResponse
 from typing import List
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -207,9 +207,47 @@ async def delete_card(card_id: str, ctx: CompanyContext = Depends(require_super_
 
 # ─── Move / advance / unmerge ──────────────────────────────────────────────────
 
-async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_id: str, quantity: int) -> Card:
+async def _split_factor(session, company_id, from_id: str, to_id: str) -> int:
+    """How many downstream units one upstream unit becomes on this route.
+
+    A **split** is a station with two or more outgoing routes: the weight says
+    how many pieces each unit becomes (one steel bar cut into four tubes). A
+    weight on a *merge feed* means the opposite — units consumed per assembly —
+    and is applied when merging, so merge feeds never multiply here.
+    """
+    from_uuid, to_uuid = parse_uuid(from_id), parse_uuid(to_id)
+    if from_uuid is None or to_uuid is None:
+        return 1
+    route = (await session.execute(
+        select(RouteRow).where(
+            RouteRow.companyId == company_id,
+            RouteRow.load == from_uuid,
+            RouteRow.unload == to_uuid,
+        )
+    )).scalars().first()
+    if route is None or route.quantity <= 1:
+        return 1
+    incoming = (await session.execute(
+        select(func.count()).select_from(RouteRow).where(
+            RouteRow.companyId == company_id, RouteRow.unload == to_uuid)
+    )).scalar_one()
+    if incoming >= 2:
+        return 1        # merge feed — the weight is consumed at the merge instead
+    outgoing = (await session.execute(
+        select(func.count()).select_from(RouteRow).where(
+            RouteRow.companyId == company_id, RouteRow.load == from_uuid)
+    )).scalar_one()
+    return route.quantity if outgoing >= 2 else 1
+
+
+async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_id: str,
+                            quantity: int, produced: int | None = None) -> Card:
     """Shift `quantity` units of a card between two of its bins, record the
-    'moved' event, and fire the arrive/depart plugin notifications."""
+    'moved' event, and fire the arrive/depart plugin notifications.
+
+    `produced` (default: `quantity`) is how many units arrive at the target —
+    larger when the route splits one unit into several pieces."""
+    produced = quantity if produced is None else produced
     old_bins = dict(row.bins or {})
     from_count = old_bins.get(from_id, {}).get("count", 0)
     if quantity < 1 or quantity > from_count:
@@ -222,9 +260,14 @@ async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_
     else:
         new_bins[from_id] = {"count": new_from}
     to_count = old_bins.get(to_id, {}).get("count", 0)
-    new_bins[to_id] = {"count": to_count + quantity}
+    new_bins[to_id] = {"count": to_count + produced}
 
     row.bins = new_bins
+    # Splitting creates pieces, so the lot grows; totalQuantity must keep
+    # covering the bins (sum(bins) <= totalQuantity is the card invariant).
+    if produced != quantity:
+        in_bins = sum(b.get("count", 0) for b in new_bins.values())
+        row.totalQuantity = max(row.totalQuantity + (produced - quantity), in_bins)
     row.updatedAt = utcnow()
     await session.flush()
     card = _to_card(row)
@@ -285,8 +328,11 @@ async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(
     """Super-admin lot-board drag: unconstrained move of units between any two
     bins (forward or backward along the graph — backward can trigger unmerge)."""
     row = await _get_owned(session, card_id, ctx, for_update=True)
-    card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId, body.toStationId, body.quantity)
-    await _record_order_progress(session, ctx.company_id, row, body.toStationId, body.quantity)
+    produced = body.quantity * await _split_factor(
+        session, ctx.company_id, body.fromStationId, body.toStationId)
+    card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId,
+                                   body.toStationId, body.quantity, produced)
+    await _record_order_progress(session, ctx.company_id, row, body.toStationId, produced)
     return card
 
 
@@ -320,8 +366,11 @@ async def advance_card(card_id: str, body: AdvanceBody,
     )).scalars().first()
     if route is None:
         raise HTTPException(400, "No route from the current station to the target station")
-    card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId, body.toStationId, body.quantity)
-    await _record_order_progress(session, ctx.company_id, row, body.toStationId, body.quantity)
+    produced = body.quantity * await _split_factor(
+        session, ctx.company_id, body.fromStationId, body.toStationId)
+    card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId,
+                                   body.toStationId, body.quantity, produced)
+    await _record_order_progress(session, ctx.company_id, row, body.toStationId, produced)
     return card
 
 

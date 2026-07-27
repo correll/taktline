@@ -39,10 +39,11 @@ export function connectWS(): void {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     retryDelay = 3000
     failedAttempts = 0
-    // Events broadcast while we were disconnected are gone for good — refetch
-    // the cards so the board can't keep showing a lot at its old station. A
-    // session that booted from the offline cache resyncs everything.
-    if (hadConnection || wasStale) useCardsStore.getState().fetchAll()
+    // Events broadcast while we were not listening are gone for good — refetch
+    // so the board can't keep showing a lot at its old station. This runs on
+    // the FIRST open too: between the initial fetch and the socket opening
+    // there is a window where another device's move would be missed.
+    useCardsStore.getState().fetchAll()
     if (wasStale) {
       useStationsStore.getState().fetchAll()
       useProcessesStore.getState().fetchAll()

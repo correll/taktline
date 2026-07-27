@@ -327,6 +327,21 @@ async def _outgoing_count(session, company_id, load_uuid) -> int:
     )).scalar_one()
 
 
+def _coalesce_sources(sources: list[dict]) -> list[dict]:
+    """Recombine demand that reconverges on the same source — the reverse of a
+    split. In a diamond (one source feeding two branches that merge again) each
+    branch walks back to the same station, but one unit there becomes a piece on
+    *every* branch at once, so the requirement is the largest branch's demand,
+    not their sum. Distinct sources are left alone (that is a plain merge)."""
+    merged: dict[tuple, dict] = {}
+    for src in sources:
+        key = (src["station_id"], src["template"].id)
+        prev = merged.get(key)
+        if prev is None or src["quantity"] > prev["quantity"]:
+            merged[key] = src
+    return list(merged.values())
+
+
 async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, process_id=None) -> list[dict]:
     incoming = await _incoming_routes(session, company_id, station_uuid)
     if not incoming:
@@ -349,7 +364,7 @@ async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, 
             session, company_id, route.load, upstream,
             process_id if process_id is not None else route.processId,
         ))
-    return results
+    return _coalesce_sources(results)
 
 
 @router.post("/{station_id}/pull", response_model=PullResult, status_code=201)

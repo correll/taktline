@@ -75,3 +75,53 @@ def test_weight_still_rejected_on_an_unbranched_route():
     r = a.req("POST", "/routes/", {"processId": proc["_id"], "load": x["_id"],
                                    "unload": y["_id"], "quantity": 3})
     assert r.status_code == 400 and "branches" in r.text
+
+
+def _diamond(a: Actor):
+    """loc1 --> loc2 --> loc4  and  loc1 --> loc3 --> loc4 (all weights 1)."""
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    l1, l2, l3, l4 = st("loc1"), st("loc2"), st("loc3"), st("loc4")
+    p = a.req("POST", "/processes/", {"name": "Diamond"}).json()["_id"]
+    for load, unload in ((l1, l2), (l1, l3), (l2, l4), (l3, l4)):
+        r = a.req("POST", "/routes/", {"processId": p, "load": load["_id"],
+                                       "unload": unload["_id"], "quantity": 1})
+        assert r.status_code == 201, r.text
+    return l1, l2, l3, l4, p
+
+
+def test_diamond_pull_creates_a_single_source_lot():
+    """Demand that reconverges on one split source is recombined: pulling one
+    assembly orders ONE lot at loc1, not one per branch."""
+    a = Actor(); bootstrap_admin(a)
+    l1, _l2, _l3, l4, _p = _diamond(a)
+    r = a.req("POST", f"/merge/{l4['_id']}/pull", {"quantity": 1})
+    assert r.status_code == 201, r.text
+    sources = r.json()["sources"]
+    assert len(sources) == 1
+    assert sources[0]["stationId"] == l1["_id"] and sources[0]["quantity"] == 1
+    assert len(r.json()["createdCardIds"]) == 1
+
+
+def test_diamond_pull_scales_with_demand():
+    a = Actor(); bootstrap_admin(a)
+    l1, _l2, _l3, l4, _p = _diamond(a)
+    r = a.req("POST", f"/merge/{l4['_id']}/pull", {"quantity": 5})
+    sources = r.json()["sources"]
+    assert len(sources) == 1 and sources[0]["quantity"] == 5   # 5 units, still one lot
+
+
+def test_diamond_with_uneven_split_weights_takes_the_larger_branch():
+    """One unit at the source becomes pieces on every branch at once, so the
+    requirement is the biggest branch's demand — never the sum."""
+    a = Actor(); bootstrap_admin(a)
+    l1, l2, l3, l4, p = _diamond(a)
+    # loc1 --(x2)--> loc2 (2 pieces per unit) while loc1 --> loc3 stays 1:1
+    route = next(r for r in a.req("GET", "/routes/").json()
+                 if r["load"] == l1["_id"] and r["unload"] == l2["_id"])
+    assert a.req("PUT", f"/routes/{route['_id']}", {"quantity": 2}).status_code == 200
+
+    r = a.req("POST", f"/merge/{l4['_id']}/pull", {"quantity": 4})
+    sources = r.json()["sources"]
+    assert len(sources) == 1
+    # loc2 branch needs ceil(4/2)=2; loc3 branch needs 4 → 4 units cover both.
+    assert sources[0]["quantity"] == 4

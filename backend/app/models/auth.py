@@ -19,6 +19,10 @@ class SignupBody(BaseModel):
     email: EmailStr
     password: str
     name: Optional[str] = None
+    # Carry the line built in the sandbox over to the new account. Authorised by
+    # the sandbox session cookie the browser already holds — no code to copy.
+    adoptSandbox: bool = False
+    companyName: Optional[str] = None   # rename the adopted company
 
     _pw = field_validator("password")(_validate_password)
 

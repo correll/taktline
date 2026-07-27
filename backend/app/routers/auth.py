@@ -111,17 +111,61 @@ def _dev(link: Optional[str]) -> Optional[str]:
 
 
 # ── Signup / verification ──────────────────────────────────────────────────────
+async def _adopt_sandbox(session: AsyncSession, request: Request, new_user: User,
+                         company_name: Optional[str]) -> bool:
+    """Hand the sandbox line this browser built to a freshly created account.
+
+    The sandbox session cookie is the authorisation — it proves the caller owns
+    that throwaway account, so nothing has to be typed in. Only a company whose
+    members are *all* sandbox users can move, which keeps this from ever being
+    a way to reach a real tenant. The sandbox user is then deleted; the company
+    survives because a real member now holds it, and every sandbox restriction
+    lifts with the flag it was attached to.
+    """
+    sandbox = await _current_sandbox(request, session)
+    if sandbox is None:
+        return False
+
+    memberships = (await session.execute(
+        select(Membership).where(Membership.userId == sandbox.id)
+    )).scalars().all()
+    adopted = False
+    for m in memberships:
+        others = (await session.execute(
+            select(User.isSandbox).join(Membership, Membership.userId == User.id)
+            .where(Membership.companyId == m.companyId, Membership.userId != sandbox.id)
+        )).scalars().all()
+        if any(flag is False for flag in others):
+            continue                       # a real member is present — never touch it
+        session.add(Membership(companyId=m.companyId, userId=new_user.id, role="super_admin"))
+        if company_name and company_name.strip():
+            company = await session.get(Company, m.companyId)
+            if company is not None:
+                company.name = company_name.strip()[:120]
+                company.updatedAt = utcnow()
+        adopted = True
+
+    if adopted:
+        # Cascades the sandbox membership and its sessions; the line stays.
+        await session.delete(sandbox)
+        await session.flush()
+    return adopted
+
+
 @router.post("/signup", response_model=MessageResponse, status_code=202)
 @limiter.limit("10/hour")
 async def signup(request: Request, body: SignupBody, session: AsyncSession = Depends(get_session)):
     email = body.email.lower()
     existing = (await session.execute(select(User).where(User.email == email))).scalars().first()
     link = None
+    adopted = False
     if existing is None:
         user = User(email=email, passwordHash=hash_password(body.password),
                     emailVerified=False, name=body.name)
         session.add(user)
         await session.flush()
+        if body.adoptSandbox:
+            adopted = await _adopt_sandbox(session, request, user, body.companyName)
         token = await _new_token(session, user.id, "email_verify", settings.email_verify_ttl)
         link = await send_verification_email(email, token)
     elif not existing.emailVerified:
@@ -130,7 +174,9 @@ async def signup(request: Request, body: SignupBody, session: AsyncSession = Dep
         link = await send_verification_email(email, token)
     # else: verified account already exists — say nothing different.
     return MessageResponse(
-        message="If that email is available, a verification link has been sent.",
+        message=("Your line is saved — verify your email to sign in and pick it up."
+                 if adopted else
+                 "If that email is available, a verification link has been sent."),
         devLink=_dev(link),
     )
 

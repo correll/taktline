@@ -150,3 +150,88 @@ def test_sandbox_session_outlives_the_normal_idle_window():
     assert a.req("GET", "/auth/me").status_code == 200
     asyncio.run(age_session(24 * 9))              # past the 7-day sandbox window
     assert a.req("GET", "/auth/me").status_code == 401
+
+
+def _verify_and_login(a: Actor, email: str, password: str, dev_link: str) -> None:
+    token = dev_link.split("token=")[1]
+    assert a.req("POST", "/auth/verify-email", {"token": token}).status_code == 200
+    assert a.req("POST", "/auth/login", {"email": email, "password": password}).status_code == 200
+
+
+def test_signup_adopts_the_sandbox_line():
+    """A tickbox on the registration form carries the built line into the new
+    account — authorised by the sandbox cookie the browser already holds."""
+    import uuid as _uuid
+    a = _sandbox()
+    sandbox_company = a.company
+    a.req("POST", "/stations/", {**STATION_BODY, "name": "Bandsaw"})
+
+    email = f"keeper-{_uuid.uuid4().hex}@example.com"
+    r = a.req("POST", "/auth/signup", {"email": email, "password": "password-abcdef",
+                                       "name": "Keeper", "adoptSandbox": True,
+                                       "companyName": "Correll Manufacturing"})
+    assert r.status_code == 202, r.text
+    assert "line is saved" in r.json()["message"]
+
+    _verify_and_login(a, email, "password-abcdef", r.json()["devLink"])
+    me = a.req("GET", "/auth/me").json()
+    assert me["user"]["isSandbox"] is False          # a real account now
+    assert [c["id"] for c in me["companies"]] == [sandbox_company]
+    assert me["companies"][0]["name"] == "Correll Manufacturing"
+    assert me["companies"][0]["role"] == "super_admin"
+
+    a.company = sandbox_company
+    assert [s["name"] for s in a.req("GET", "/stations/").json()] == ["Bandsaw"]
+    # The sandbox restrictions lifted with the flag they hung on.
+    assert a.req("POST", "/api-keys/", {"name": "k", "scopes": ["orders"]}).status_code == 201
+
+
+def test_signup_without_the_tickbox_leaves_the_sandbox_alone():
+    import uuid as _uuid
+    a = _sandbox()
+    sandbox_company = a.company
+    email = f"plain-{_uuid.uuid4().hex}@example.com"
+    r = a.req("POST", "/auth/signup", {"email": email, "password": "password-abcdef"})
+    assert r.status_code == 202
+    _verify_and_login(a, email, "password-abcdef", r.json()["devLink"])
+    me = a.req("GET", "/auth/me").json()
+    assert sandbox_company not in [c["id"] for c in me["companies"]]   # nothing moved
+
+
+def test_adoption_can_never_take_a_real_company():
+    """The cookie only ever authorises a throwaway company. A company with a
+    real member must be untouchable even if a sandbox user is also in it."""
+    import uuid as _uuid
+    from tests.helpers import bootstrap_admin
+    owner = Actor()
+    owner_email = bootstrap_admin(owner, company="Real Factory")
+    real_company = owner.company
+
+    # Put a sandbox user into the real company (as support/testing might).
+    sandbox = _sandbox()
+    sandbox_me = sandbox.req("GET", "/auth/me").json()["user"]["id"]
+    inv = owner.req("POST", f"/companies/{real_company}/invitations",
+                    {"email": "x@example.com", "role": "user"})
+    assert inv.status_code == 201
+    from sqlalchemy import select as _select
+    import asyncio
+    from app.db.connection import SessionLocal
+    from app.db.tables import Membership as M
+
+    async def add_sandbox_member():
+        async with SessionLocal() as s:
+            import uuid as u
+            s.add(M(companyId=u.UUID(real_company), userId=u.UUID(sandbox_me), role="user"))
+            await s.commit()
+    asyncio.run(add_sandbox_member())
+
+    email = f"thief-{_uuid.uuid4().hex}@example.com"
+    r = sandbox.req("POST", "/auth/signup", {"email": email, "password": "password-abcdef",
+                                             "adoptSandbox": True})
+    assert r.status_code == 202
+    _verify_and_login(sandbox, email, "password-abcdef", r.json()["devLink"])
+    got = [c["id"] for c in sandbox.req("GET", "/auth/me").json()["companies"]]
+    assert real_company not in got          # the real company never moved
+    assert owner_email                      # (owner still owns it)
+    owner.company = real_company
+    assert owner.req("GET", "/stations/").status_code == 200

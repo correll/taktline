@@ -77,6 +77,11 @@ def clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(settings.csrf_cookie_name, path="/", domain=settings.cookie_domain)
 
 
+# Sandbox sessions idle for as long as the throwaway account survives the
+# nightly sweep (core/sandbox_gc.SANDBOX_TTL_DAYS), so "try it" survives a night.
+SANDBOX_IDLE_TTL = 7 * 24 * 60 * 60
+
+
 # ── Dependencies ───────────────────────────────────────────────────────────────
 async def get_current_user(
     request: Request, session: AsyncSession = Depends(get_session)
@@ -90,15 +95,19 @@ async def get_current_user(
     now = utcnow()
     if row is None:
         raise HTTPException(401, "Not authenticated")
-    idle_deadline = row.lastSeenAt + timedelta(seconds=settings.session_idle_ttl)
-    if row.expiresAt <= now or idle_deadline <= now:
-        await session.delete(row)
-        raise HTTPException(401, "Session expired")
-    row.lastSeenAt = now  # sliding idle window
     user = await session.get(User, row.userId)
     if user is None:
         await session.delete(row)
         raise HTTPException(401, "Not authenticated")
+    # A sandbox visitor should find the line they built still there tomorrow, so
+    # its session idles for as long as the account itself lives; a real account
+    # keeps the short window, because there is something worth protecting.
+    idle_ttl = SANDBOX_IDLE_TTL if user.isSandbox else settings.session_idle_ttl
+    idle_deadline = row.lastSeenAt + timedelta(seconds=idle_ttl)
+    if row.expiresAt <= now or idle_deadline <= now:
+        await session.delete(row)
+        raise HTTPException(401, "Session expired")
+    row.lastSeenAt = now  # sliding idle window
     return user
 
 

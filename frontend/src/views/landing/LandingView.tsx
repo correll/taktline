@@ -18,16 +18,19 @@ function SandboxButton({ style, where, variant = 'primary', children }: {
 }) {
   const navigate = useNavigate()
   const refresh = useAuthStore((s) => s.refresh)
+  const resuming = useAuthStore((s) => s.user?.isSandbox === true)
   const [busy, setBusy] = useState(false)
 
   const start = async () => {
     setBusy(true)
-    track('cta_click', { cta: 'sandbox', where })
+    track('cta_click', { cta: 'sandbox', where, resumed: resuming })
     try {
+      // The endpoint is idempotent: an existing sandbox comes back as-is, so a
+      // visitor never loses the line they built by clicking twice.
       const { companyId } = await authApi.sandbox()
       localStorage.setItem(ACTIVE_COMPANY_KEY, companyId)
       await refresh()
-      track('sandbox_start', { where })
+      track(resuming ? 'sandbox_resume' : 'sandbox_start', { where })
       navigate('/map')
     } catch {
       setBusy(false)
@@ -38,7 +41,8 @@ function SandboxButton({ style, where, variant = 'primary', children }: {
     <button onClick={start} disabled={busy}
             style={{ ...(variant === 'primary' ? primaryBtn : ghostBtn),
                      cursor: busy ? 'wait' : 'pointer', ...style }}>
-      {busy ? 'Building your line…' : children}
+      {busy ? (resuming ? 'Opening your line…' : 'Building your line…')
+            : resuming ? 'Back to my line' : children}
     </button>
   )
 }

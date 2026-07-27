@@ -119,8 +119,13 @@ function Shell() {
  *  into the app (portrait devices land on the operator view). */
 function RootGate() {
   const status = useAuthStore((s) => s.status)
+  const isSandbox = useAuthStore((s) => s.user?.isSandbox === true)
   if (status === 'loading') return <LoadingPane />
-  if (status === 'authed') return <Navigate to={isPortrait() ? '/operator' : '/map'} replace />
+  // Sandbox visitors are still prospects: "/" is the marketing site for them,
+  // and their line is one click away. Real accounts go straight to work.
+  if (status === 'authed' && !isSandbox) {
+    return <Navigate to={isPortrait() ? '/operator' : '/map'} replace />
+  }
   return <LandingView />
 }
 
@@ -155,7 +160,9 @@ function Topbar({ connection }: { connection: 'live' | 'reconnecting' | 'off' })
       borderBottom: `1px solid ${color.border}`, display: 'flex', alignItems: 'center',
       padding: `0 ${size.sp6}`, gap: size.sp4, flexShrink: 0, zIndex: 100, boxShadow: shadow.sm,
     }}>
-      <TaktlineLogo height={22} color={color.textPrimary} />
+      <NavLink to="/" title="Taktline home" style={{ display: 'flex', textDecoration: 'none' }}>
+        <TaktlineLogo height={22} color={color.textPrimary} />
+      </NavLink>
 
       <div style={{ width: 1, height: 20, background: color.border, margin: `0 ${size.sp2}` }} />
       <nav style={{ display: 'flex', gap: size.sp1 }}>

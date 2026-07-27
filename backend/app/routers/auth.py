@@ -249,6 +249,21 @@ async def reset_password(body: ResetPasswordBody, session: AsyncSession = Depend
 
 
 # ── Public sandbox (landing-page "five-minute tutorial") ──────────────────────
+async def _current_sandbox(request: Request, session: AsyncSession) -> Optional[User]:
+    """The sandbox user this browser is already signed in as, if any."""
+    raw = request.cookies.get(settings.session_cookie_name)
+    if not raw:
+        return None
+    row = (await session.execute(
+        select(AuthSession).where(AuthSession.tokenHash == hash_token(raw))
+    )).scalars().first()
+    if row is None or row.expiresAt <= utcnow():
+        return None
+    user = await session.get(User, row.userId)
+    return user if user is not None and user.isSandbox else None
+
+
+
 @router.post("/sandbox")
 @limiter.limit("10/hour")
 async def create_sandbox(request: Request, response: Response,
@@ -257,6 +272,18 @@ async def create_sandbox(request: Request, response: Response,
     signing up. The account is permanently marked isSandbox, which blocks
     floor-plan uploads, invitations, API keys, orders, and creating further
     companies (enforced server-side via ensure_full_account)."""
+    # Idempotent: someone already inside a sandbox gets their own line back
+    # rather than a fresh empty one (clicking "try it" again, or arriving from
+    # the marketing site in the same browser).
+    existing = await _current_sandbox(request, session)
+    if existing is not None:
+        membership = (await session.execute(
+            select(Membership).where(Membership.userId == existing.id)
+        )).scalars().first()
+        if membership is not None:
+            return {"companyId": str(membership.companyId), "csrfToken": None,
+                    "userId": str(existing.id), "resumed": True}
+
     tag = uuid.uuid4().hex[:10]
     user = User(email=f"sandbox-{tag}@taktline.sandbox",
                 passwordHash=hash_password(generate_token()),   # never known → never signable-in again

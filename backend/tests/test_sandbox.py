@@ -104,3 +104,49 @@ def test_usage_is_not_attributable_via_raw_header():
     # …but the victim's own authenticated call does move their meter.
     victim.req("GET", "/cards/")
     assert dict(usage._pending_api).get(victim.company, 0) > before.get(victim.company, 0)
+
+
+def test_sandbox_is_resumable_not_recreated():
+    """Clicking "try it" again — or coming back from the marketing site — must
+    return the line the visitor already built, not mint an empty one."""
+    a = _sandbox()
+    first = a.company
+    a.req("POST", "/stations/", {**STATION_BODY, "name": "My station"})
+
+    r = a.req("POST", "/auth/sandbox")            # same browser, same cookie jar
+    assert r.status_code == 200, r.text
+    assert r.json()["companyId"] == first
+    assert r.json().get("resumed") is True
+    names = [s["name"] for s in a.req("GET", "/stations/").json()]
+    assert names == ["My station"]                # the work is still there
+
+    # A different browser still gets its own sandbox.
+    other = _sandbox()
+    assert other.company != first
+
+
+def test_sandbox_session_outlives_the_normal_idle_window():
+    """An 8-hour idle timeout would lose the line overnight; a sandbox session
+    idles for as long as the account survives the sweep."""
+    import asyncio
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.db.connection import SessionLocal
+    from app.db.tables import AuthSession, User
+    from app.models.common import utcnow
+
+    a = _sandbox()
+    email = a.req("GET", "/auth/me").json()["user"]["email"]
+
+    async def age_session(hours: int):
+        async with SessionLocal() as s:
+            uid = (await s.execute(select(User.id).where(User.email == email))).scalar_one()
+            row = (await s.execute(
+                select(AuthSession).where(AuthSession.userId == uid))).scalars().first()
+            row.lastSeenAt = utcnow() - timedelta(hours=hours)
+            await s.commit()
+
+    asyncio.run(age_session(24))                  # overnight and then some
+    assert a.req("GET", "/auth/me").status_code == 200
+    asyncio.run(age_session(24 * 9))              # past the 7-day sandbox window
+    assert a.req("GET", "/auth/me").status_code == 401

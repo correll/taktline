@@ -7,6 +7,7 @@ import { useCardsStore, useMapSettingsStore, useStationsStore, useProcessesStore
 import StationNode, { type MapTool } from './StationNode'
 import MapStationEditModal from './MapStationEditModal'
 import RouteEdge from './RouteEdge'
+import { findAccumulations, warehouseNodes, type Accumulation } from '../../domain/graph'
 
 export const DEFAULT_NODE_SIZE = 100
 
@@ -91,6 +92,7 @@ export default function MapCanvas({
   const [routeDelete, setRouteDelete] = useState<string | null>(null)
   const [editStation, setEditStation] = useState<string | null>(null)
   const [warnHover,   setWarnHover]   = useState(false)
+  const [accHover,    setAccHover]    = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const [canvasSize, setCanvasSize]       = useState({ w: 800, h: 600 })
   const [viewport, setViewport]           = useState<Viewport>({ x: 60, y: 60, scale: 1 })
@@ -356,23 +358,41 @@ export default function MapCanvas({
   }, [routeDelete, deleteRoute])
 
   // WIP ratios for heatmap
+  const warehouses = React.useMemo(
+    () => warehouseNodes(Object.values(routes).map((r) => ({ load: r.load, unload: r.unload }))),
+    [routes])
+
   const wipRatios = React.useMemo(() => {
     const wipMap: Record<string, number> = {}
     for (const card of Object.values(cards)) {
       for (const [sid, bin] of Object.entries(card.bins)) {
-        if (bin.count > 0) wipMap[sid] = (wipMap[sid] ?? 0) + bin.count
+        // Finished goods pile up in a warehouse by design — heat is about work
+        // piling up where it shouldn't, so warehouses are left out of the ramp
+        // (and out of the max, which would otherwise flatten every other station).
+        if (bin.count > 0 && !warehouses.has(sid)) wipMap[sid] = (wipMap[sid] ?? 0) + bin.count
       }
     }
     const maxWip = Math.max(1, ...Object.values(wipMap))
     const result: Record<string, number> = {}
     for (const sid of Object.keys(wipMap)) result[sid] = wipMap[sid] / maxWip
     return result
-  }, [cards])
+  }, [cards, warehouses])
 
   const stationList = Object.values(stations)
   const routeList   = Object.values(routes)
   const isEmpty     = stationList.length === 0
   const isolated = React.useMemo(() => isolatedProcessStations(routes), [routes])
+  // Stations where the weights deliver more per cycle than the next step takes:
+  // work piles up structurally, and the surplus usually wants a warehouse.
+  const accumulations = React.useMemo(
+    () => findAccumulations(
+      Object.values(routes).map((r) => ({
+        load: r.load, unload: r.unload, quantity: r.quantity, processId: r.processId,
+      })),
+      Object.keys(stations)),
+    [routes, stations])
+  const accumulationIds = React.useMemo(
+    () => new Set(accumulations.map((a) => a.stationId)), [accumulations])
   const isolatedNames = isolated.procIds.map((id) => processes[id]?.name).filter(Boolean) as string[]
 
   // Raw pixelsPerUnit is correct when floor plan is rendered at mapWidthPx canvas pixels
@@ -451,7 +471,8 @@ export default function MapCanvas({
             viewport={viewport}
             tool={tool}
             routeArmed={routeFrom === station._id}
-            flashing={warnHover && isolated.flash.has(station._id)}
+            flashing={(warnHover && isolated.flash.has(station._id))
+                      || (accHover && accumulationIds.has(station._id))}
             onSelect={() => onSelectStation(station._id)}
             onRouteAnchor={() => handleRouteAnchor(station._id)}
             onContextMenu={(cx, cy) => setCtxMenu({ stationId: station._id, x: cx, y: cy })}
@@ -509,22 +530,38 @@ export default function MapCanvas({
         </div>
       )}
 
-      {/* Isolated-subgraph warning — hover to flash the disconnected pieces */}
-      {isolated.procIds.length > 0 && (
-        <div onMouseEnter={() => setWarnHover(true)} onMouseLeave={() => setWarnHover(false)}
-             style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
-                      background: color.glass, border: '1px solid #EF9F2766', borderRadius: 6,
-                      padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'default',
-                      fontSize: 12.5, color: color.warnText, fontFamily: 'Inter, system-ui, sans-serif', maxWidth: '72%' }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-               strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-            <path d="M12 9v4" /><path d="M12 17h.01" />
-          </svg>
-          {isolatedNames.length <= 1
-            ? `Warning — the process “${isolatedNames[0] ?? '—'}” contains isolated subgraphs.`
-            : `Warning — the processes ${isolatedNames.map((n) => `“${n}”`).join(', ')} contain isolated subgraphs.`}
-          <span style={{ color: color.textSecondary }}>Hover to highlight.</span>
+      {/* Warnings — hover one to flash the stations it is about */}
+      {(isolated.procIds.length > 0 || accumulations.length > 0) && (
+        <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+                      display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center',
+                      maxWidth: '72%' }}>
+          {accumulations.length > 0 && (
+            <div onMouseEnter={() => setAccHover(true)} onMouseLeave={() => setAccHover(false)}
+                 style={warnBarStyle}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                   strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M3 3v16a2 2 0 0 0 2 2h16" /><path d="M7 15v-4M12 15V8M17 15v-6" />
+              </svg>
+              {accumulations.length === 1
+                ? `${stations[accumulations[0].stationId]?.name ?? '—'} accumulates ${accumulations[0].surplus} unit${accumulations[0].surplus !== 1 ? 's' : ''} per cycle — ${accumulations[0].produced} arrive, ${accumulations[0].consumed} move on.`
+                : `${accumulations.length} locations accumulate work every cycle: ${accumulations.map((a) => `${stations[a.stationId]?.name ?? '—'} +${a.surplus}`).join(', ')}.`}
+              <span style={{ color: color.textSecondary }}>Route the surplus to a warehouse.</span>
+            </div>
+          )}
+          {isolated.procIds.length > 0 && (
+            <div onMouseEnter={() => setWarnHover(true)} onMouseLeave={() => setWarnHover(false)}
+                 style={warnBarStyle}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                   strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                <path d="M12 9v4" /><path d="M12 17h.01" />
+              </svg>
+              {isolatedNames.length <= 1
+                ? `Warning — the process “${isolatedNames[0] ?? '—'}” contains isolated subgraphs.`
+                : `Warning — the processes ${isolatedNames.map((n) => `“${n}”`).join(', ')} contain isolated subgraphs.`}
+              <span style={{ color: color.textSecondary }}>Hover to highlight.</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -611,6 +648,12 @@ export default function MapCanvas({
       )}
     </div>
   )
+}
+
+const warnBarStyle: React.CSSProperties = {
+  background: color.glass, border: '1px solid #EF9F2766', borderRadius: 6,
+  padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'default',
+  fontSize: 12.5, color: color.warnText, fontFamily: 'Inter, system-ui, sans-serif',
 }
 
 const CTX_ITEM: React.CSSProperties = {

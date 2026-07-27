@@ -351,11 +351,16 @@ function TaktOeeTable({
                 ? `${(st.taktTimeSec / 60).toFixed(1)} min`
                 : `${st.taktTimeSec.toFixed(1)} s`
               : '—'
-            const oee = st?.oee != null
-              ? `${(st.oee * 100).toFixed(1)}%`
-              : '—'
+            // A warehouse stores rather than runs, so it reports no OEE by
+            // design — say so instead of showing a bare dash.
+            const oee = st?.isWarehouse
+              ? 'warehouse'
+              : st?.oee != null
+                ? `${(st.oee * 100).toFixed(1)}%`
+                : '—'
             const workMin = st ? `${(st.totalWorkingSec / 60).toFixed(0)} min` : '—'
-            const oeeColor = st?.oee != null
+            const oeeColor = st?.isWarehouse ? color.textDim
+              : st?.oee != null
               ? st.oee >= 0.8 ? color.statusRunning
               : st.oee >= 0.5 ? color.statusWarning
               : color.statusFault

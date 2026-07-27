@@ -18,6 +18,7 @@ export interface SessionStats {
   totalWorkingSec: number
   taktTimeSec:     number | null
   oee:             number | null
+  isWarehouse?:    boolean          // storage, not a work station — no OEE
 }
 
 export const sessionsApi = {

@@ -299,3 +299,97 @@ export function computeLanes(edges: Edge[], allNodeIds: string[]): Lane[] {
 
   return lanes
 }
+
+
+// ─── Flow balance: where does material pile up? ──────────────────────────────
+// A weighted edge, scoped to the process it belongs to.
+export interface FlowEdge extends Edge { quantity: number; processId: string }
+
+export interface Accumulation {
+  stationId: string
+  processId: string
+  produced: number   // units delivered here per cycle
+  consumed: number   // units the downstream steps take per cycle
+  surplus: number    // the leftovers that pile up (produced - consumed)
+}
+
+// Stations with incoming routes but none outgoing: finished goods land there on
+// purpose, so they are never "accumulating" and are left out of heat and OEE.
+export function warehouseNodes(edges: Edge[]): Set<string> {
+  const hasIn = new Set<string>()
+  const hasOut = new Set<string>()
+  for (const e of edges) { hasIn.add(e.unload); hasOut.add(e.load) }
+  return new Set([...hasIn].filter((id) => !hasOut.has(id)))
+}
+
+// Finds stations that structurally accumulate work: the weights upstream
+// deliver more units per cycle than the weights downstream consume. Example —
+// loc1 --(x3)--> loc2 --> loc4 : three pieces arrive at loc2 each cycle but the
+// merge at loc4 only takes one, so two pile up every time.
+//
+// A "cycle" is one unit at each end of the process. Per process:
+//   • need(S)  — units of S required to satisfy one cycle, walked backwards.
+//   • supply(S) — units actually delivered when the upstream runs at its own
+//                 need, walked forwards.
+// The gap between them is the surplus. Merge stations are skipped (their inputs
+// are consumed there by design) as are warehouses (they are meant to fill up).
+export function findAccumulations(edges: FlowEdge[], allNodeIds: string[]): Accumulation[] {
+  const out: Accumulation[] = []
+  const byProcess = new Map<string, FlowEdge[]>()
+  for (const e of edges) {
+    if (!byProcess.has(e.processId)) byProcess.set(e.processId, [])
+    byProcess.get(e.processId)!.push(e)
+  }
+
+  for (const [processId, pEdges] of byProcess.entries()) {
+    const nodes = new Set<string>()
+    for (const e of pEdges) { nodes.add(e.load); nodes.add(e.unload) }
+    const ids = allNodeIds.filter((id) => nodes.has(id))
+
+    const outgoing = new Map<string, FlowEdge[]>()
+    const incoming = new Map<string, FlowEdge[]>()
+    for (const id of ids) { outgoing.set(id, []); incoming.set(id, []) }
+    for (const e of pEdges) {
+      outgoing.get(e.load)?.push(e)
+      incoming.get(e.unload)?.push(e)
+    }
+    const isMerge = (id: string) => (incoming.get(id)?.length ?? 0) >= 2
+    const isSplit = (id: string) => (outgoing.get(id)?.length ?? 0) >= 2
+
+    // Units appearing at `unload` per unit moved out of `load`: only a split
+    // multiplies, and only when the target is not itself a merge (there the
+    // weight counts consumption instead).
+    const produces = (e: FlowEdge) =>
+      isSplit(e.load) && !isMerge(e.unload) ? Math.max(1, e.quantity) : 1
+    // Units of `load`'s product consumed per unit produced at `unload`.
+    const consumes = (e: FlowEdge) => (isMerge(e.unload) ? Math.max(1, e.quantity) : 1)
+
+    const order = topoSort(pEdges.map((e) => ({ load: e.load, unload: e.unload })), ids)
+
+    // Backward: how many units of each station one cycle requires.
+    const need = new Map<string, number>()
+    for (const id of [...order].reverse()) {
+      const outs = outgoing.get(id) ?? []
+      if (outs.length === 0) { need.set(id, 1); continue }   // a sink: one per cycle
+      const perBranch = outs.map((e) =>
+        Math.ceil((consumes(e) * (need.get(e.unload) ?? 1)) / produces(e)))
+      // One unit at a split becomes a piece on every branch at once, so the
+      // hungriest branch sets the requirement; a plain chain has just one.
+      need.set(id, Math.max(1, ...perBranch))
+    }
+
+    // Forward: what the upstream actually delivers at those rates.
+    for (const id of ids) {
+      if (isMerge(id)) continue                       // inputs are consumed here
+      if ((outgoing.get(id)?.length ?? 0) === 0) continue   // warehouse — meant to fill
+      const ins = incoming.get(id) ?? []
+      if (ins.length === 0) continue                  // a source produces to order
+      const produced = ins.reduce((sum, e) => sum + (need.get(e.load) ?? 1) * produces(e), 0)
+      const consumed = need.get(id) ?? 0
+      if (produced > consumed) {
+        out.push({ stationId: id, processId, produced, consumed, surplus: produced - consumed })
+      }
+    }
+  }
+  return out
+}

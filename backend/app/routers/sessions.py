@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.connection import get_session, require_uuid, parse_uuid
 from ..db.tables import (
     WorkSession as SessionRow, Station as StationRow, Card as CardRow,
-    GlobalSettings as GlobalSettingsRow,
+    GlobalSettings as GlobalSettingsRow, Route as RouteRow,
 )
 from ..deps.auth import CompanyContext, get_active_company
 from ..models.session import WorkSession, SessionCreate, SessionEnd
@@ -151,6 +151,20 @@ async def delete_session(session_id: str, ctx: CompanyContext = Depends(get_acti
     await session.flush()
 
 
+async def _warehouse_ids(session, company_id) -> set:
+    """Stations that receive routes but send none: finished goods land there on
+    purpose. Nobody "works" at a warehouse, so an OEE for it would measure
+    storage time, not utilisation — it is reported as null instead."""
+    rows = (await session.execute(
+        select(RouteRow.load, RouteRow.unload).where(RouteRow.companyId == company_id)
+    )).all()
+    has_in, has_out = set(), set()
+    for load, unload in rows:
+        has_out.add(load)
+        has_in.add(unload)
+    return has_in - has_out
+
+
 # ─── All-stations OEE / takt-time summary ────────────────────────────────────
 
 @router.get("/stats")
@@ -170,19 +184,23 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
     )
     rows = (await session.execute(stmt)).all()
     schedule, tzname = await _work_schedule(session, ctx.company_id)
+    warehouses = await _warehouse_ids(session, ctx.company_id)
     results = []
     for d in rows:
         total_units = d.totalUnits or 0
         total_working = d.totalWorking or 0.0
         takt = total_working / total_units if total_units > 0 else None
-        oee = _oee(total_working, d.firstStart, d.lastEnd, schedule, tzname)
+        is_warehouse = d.stationId in warehouses
         results.append({
             "stationId": str(d.stationId),
             "sessionCount": d.sessionCount,
             "totalUnits": total_units,
             "totalWorkingSec": total_working,
             "taktTimeSec": takt,
-            "oee": oee,
+            # A warehouse stores, it does not run — OEE would be meaningless.
+            "oee": None if is_warehouse else _oee(total_working, d.firstStart, d.lastEnd,
+                                                  schedule, tzname),
+            "isWarehouse": is_warehouse,
         })
     return results
 
@@ -194,7 +212,7 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
                                 session: AsyncSession = Depends(get_session)):
     empty = {
         "stationId": station_id, "sessionCount": 0, "totalUnits": 0,
-        "totalWorkingSec": 0.0, "taktTimeSec": None, "oee": None,
+        "totalWorkingSec": 0.0, "taktTimeSec": None, "oee": None, "isWarehouse": False,
     }
     sid = parse_uuid(station_id)
     if sid is None:
@@ -214,13 +232,15 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
     takt_time = total_working / total_units if total_units > 0 else None
     starts = [r.startedAt for r in rows if r.startedAt]
     ends = [r.endedAt for r in rows if r.endedAt]
-    if starts and ends:
+    is_warehouse = sid in await _warehouse_ids(session, ctx.company_id)
+    if starts and ends and not is_warehouse:
         schedule, tzname = await _work_schedule(session, ctx.company_id)
         oee = _oee(total_working, min(starts), max(ends), schedule, tzname)
     else:
-        oee = None
+        oee = None   # a warehouse stores rather than runs
 
     return {
         "stationId": station_id, "sessionCount": len(rows), "totalUnits": total_units,
         "totalWorkingSec": total_working, "taktTimeSec": takt_time, "oee": oee,
+        "isWarehouse": is_warehouse,
     }

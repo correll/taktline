@@ -198,3 +198,29 @@ def test_diamond_flows_end_to_end():
     r = a.req("POST", f"/merge/{l4['_id']}")
     assert r.status_code == 201, r.text
     assert r.json()["assemblies"] == 1
+
+
+def test_warehouse_is_excluded_from_oee():
+    """A warehouse stores rather than runs, so OEE there would measure shelf
+    time. It is reported as null and flagged."""
+    a = Actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    work, wh = st("welding"), st("warehouse")
+    p = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
+    a.req("POST", "/routes/", {"processId": p, "load": work["_id"],
+                               "unload": wh["_id"], "quantity": 1})
+    # A closed work session at each station.
+    for station in (work, wh):
+        s = a.req("POST", "/sessions/", {"stationId": station["_id"], "cardId": None,
+                                         "quantity": 2}).json()
+        assert a.req("POST", f"/sessions/{s['_id']}/end", {"quantity": 2}).status_code == 200
+
+    stats = {s["stationId"]: s for s in a.req("GET", "/sessions/stats").json()}
+    assert stats[work["_id"]]["isWarehouse"] is False
+    assert stats[work["_id"]]["oee"] is not None          # a real station still reports
+    assert stats[wh["_id"]]["isWarehouse"] is True
+    assert stats[wh["_id"]]["oee"] is None                # the warehouse does not
+    assert stats[wh["_id"]]["taktTimeSec"] is not None    # throughput still measured
+
+    one = a.req("GET", f"/sessions/stats/{wh['_id']}").json()
+    assert one["isWarehouse"] is True and one["oee"] is None

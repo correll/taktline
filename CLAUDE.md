@@ -18,6 +18,10 @@ Merging: some products are made from precursors. These result from merging two o
 
 Edge weight: a weight only means something where the graph branches. On a **merge feed** (a route into a station with 2+ incoming routes) it is how many precursor units one assembly consumes — a final assembly might need one of product A, three of product B and 10 of product C. On a **split branch** (a route out of a station with 2+ outgoing routes) it is the mirror image: how many pieces one upstream unit becomes, so advancing a lot along it multiplies the card (one steel bar cut into four tubes) and pulling four tubes orders exactly one bar. Elsewhere a lot moves 1:1 and the weight is forced to 1. 
 
+Accumulation warning: the map compares, per process and per cycle, how many units the weights deliver to a location against how many the next step consumes. Where more arrives than leaves — loc1 --(x3)--> loc2 --> loc4 delivers three but the merge takes one — the map names the location and the surplus so the extra can be routed to a warehouse. Merge stations (their inputs are consumed there) and warehouses (meant to fill up) are never flagged.
+
+Warehouses: a location with incoming routes and none outgoing. Finished goods land there by design, so warehouses are excluded from the heatmap (including its scale, which they would otherwise flatten) and report no OEE — storage time is not utilisation. Takt time and throughput are still measured.
+
 Map view: the map view shows all the locations and the process graph overlaid on a PNG image of a factory floor. A "heatmap" shows how busy individual stations are. The map is either in meters or in feet and the user can specify how many pixels correspond to a unit. A scale in the lower left corner indicates the actual scale. 
 
 Kanban view: the kanban view shows a flattened version of the process graph. with one column per location. Each column shows all the lot-cards at this location. 

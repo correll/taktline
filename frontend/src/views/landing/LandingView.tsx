@@ -221,8 +221,8 @@ function Steps() {
 const FEATURES = [
   { Icon: Map,       title: 'The whole floor on one screen',
     body: 'Your real floor plan with every lot on it, updating as work moves. Walk in, glance at the board, and know what is where and what is waiting — before anyone has to ask.' },
-  { Icon: Boxes,     title: 'Lot cards, on screen and on paper',
-    body: 'Kanban cards travel with the material — on the board and as barcode labels off a thermal printer. Scan a label and the lot moves down its route.' },
+  { Icon: Boxes,     title: 'Lot cards without the paperwork',
+    body: 'The card lives on the station’s own screen, so in most cases you never print anything. When a physical card does help, barcode labels come off an ordinary thermal printer and a scan moves the lot on.' },
   { Icon: GitMerge,  title: 'Merges: assemblies done right',
     body: 'A merge station consumes precursors by your edge weights — one frame + three motors = one e-bike, never “a few extra”.' },
   { Icon: GitBranch, title: 'Splits: one input, many pieces',
@@ -382,9 +382,9 @@ function Founder() {
 
 const FAQ: { q: string; a: React.ReactNode }[] = [
   { q: 'How long until it is running?',
-    a: <>Minutes. Draw your locations and routes on the map, print lot cards, and the
-        board is live. The five-minute tutorial builds a line end to end so you can see
-        the shape of it before touching your own.</> },
+    a: <>Minutes. Draw your locations and routes on the map and the board is live —
+        there is nothing to print or install. The five-minute tutorial builds a line end
+        to end so you can see the shape of it before touching your own.</> },
   { q: 'Is my data mine?',
     a: <>Yes. Everything exports at any time, and Taktline is free to run on your own
         server — so nothing is held hostage by a subscription.</> },
@@ -393,9 +393,10 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         own, with an amber banner naming how old the data is. Changes are never queued
         silently — they fail loudly rather than reordering your lot movements later.</> },
   { q: 'Do I need scanners or special hardware?',
-    a: <>No. A phone or tablet browser is enough. If you want them, barcode labels print
-        on ordinary Zebra or Brother thermal printers, and a scanner can advance a lot
-        without anyone logging in.</> },
+    a: <>No. A phone or tablet browser is enough, and you don’t even have to print lot
+        cards in most cases — the card is already at the station on screen. If a printed
+        card does earn its keep, labels come off ordinary Zebra or Brother thermal
+        printers and a scanner can advance a lot without anyone logging in.</> },
   { q: 'Can it talk to my ERP or shop system?',
     a: <>Odoo, NetSuite, Shopify, WooCommerce, QuickBooks, Xero and ShipStation have
         ready-made connectors; anything else goes through one small order API, a CSV

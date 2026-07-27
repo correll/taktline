@@ -33,15 +33,27 @@ class ConsoleMailer:
         log.info("email(console) to=%s subject=%s", to, subject)
 
 
+# Ports that speak TLS from the first byte (SMTPS / implicit TLS), as opposed
+# to starting plaintext and upgrading with STARTTLS. Resend, SendGrid and most
+# providers offer both; their dashboards often lead with 465.
+IMPLICIT_TLS_PORTS = frozenset({465, 2465})
+
+
 class SMTPMailer:
     def __init__(self, host: str, port: int, user: str | None, password: str | None,
-                 sender: str, starttls: bool) -> None:
+                 sender: str, starttls: bool, use_tls: bool | None = None) -> None:
         self.host = host
         self.port = port
         self.user = user
         self.password = password
         self.sender = sender
-        self.starttls = starttls
+        # aiosmtplib treats these as mutually exclusive and raises if both are
+        # set, so the port decides unless SMTP_USE_TLS says otherwise. Getting
+        # it wrong is not a graceful failure: on 465 a STARTTLS client sends a
+        # plaintext greeting into a TLS listener and the connection just hangs
+        # or garbles, with nothing in the logs naming the port as the cause.
+        self.use_tls = (port in IMPLICIT_TLS_PORTS) if use_tls is None else use_tls
+        self.starttls = starttls and not self.use_tls
 
     async def send(self, to: str, subject: str, body: str) -> None:
         import aiosmtplib
@@ -63,6 +75,7 @@ class SMTPMailer:
             port=self.port,
             username=self.user,
             password=self.password,
+            use_tls=self.use_tls,
             start_tls=self.starttls,
         )
         log.info("email(smtp) to=%s subject=%s", to, subject)
@@ -80,6 +93,7 @@ def get_mailer() -> Mailer:
             host=settings.smtp_host, port=settings.smtp_port,
             user=settings.smtp_user, password=settings.smtp_password,
             sender=settings.smtp_from, starttls=settings.smtp_starttls,
+            use_tls=settings.smtp_use_tls,
         )
     return ConsoleMailer()
 

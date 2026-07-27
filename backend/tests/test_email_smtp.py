@@ -155,3 +155,34 @@ def test_verification_link_uses_the_configured_base_url(monkeypatch):
     # Long URLs get soft-wrapped in transfer encoding; compare on the token.
     assert "tok%20en%2Fwith%2Bchars" in smtp_server.data.replace("=\r\n", "")
     assert "/with" not in smtp_server.data                # slash escaped, not literal
+
+
+# ─── TLS mode is decided by the port ─────────────────────────────────────────
+
+def test_implicit_tls_ports_do_not_also_request_starttls():
+    """465/2465 are SMTPS: the server speaks TLS from the first byte. aiosmtplib
+    rejects use_tls and start_tls together, and a STARTTLS client aimed at 465
+    sends a plaintext greeting into a TLS listener — it hangs or garbles, with
+    nothing in the logs naming the port. Provider dashboards (Resend's included)
+    lead with 465, so the port has to decide."""
+    for port in (465, 2465):
+        m = SMTPMailer("h", port, "resend", "k", "f", starttls=True)
+        assert m.use_tls is True and m.starttls is False, port
+
+    for port in (25, 587, 2587):
+        m = SMTPMailer("h", port, "resend", "k", "f", starttls=True)
+        assert m.use_tls is False and m.starttls is True, port
+
+
+def test_explicit_use_tls_overrides_the_port_heuristic():
+    """A non-standard listener can still be described exactly."""
+    assert SMTPMailer("h", 465, "u", "k", "f", starttls=True, use_tls=False).use_tls is False
+    assert SMTPMailer("h", 587, "u", "k", "f", starttls=True, use_tls=True).use_tls is True
+    # never both — that combination raises inside aiosmtplib
+    m = SMTPMailer("h", 587, "u", "k", "f", starttls=True, use_tls=True)
+    assert not (m.use_tls and m.starttls)
+
+
+def test_starttls_disabled_stays_disabled():
+    m = SMTPMailer("h", 587, "u", "k", "f", starttls=False)
+    assert m.use_tls is False and m.starttls is False

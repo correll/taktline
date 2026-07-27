@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     smtp_password: Optional[str] = None
     smtp_from: str = "Taktline <no-reply@taktline.local>"
     smtp_starttls: bool = True
+    # None = decide from the port: 465/2465 are implicit TLS, everything else
+    # upgrades with STARTTLS. Set explicitly only for a non-standard listener.
+    smtp_use_tls: Optional[bool] = None
 
     # ── Default admin (used only by the backfill migration) ───────────────────
     default_admin_email: str = "admin@taktline.dev"

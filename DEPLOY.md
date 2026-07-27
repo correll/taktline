@@ -44,9 +44,14 @@ Render then prompts for the values it cannot invent:
 |---|---|---|
 | `PLATFORM_OWNER_EMAILS` | your email | no access to the `/platform` support dashboard |
 | `SMTP_HOST` | `smtp.resend.com` | email is only logged — see step 5 |
+| `SMTP_PORT` | `587`, or `465` — either works | defaults to 587 |
 | `SMTP_USER` | `resend` — the literal word | authentication fails |
 | `SMTP_PASSWORD` | your Resend API key | authentication fails |
 | `SMTP_FROM` | `Taktline <no-reply@taktline.com>` | Resend rejects the message |
+
+Resend shows the API key as the SMTP **password**; the username is the literal
+string `resend`. Either port works — 465/2465 are implicit TLS, 587/2587
+upgrade with STARTTLS, and the app picks the mode from the port number.
 
 Leave **`SENDGRID_API_KEY` empty.** It takes precedence over the `SMTP_*`
 values, so a stray value there would send your Resend key to SendGrid's server

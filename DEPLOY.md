@@ -62,20 +62,98 @@ cross-site cookie handling.
 ## Render, from the blueprint
 
 The repo ships a **`render.yaml`** blueprint and a **`Dockerfile`** that build
-Option A as one service. In Render: **New → Blueprint**, point it at this repo,
-approve. It provisions the web service and a Postgres instance, wires
-`DATABASE_URL`, and generates `SECRET_KEY`.
+Option A as one service. Start to finish, first deploy takes about 15 minutes,
+most of it waiting for the image to build.
 
-Render prompts for four values it will not invent for you:
+### 0. Point Render at the right branch
+
+The deploy build lives on whichever branch you treat as production. A Blueprint
+follows your repo's **default branch** unless you say otherwise, so either merge
+your release branch into `main`, or set the branch explicitly in the Render UI
+(Service → Settings → Branch) after the blueprint is created. Deploying a branch
+that has no `Dockerfile` fails with a build error that does not explain itself.
+
+### 1. Create the blueprint
+
+In Render: **New → Blueprint** → connect the GitHub repo → **Apply**. Render
+reads `render.yaml` and provisions two things: the web service `taktline` and a
+Postgres database `taktline-db`. It wires `DATABASE_URL` between them and
+generates `SECRET_KEY` itself, so neither ever touches your repo.
+
+The blueprint asks for four values it cannot invent:
 
 | Variable | What to put | If you skip it |
 |---|---|---|
-| `FRONTEND_BASE_URL` | your service URL, e.g. `https://taktline.onrender.com` | verification/invite emails link to localhost |
+| `FRONTEND_BASE_URL` | your service URL — you do not know it yet, see step 2 | verification and invite emails link to `localhost` |
 | `PLATFORM_OWNER_EMAILS` | your email | no access to the `/platform` support dashboard |
-| `SENDGRID_API_KEY` | a SendGrid key | **nobody can verify an email or accept an invite** |
-| `SMTP_FROM` | a *verified* sender, e.g. `Taktline <no-reply@yourdomain.com>` | SendGrid rejects the mail |
+| `SENDGRID_API_KEY` | a SendGrid API key | email is logged instead of sent — see step 4 |
+| `SMTP_FROM` | a **verified** sender, e.g. `Taktline <no-reply@taktline.com>` | SendGrid rejects the message |
 
-Then open the service URL and **Create account → verify → create a company**.
+Leave any of them blank for now; you can fill them in later under
+Service → Environment. Saving an env var triggers a redeploy automatically.
+
+### 2. Set `FRONTEND_BASE_URL` once you know the URL
+
+This is the one ordering wrinkle: Render assigns the URL
+(`https://<service>.onrender.com`) only after the service exists, but the app
+needs it to build the links it puts in emails. So after the first deploy, copy
+the URL from the top of the service page into `FRONTEND_BASE_URL` and let it
+redeploy. If you plan to use a custom domain (step 5), set it to the custom
+domain instead and skip a round trip.
+
+### 3. Watch the first deploy
+
+Two stages, both visible in **Logs**:
+
+- **Build** (~3–5 min) — Node builds the SPA, then Python installs and the
+  image assembles.
+- **Boot** (~40 s on a small instance) — `alembic upgrade head` runs *before*
+  the port is bound, so you will see the migrations scroll past, then
+  `Uvicorn running on http://0.0.0.0:8000`. Render's health check hits
+  `/health` and flips the service to **Live**.
+
+That ~40 s is Python importing and migrating on a fraction of a CPU. It is paid
+on every deploy and restart, and with one instance it is genuine downtime — so
+deploy outside shift hours once you have people on the floor.
+
+### 4. Create the first account
+
+Open the service URL and **Create account**. Then verify the email:
+
+- **With SendGrid configured** — the verification email arrives normally. Click
+  the link.
+- **Without it** — Taktline falls back to a console mailer, which prints the
+  whole message *including the verification link* to stdout. Open
+  Service → **Logs**, find the `===== DEV EMAIL =====` block, and paste the link
+  into your browser. This is a perfectly good way to bootstrap the very first
+  account, but it is not a way to run: invitations to your team go to the same
+  place, so nobody but you can ever join. Configure SendGrid before inviting
+  anyone.
+
+Then **create a company**, and you are on the map. The email you put in
+`PLATFORM_OWNER_EMAILS` also unlocks `/platform` for support and metrics.
+
+### 5. Custom domain (optional)
+
+Service → **Settings → Custom Domains → Add**. Render shows you the DNS record
+it wants. At your registrar:
+
+- **apex** (`taktline.com`) — an `ALIAS`/`ANAME` record if your DNS provider
+  supports it, otherwise the A record Render gives you. GoDaddy's basic DNS has
+  no ALIAS at the apex, so either use the A record or host DNS at Cloudflare.
+- **subdomain** (`app.taktline.com`) — a `CNAME` to the `onrender.com` hostname.
+
+Render issues the TLS certificate automatically once the record resolves
+(usually minutes; DNS propagation can take longer). Afterwards, update
+`FRONTEND_BASE_URL` to the custom domain so email links point at it.
+
+### 6. Before you put real work on it
+
+- [ ] `TAKTLINE_DEV` is `0` (the blueprint sets it) — confirm `/auth/dev/bootstrap` returns 404
+- [ ] Sign in on a phone and confirm the connection light shows **LIVE**
+- [ ] Upload a floor plan and reload — it is served from Postgres, so it survives redeploys
+- [ ] Move the service and database off the free plans (see below)
+- [ ] Take a first database backup (Render → database → Backups)
 
 ### What the image does
 
@@ -90,7 +168,7 @@ Floor plans need **no persistent disk**: they live in Postgres and the
 container's `uploads/` directory is only a read-through cache that repopulates
 itself after a redeploy.
 
-### Two things to know before you rely on it
+### Three things to know before you rely on it
 
 **Password hashing is the CPU floor.** argon2id is deliberately expensive and
 is by far the heaviest thing the app does; everything else is ~90 ms. Taktline
@@ -161,24 +239,18 @@ SendGrid is just SMTP, so no code is needed — set `SENDGRID_API_KEY` and a
 **verified** `SMTP_FROM` sender. Free tier is ~100 emails/day (enough for
 verification + invites). Locally, leave it unset and links print to the console.
 
-## Dockerfile (single-service)
+## Dockerfile
 
-```dockerfile
-FROM node:22-slim AS web
-WORKDIR /web
-COPY frontend/package*.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN VITE_API_URL= npm run build            # same-origin build
+The image is `Dockerfile` in the repo root — a two-stage build (Node for the
+SPA, Python for the runtime). It is what Render builds, and it runs anywhere
+else that takes a container:
 
-FROM python:3.12-slim
-WORKDIR /app
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-COPY backend/ ./
-COPY --from=web /web/dist ./frontend/dist
-ENV FRONTEND_DIST=/app/frontend/dist
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+```bash
+docker build -t taktline .
+docker run -p 8000:8000 \
+  -e DATABASE_URL=postgresql://user:pass@host/db \
+  -e SECRET_KEY=$(openssl rand -hex 32) \
+  -e TAKTLINE_DEV=0 -e FRONTEND_BASE_URL=https://your-host taktline
 ```
 
 ## Production checklist

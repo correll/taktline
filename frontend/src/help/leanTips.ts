@@ -1,4 +1,4 @@
-/** Lean "tips of the day" — distilled from "The Seven Deadly Wastes" (book/)
+/** Lean "tips of the day" — distilled from "The Seven Deadly Wastes"
  *  and complemented with classic lean practice (5S, SMED, poka-yoke, jidoka,
  *  heijunka, PDCA, theory of constraints, …) plus hands-on Taktline workflow
  *  tips. One tip is shown per calendar day, rotating deterministically so every

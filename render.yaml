@@ -6,12 +6,22 @@
 # them on first deploy (or leave them blank and fill them in later under
 # Environment). Everything else is either derived or safe to commit.
 
-# No `databases:` block on purpose. Render's free Postgres EXPIRES 30 days
-# after creation (then 14 days to upgrade before the data is deleted), which is
-# a trial, not a free tier — a blueprint that quietly provisions a database with
-# a one-month fuse is worse than one that asks you for a connection string.
-# Bring your own instead: Neon's free plan is permanent (see DEPLOY.md →
-# Which Postgres), or use any managed Postgres including Render's own paid one.
+# No `databases:` block by default — deliberately, twice over. Render's FREE
+# Postgres expires 30 days after creation, and a blueprint that hands you a
+# one-month fuse is worse than one that asks for a connection string; and a
+# blueprint that silently creates a *paid* database bills you on apply. So
+# DATABASE_URL is prompted instead, and works with any provider.
+#
+# Want everything on Render and billed together? Uncomment this and set
+# DATABASE_URL back to `fromDatabase` (see DEPLOY.md → Which Postgres). Check
+# the plan name against Render's current Postgres plans before applying.
+#
+# databases:
+#   - name: taktline-db
+#     databaseName: taktline
+#     user: taktline
+#     plan: basic-256mb        # ~$6/mo · no expiry · 1 GB storage
+#     ipAllowList: []          # empty → reachable only inside Render's network
 
 services:
   - type: web
@@ -19,7 +29,9 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: free           # Free instances sleep after ~15 min idle (cold start ~30 s).
+    # `free` sleeps after ~15 min idle and pays a ~40 s cold start on the next
+    # request. `starter` (~$7/mo) is always on — the fix for a 6am shift.
+    plan: free
     region: oregon
     healthCheckPath: /health
 

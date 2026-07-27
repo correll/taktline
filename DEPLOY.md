@@ -204,11 +204,40 @@ dashboard shows that happening, the fix is to let the pool drain — run the
 engine with `poolclass=NullPool`, trading a little per-request connection
 latency for compute that actually suspends between shifts.
 
-**When to just pay.** Roughly $6–7/month buys Render's Basic-256MB or Neon's
-Launch plan and removes every caveat above — no expiry, no pause, no
-compute-hour ceiling. Taktline being free forever is a statement about the
-software licence, not a reason to run a production shop floor on a hobby
-database. Move before you have data you would miss, and take a backup.
+### What it costs, once you stop wanting caveats
+
+Render bills the **web service and the database separately** — a $7 Starter
+web service does not include Postgres. The three combinations worth knowing:
+
+| Setup | Cost | Cold start? | Caveats |
+|---|---|---|---|
+| Render Free + Neon Free | $0 | **yes, ~40 s** after 15 min idle | none you would notice at this size |
+| **Render Starter + Neon Free** | **$7** | no | Neon's 100 CU-hours (see below) |
+| Render Starter + Render Basic-256MB | ~$13 | no | none — one bill, one dashboard |
+
+**Pay the $7 for the web service first.** That is the one that removes the
+40-second wait when someone opens the board at 6am, and no database plan fixes
+it. Whether you then pay another ~$6 for Postgres is a question about how much
+you want to think about it.
+
+**Render Starter + Neon Free ($7 total) does work here**, because Taktline
+makes no database queries when the floor is quiet: the usage flusher skips the
+write when nothing has happened, so Neon's compute suspends overnight and at
+weekends. A single shift is roughly 176 active hours a month, about 44 of the
+100 free CU-hours. Two shifts still fit. The thing to watch is that the backend
+holds a connection pool open (`pool_pre_ping=True` with SQLAlchemy's default
+pool) — if Neon's usage dashboard shows compute never suspending, switch the
+engine to `poolclass=NullPool` so idle connections actually close.
+
+**Render Starter + Render Postgres (~$13 total)** is the version with nothing
+to monitor: no expiry, no pause, no compute ceiling, co-located with the web
+service, one invoice. `render.yaml` has the `databases:` block commented out —
+uncomment it and switch `DATABASE_URL` back to `fromDatabase` to have the
+blueprint provision and wire it for you.
+
+Taktline being free forever is a statement about the software licence, not a
+reason to run a production shop floor on a hobby database. Whichever you pick,
+move before you have data you would miss, and take a backup.
 
 ### What the image does
 
@@ -235,10 +264,11 @@ larger instance raise `ARGON2_TIME_COST` / `ARGON2_MEMORY_COST_KIB` /
 passwords keep working and migrate to the new cost on their next login.
 
 **Free tier sleeps.** A free Render web service spins down after ~15 minutes of
-inactivity; the next request pays a cold start of roughly 30 seconds. Fine for
-a demo, wrong for a shop floor that opens at 6am — use a paid instance for
-anything real. (The database is a separate decision, covered in
-[Which Postgres](#which-postgres).)
+inactivity, and the next request pays the full ~40 s cold start (Python import
+plus migrations). Fine for a demo, wrong for a floor that opens at 6am. The fix
+is one line: change `plan: free` to `plan: starter` in `render.yaml`, or switch
+the instance type in the dashboard. Costs and the database side of the decision
+are in [Which Postgres](#which-postgres).
 
 **One instance, deliberately.** `numInstances: 1` is not a cost saving. The
 WebSocket connection registry, the per-IP rate limiter and the usage meter all

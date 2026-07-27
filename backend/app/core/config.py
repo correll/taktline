@@ -76,6 +76,23 @@ class Settings(BaseSettings):
     # ── Password policy ───────────────────────────────────────────────────────
     password_min_length: int = 10
 
+    # ── Password hashing (argon2id) ───────────────────────────────────────────
+    # argon2-cffi's own defaults (t=3, 64 MiB, p=4) assume a multi-core server.
+    # Taktline's recommended deployment is one small instance, where they are the
+    # single most expensive thing the app does: on a 0.1-CPU box a login took
+    # 3.2 s, and a shift-change of eight tablets signing in together took 27 s.
+    # These values are the OWASP Password Storage minimum for argon2id
+    # (19 MiB, t=2, p=1) — a legitimate posture, roughly an order of magnitude
+    # cheaper here. Parallelism of 1 matters most: extra lanes are pure overhead
+    # when there is less than a core to run them on.
+    #
+    # Raise them on a bigger instance — hashes record the parameters they were
+    # made with, so old passwords keep verifying and are re-hashed to the
+    # current cost on next login.
+    argon2_time_cost: int = 2
+    argon2_memory_cost_kib: int = 19456     # 19 MiB
+    argon2_parallelism: int = 1
+
     # ── Links in outbound email ───────────────────────────────────────────────
     frontend_base_url: str = "http://localhost:3000"
 

@@ -12,10 +12,20 @@ import secrets
 from argon2 import PasswordHasher
 from argon2.exceptions import Argon2Error
 
-_ph = PasswordHasher()
+from .config import settings
+
+# Cost is configurable because it is deployment-dependent: the same parameters
+# that are comfortable on a multi-core host make a login take seconds on a
+# small one. See the notes on `argon2_*` in config.py.
+_ph = PasswordHasher(
+    time_cost=settings.argon2_time_cost,
+    memory_cost=settings.argon2_memory_cost_kib,
+    parallelism=settings.argon2_parallelism,
+)
 
 # Pre-computed hash used to equalize timing when logging in with an unknown
-# email, so response time doesn't reveal whether an account exists.
+# email, so response time doesn't reveal whether an account exists. Built with
+# the *current* parameters so the decoy costs what a real verify costs.
 _DUMMY_HASH = _ph.hash("timing-equalization-placeholder")
 
 
@@ -39,6 +49,14 @@ def dummy_verify() -> None:
 
 
 def needs_rehash(password_hash: str) -> bool:
+    """True when this hash was made with parameters other than the current ones.
+
+    An argon2 hash carries the cost it was created with, so an old hash keeps
+    verifying at the *old* price forever. Re-hashing on a successful login is
+    what actually migrates a deployment onto new parameters — in either
+    direction: cheaper after tuning for a small instance, stronger after moving
+    to a bigger one.
+    """
     return _ph.check_needs_rehash(password_hash)
 
 

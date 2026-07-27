@@ -92,6 +92,15 @@ itself after a redeploy.
 
 ### Two things to know before you rely on it
 
+**Password hashing is the CPU floor.** argon2id is deliberately expensive and
+is by far the heaviest thing the app does; everything else is ~90 ms. Taktline
+ships the OWASP minimum profile (19 MiB, t=2, p=1) rather than argon2-cffi's
+multi-core defaults, which on a 0.1-CPU instance cost 3.2 s per login and 27 s
+for eight tablets signing in together. Tuned: **0.2 s** and **6 s**. On a
+larger instance raise `ARGON2_TIME_COST` / `ARGON2_MEMORY_COST_KIB` /
+`ARGON2_PARALLELISM` — hashes record the cost they were made with, so existing
+passwords keep working and migrate to the new cost on their next login.
+
 **Free tier sleeps.** A free Render web service spins down after ~15 minutes of
 inactivity; the next request pays a cold start of roughly 30 seconds. Fine for
 a demo, wrong for a shop floor that opens at 6am — use a paid instance for

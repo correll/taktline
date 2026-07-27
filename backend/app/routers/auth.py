@@ -17,7 +17,8 @@ from ..core.email import (
     send_verification_email,
 )
 from ..core.ratelimit import limiter
-from ..core.security import dummy_verify, generate_token, hash_password, hash_token, verify_password
+from ..core.security import (dummy_verify, generate_token, hash_password, hash_token,
+                             needs_rehash, verify_password)
 from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import AuthSession, AuthToken, Company, Membership, SupportGrant, User
 from ..deps.auth import (
@@ -223,6 +224,12 @@ async def login(request: Request, response: Response, body: LoginBody,
     # Only reachable with a correct password, so this does not aid enumeration.
     if not user.emailVerified:
         raise HTTPException(403, "Please verify your email before signing in")
+    # A successful login is the one moment the plaintext password is in hand, so
+    # it is the only chance to migrate this hash onto the current argon2 cost.
+    # Without it, changed parameters would apply to new accounts only and every
+    # existing user would keep paying the old price forever.
+    if needs_rehash(user.passwordHash):
+        user.passwordHash = hash_password(body.password)
     raw, csrf = await create_auth_session(session, user, request)
     set_auth_cookies(response, raw, csrf)
     return await _me_response(session, user)

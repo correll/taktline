@@ -65,3 +65,74 @@ def test_logout_revokes_session(actor):
     bootstrap_admin(a)
     assert a.req("POST", "/auth/logout").status_code == 204
     assert a.req("GET", "/auth/me").status_code == 401
+
+
+# ─── argon2 cost migration ───────────────────────────────────────────────────
+
+def test_login_migrates_a_stale_argon2_hash(actor):
+    """An argon2 hash carries the cost it was made with, so tuning the
+    parameters only ever reaches new accounts unless a successful login
+    re-hashes. Without this, every pre-existing user keeps paying the old price
+    forever — on a small instance that is the difference between a 0.3 s and a
+    3 s login, permanently."""
+    import asyncio
+    from argon2 import PasswordHasher
+    from sqlalchemy import select
+    from app.db.connection import SessionLocal
+    from app.db.tables import User
+    from app.core.security import needs_rehash
+
+    a = actor()
+    email = bootstrap_admin(a)          # created with the CURRENT parameters
+    password = "password-abcdef"
+
+    # Rewrite the stored hash as if it had been made by an older deployment.
+    stale = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
+    stale_hash = stale.hash(password)
+    assert needs_rehash(stale_hash), "fixture must actually differ from current cost"
+
+    async def _set(h):
+        async with SessionLocal() as s:
+            u = (await s.execute(select(User).where(User.email == email))).scalars().first()
+            u.passwordHash = h
+            await s.commit()
+
+    async def _get():
+        async with SessionLocal() as s:
+            u = (await s.execute(select(User).where(User.email == email))).scalars().first()
+            return u.passwordHash
+
+    asyncio.run(_set(stale_hash))
+    assert needs_rehash(asyncio.run(_get()))
+
+    r = a.req("POST", "/auth/login", {"email": email, "password": password})
+    assert r.status_code == 200, r.text
+
+    migrated = asyncio.run(_get())
+    assert migrated != stale_hash                     # rewritten…
+    assert not needs_rehash(migrated)                 # …at the current cost
+    # and the account still works afterwards
+    assert a.req("POST", "/auth/login",
+                 {"email": email, "password": password}).status_code == 200
+
+
+def test_a_wrong_password_never_rewrites_the_hash(actor):
+    """The rehash must sit behind a successful verify — never on the failure
+    path, where the supplied password is by definition not the user's."""
+    import asyncio
+    from sqlalchemy import select
+    from app.db.connection import SessionLocal
+    from app.db.tables import User
+
+    a = actor()
+    email = bootstrap_admin(a)
+
+    async def _get():
+        async with SessionLocal() as s:
+            u = (await s.execute(select(User).where(User.email == email))).scalars().first()
+            return u.passwordHash
+
+    before = asyncio.run(_get())
+    assert a.req("POST", "/auth/login",
+                 {"email": email, "password": "definitely-not-it"}).status_code == 401
+    assert asyncio.run(_get()) == before

@@ -349,15 +349,9 @@ function Founder() {
               Nikolaus Correll
             </div>
             <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14.5, lineHeight: 1.7, color: color.textSecondary }}>
-              Professor of Aerospace and Mechanical Engineering at the University of
-              Notre Dame, and adjoint Professor of Computer Science at the University of
-              Colorado at Boulder. Nikolaus founded Robotic Materials Inc., where he
-              co-created Optio — a digital value-stream-mapping system for high-mix,
-              low-volume (re)manufacturers. Taktline is a fresh start on the same idea,
-              rebuilt from scratch.
-            </p>
-            <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14, lineHeight: 1.7, color: color.textSecondary }}>
-              He is the author of{' '}
+              Professor of Aerospace and Mechanical Engineering at the University of Notre
+              Dame, and Adjoint Professor of Computer Science at the University of Colorado
+              Boulder. Author of{' '}
               <a href="https://www.amazon.com/dp/B09B1PPF91/" target="_blank" rel="noopener noreferrer"
                  style={bookLink}
                  onClick={() => track('outbound_click', { to: 'book-seven-deadly-wastes' })}>
@@ -368,6 +362,13 @@ function Founder() {
                  onClick={() => track('outbound_click', { to: 'book-autonomous-robots' })}>
                 Introduction to Autonomous Robots
               </a>{' '}(MIT Press).
+            </p>
+            <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14.5, lineHeight: 1.7, color: color.textSecondary }}>
+              He works on automation, and Taktline comes out of a simple observation: you
+              can’t automate a process nobody has measured. At Robotic Materials Inc
+              (2016–2022), he and a small team built Optio, a digital value-stream-mapping
+              system for high-mix, low-volume (re)manufacturers. Taktline is a fresh start
+              on the same idea, rebuilt from scratch.
             </p>
             <p style={{ margin: `${size.sp3} 0 0`, fontSize: 13, lineHeight: 1.6, color: color.textDim }}>
               His research has been funded by NSF, NIST, NASA, ARPA-E, ARO, AFOSR and DARPA.

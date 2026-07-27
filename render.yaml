@@ -64,10 +64,11 @@ services:
         sync: false
       # Outbound email — any SMTP provider. Without it Taktline runs, but
       # verification and invite links are only printed to the service log, so
-      # nobody but you can ever join. SendGrid's free plan ended in May 2025;
-      # Brevo and Resend still have free tiers. See DEPLOY.md.
-      #   Brevo:  smtp-relay.brevo.com : 587
+      # nobody but you can ever join. SendGrid's free plan ended in May 2025.
+      # Resend is the documented default: 3k/month free and no provider
+      # branding on your email. See DEPLOY.md → Email.
       #   Resend: smtp.resend.com      : 587   (user "resend")
+      #   Brevo:  smtp-relay.brevo.com : 587   (more per day, but brands it)
       - key: SMTP_HOST
         sync: false
       - key: SMTP_USER

@@ -1,8 +1,10 @@
 # Deploying Taktline (free tier)
 
 Taktline is a FastAPI backend + Postgres + a React (Vite) SPA. It can be hosted
-for free with **Neon** (Postgres), a container/web host (**Render**, **Fly.io**,
-**Railway**), and a free-tier mail provider such as **Brevo** or **Resend**. Two topologies are supported; pick one.
+for free. The documented path — and the one `render.yaml` builds — is **Render**
+(web service + Postgres) with **Resend** for email; **Neon** is the Postgres to
+move to when you outgrow Render's free database. Two topologies are supported;
+pick one.
 
 **Deploying to Render?** Jump to [Render, from the blueprint](#render-from-the-blueprint)
 — `render.yaml` + `Dockerfile` in the repo root do all of this for you.
@@ -164,6 +166,34 @@ points here, so nothing else changes once it is live.
 - [ ] Move the service and database off the free plans (see below)
 - [ ] Take a first database backup (Render → database → Backups)
 
+### Which Postgres
+
+The blueprint provisions **Render's own Postgres**, because it is one less
+account and Render wires `DATABASE_URL` for you. Its free plan expires, so
+before you have data you care about, either move it to a paid Render plan or
+point `DATABASE_URL` at **Neon** — the app normalizes whatever connection
+string a host hands out, so switching is one environment variable.
+
+**Why Neon rather than Supabase**, given both are hosted Postgres with a free
+tier:
+
+*Supabase free projects pause after 7 days of inactivity and need a **manual**
+unpause from the dashboard* — left paused long enough, they are deleted. Neon
+suspends idle compute too, but **resumes automatically in about a second** when
+a connection arrives. For a shop-floor tool that is the whole argument: a
+quiet week over a holiday shutdown means Taktline comes back by itself on Neon,
+and comes back dead on Supabase until somebody remembers to log into a
+dashboard. Render's own database does not sleep at all on a paid plan, which is
+why it is the default here.
+
+The second reason is that Supabase's value is a *platform* — Auth, Storage,
+Realtime, PostgREST — and Taktline already has all four of its own: session
+auth with argon2, floor plans stored in Postgres, its own WebSocket broadcast,
+its own FastAPI. Adopting Supabase would mean either ignoring most of what you
+are there for, or running two auth systems and duplicating tenant scoping in
+RLS that `companyId` filtering already does. Neon is *just Postgres*, which is
+exactly the amount of database this application wants.
+
 ### What the image does
 
 `Dockerfile` is a two-stage build: Node builds the SPA with `VITE_API_URL=""`
@@ -257,17 +287,33 @@ provider. `SENDGRID_API_KEY` remains as a one-variable shortcut: it fills in
 fine choice if you are already paying for it; a poor default now. Options with
 a standing free tier, all plain SMTP:
 
-| Provider | Free tier | SMTP host |
-|---|---|---|
-| **Brevo** | ~300 emails/day | `smtp-relay.brevo.com:587` |
-| **Resend** | 3,000 emails/month | `smtp.resend.com:587` (user `resend`) |
-| **SMTP2GO** | 1,000 emails/month | `mail.smtp2go.com:587` |
-| **Amazon SES** | no free tier, but ~$0.10 per 1,000 | `email-smtp.<region>.amazonaws.com:587` |
+| Provider | Free tier | Their branding on your email? | SMTP host |
+|---|---|---|---|
+| **Resend** ← default | 3,000/month, 100/day | no | `smtp.resend.com:587` (user `resend`) |
+| **Brevo** | ~300/day | **yes** — "Sent with Brevo"; removing it is a paid add-on | `smtp-relay.brevo.com:587` |
+| **SMTP2GO** | 1,000/month | no | `mail.smtp2go.com:587` |
+| **Amazon SES** | none, ~$0.10 per 1,000 | no | `email-smtp.<region>.amazonaws.com:587` |
 
-Taktline's volume is tiny — it sends only verification, invitation and
-password-reset messages, so a shop of 50 people might send a few dozen emails
-in its lifetime. Any of the above is comfortable; pick on deliverability and
-whether you can verify your domain, not on headroom.
+**Resend is the default here, and the branding column is why.** Taktline's only
+emails are the ones that *are* the first impression — "Verify your Taktline
+email" to a new customer, "You're invited to join…" to every worker on a floor.
+A third-party marketing footer on those reads as hobby-grade at precisely the
+wrong moment. Brevo's free tier is otherwise more generous (300/day against
+Resend's 100/day), so it is the better pick if you expect to onboard several
+large customers on the same day — but that is headroom you can buy later, and
+clean email you cannot.
+
+Volume is not the deciding factor either way: Taktline sends only verification,
+invitation and password-reset messages, so a shop of 50 people might send a few
+dozen emails in its lifetime. Onboarding an entire 50-person floor is 50
+invitations — comfortable inside any row above.
+
+**Send from your own domain.** `no-reply@taktline.com` on a domain you have
+verified (SPF + DKIM records at your registrar) rather than a provider
+subdomain is the single biggest thing you can do for deliverability. Do it in
+the same sitting as the custom-domain DNS in step 5 — a verification email
+landing in spam is the failure mode that quietly kills signups, and it is
+invisible until someone tells you they never got it.
 
 Locally, leave all of it unset: the console mailer prints the message and its
 link to stdout, which is what makes the flows testable with no account

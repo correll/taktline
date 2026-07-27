@@ -1,0 +1,95 @@
+"""Pydantic schemas for authentication and the /auth/me payload."""
+
+from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, EmailStr, field_validator
+
+from ..core.config import settings
+
+
+def _validate_password(v: str) -> str:
+    if len(v) < settings.password_min_length:
+        raise ValueError(f"password must be at least {settings.password_min_length} characters")
+    return v
+
+
+# ── Request bodies ─────────────────────────────────────────────────────────────
+class SignupBody(BaseModel):
+    email: EmailStr
+    password: str
+    name: Optional[str] = None
+
+    _pw = field_validator("password")(_validate_password)
+
+
+class LoginBody(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class VerifyEmailBody(BaseModel):
+    token: str
+
+
+class ResendVerificationBody(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordBody(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordBody(BaseModel):
+    token: str
+    newPassword: str
+
+    _pw = field_validator("newPassword")(_validate_password)
+
+
+# ── Responses ──────────────────────────────────────────────────────────────────
+class UserPublic(BaseModel):
+    id: str
+    email: EmailStr
+    emailVerified: bool
+    name: Optional[str] = None
+    preferences: dict = {}
+    platformRole: Optional[str] = None   # 'owner' | 'support' | None (customer service)
+    isSandbox: bool = False              # anonymous try-it account (restricted)
+
+
+class PreferencesPatch(BaseModel):
+    """Partial update of the user's cross-device preferences. Only known keys
+    are accepted so the blob can't grow arbitrarily."""
+    theme: Optional[str] = None
+
+    @field_validator("theme")
+    @classmethod
+    def _theme_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("day", "night"):
+            raise ValueError("theme must be 'day' or 'night'")
+        return v
+
+
+class CompanyMembership(BaseModel):
+    """A company the current user belongs to, plus their role in it. Platform
+    staff also see companies they're impersonating (impersonated=True, with the
+    grant's expiry) so the whole frontend works unchanged during support."""
+    id: str
+    name: str
+    slug: Optional[str] = None
+    role: str
+    timezone: str = "UTC"
+    impersonated: bool = False
+    impersonationExpiresAt: Optional[datetime] = None
+
+
+class MeResponse(BaseModel):
+    user: UserPublic
+    companies: List[CompanyMembership]
+
+
+class MessageResponse(BaseModel):
+    """Generic acknowledgement. `devLink` is only populated when TAKTLINE_DEV=1."""
+    message: str
+    devLink: Optional[str] = None

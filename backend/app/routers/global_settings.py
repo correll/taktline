@@ -1,29 +1,38 @@
 from fastapi import APIRouter, Depends
-from ..db.connection import get_db
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..db.connection import get_session, get_or_create_singleton
+from ..db.tables import GlobalSettings as GlobalSettingsRow
+from ..deps.auth import CompanyContext, get_active_company, require_super_admin
 from ..models.global_settings import GlobalSettings, GlobalSettingsUpdate
-from ..models.common import utcnow
 
 router = APIRouter(prefix="/global-settings", tags=["global-settings"])
 
 
+def _to_model(r: GlobalSettingsRow) -> GlobalSettings:
+    return GlobalSettings(_id=str(r.id), timezone=r.timezone, workHours=r.workHours or [])
+
+
+async def _get_or_create(session: AsyncSession, company_id) -> GlobalSettingsRow:
+    return await get_or_create_singleton(
+        session, GlobalSettingsRow, company_id, timezone="UTC",
+    )
+
+
 @router.get("/", response_model=GlobalSettings)
-async def get_global_settings(db=Depends(get_db)):
-    doc = await db.global_settings.find_one()
-    if not doc:
-        return GlobalSettings()
-    return GlobalSettings(**{**doc, "_id": str(doc["_id"])})
+async def get_global_settings(ctx: CompanyContext = Depends(get_active_company),
+                              session: AsyncSession = Depends(get_session)):
+    return _to_model(await _get_or_create(session, ctx.company_id))
 
 
 @router.put("/", response_model=GlobalSettings)
-async def update_global_settings(body: GlobalSettingsUpdate, db=Depends(get_db)):
-    update = {k: v for k, v in body.model_dump().items() if v is not None}
-    existing = await db.global_settings.find_one()
-    if existing:
-        await db.global_settings.update_one({"_id": existing["_id"]}, {"$set": update})
-        doc = await db.global_settings.find_one({"_id": existing["_id"]})
-    else:
-        defaults = GlobalSettings().model_dump(exclude={"id"})
-        defaults.update(update)
-        result = await db.global_settings.insert_one(defaults)
-        doc = await db.global_settings.find_one({"_id": result.inserted_id})
-    return GlobalSettings(**{**doc, "_id": str(doc["_id"])})
+async def update_global_settings(body: GlobalSettingsUpdate,
+                                 ctx: CompanyContext = Depends(require_super_admin),
+                                 session: AsyncSession = Depends(get_session)):
+    row = await _get_or_create(session, ctx.company_id)
+    for k, v in body.model_dump().items():
+        if v is not None:
+            setattr(row, k, v)
+    await session.flush()
+    return _to_model(row)

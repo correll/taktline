@@ -1,0 +1,246 @@
+"""Merge/unmerge conservation: cycling lots into an assembly and back must never
+create or destroy units, even under concurrent duplicate requests (the React
+StrictMode double-fire that minted duplicate lots)."""
+
+import threading
+
+from tests.helpers import bootstrap_admin, add_member
+
+
+# ─── Setup helpers ────────────────────────────────────────────────────────────
+
+def _mk_station(a, name, x):
+    r = a.req("POST", "/stations/", {"name": name, "position": {"x": x, "y": 100, "width": 60, "height": 60}})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _setup_line(a):
+    """Tutorial line: Steel ×1 + Motor ×3 → Assembly → Testing → Warehouse."""
+    steel = _mk_station(a, "Steel", 100)
+    motor = _mk_station(a, "Motor", 200)
+    asm   = _mk_station(a, "Assembly", 300)
+    test  = _mk_station(a, "Testing", 400)
+    wh    = _mk_station(a, "Warehouse", 500)
+    proc = a.req("POST", "/processes/", {"name": "Line"}).json()
+    for load, unload, q in [(steel, asm, 1), (motor, asm, 3), (asm, test, 1), (test, wh, 1)]:
+        r = a.req("POST", "/routes/", {"processId": proc["_id"], "load": load["_id"],
+                                       "unload": unload["_id"], "quantity": q})
+        assert r.status_code == 201, r.text
+    return steel, motor, asm, test, wh
+
+
+def _units_by_station(a):
+    """station id → total units across all cards (the conservation quantity)."""
+    m: dict = {}
+    for c in a.req("GET", "/cards/").json():
+        for sid, b in c["bins"].items():
+            m[sid] = m.get(sid, 0) + b["count"]
+    return m
+
+
+def _move_all_to(a, station_id):
+    for c in a.req("GET", "/cards/").json():
+        for sid, b in list(c["bins"].items()):
+            if sid != station_id and b["count"] > 0:
+                r = a.req("POST", f"/cards/{c['_id']}/move",
+                          {"fromStationId": sid, "toStationId": station_id, "quantity": b["count"]})
+                assert r.status_code == 200, r.text
+
+
+# ─── Conservation through merge → unmerge cycles ──────────────────────────────
+
+def test_merge_unmerge_cycle_conserves_units(actor):
+    a = actor(); bootstrap_admin(a)
+    steel, motor, asm, _, wh = _setup_line(a)
+
+    # Pull one finished unit from the warehouse → Steel×1 @ Steel, Motor×3 @ Motor.
+    r = a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    assert r.status_code == 201, r.text
+    baseline = _units_by_station(a)
+    assert baseline == {steel["_id"]: 1, motor["_id"]: 3}
+
+    for cycle in range(3):   # the user's repro was repeating this loop
+        # Move precursors into the assembly and merge them.
+        _move_all_to(a, asm["_id"])
+        r = a.req("POST", f"/merge/{asm['_id']}")
+        assert r.status_code == 201, r.text
+        assert r.json()["assemblies"] == 1
+        assert _units_by_station(a) == {asm["_id"]: 1}, f"cycle {cycle}"
+        cards = a.req("GET", "/cards/").json()
+        assert len(cards) == 1, f"cycle {cycle}: consumed precursors must be gone"
+
+        # A second merge with nothing left must refuse, not mint another assembly.
+        assert a.req("POST", f"/merge/{asm['_id']}").status_code == 400
+
+        # Drag the assembly back → unmerge → exactly the original precursors.
+        r = a.req("POST", f"/cards/{r.json()['createdCardId']}/unmerge",
+                  {"stationId": asm["_id"], "quantity": 1})
+        assert r.status_code == 200, r.text
+        assert _units_by_station(a) == baseline, f"cycle {cycle}: units must be conserved"
+        assert len(a.req("GET", "/cards/").json()) == 2, f"cycle {cycle}: no extra lots"
+
+
+def test_unmerge_non_assembly_rejected(actor):
+    """A precursor sitting at the merge station is not unmergeable — the lot
+    board relies on this 400 to fall back to a plain move."""
+    a = actor(); bootstrap_admin(a)
+    _, motor, asm, _, wh = _setup_line(a)
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    _move_all_to(a, asm["_id"])
+    motor_card = next(c for c in a.req("GET", "/cards/").json()
+                      if c["bins"].get(asm["_id"], {}).get("count") == 3)
+    r = a.req("POST", f"/cards/{motor_card['_id']}/unmerge",
+              {"stationId": asm["_id"], "quantity": 3})
+    assert r.status_code == 400 and "not assembled" in r.json()["detail"]
+
+
+def test_system_created_cards_get_lot_codes(actor):
+    """Pull and merge mint cards with generated lot codes (e.g. "E4096A");
+    splitting a lot apart (unmerge) keeps its identity — every piece inherits
+    the assembly's code instead of being re-coded. Users may also define the
+    code themselves when creating a lot."""
+    a = actor(); bootstrap_admin(a)
+    steel, _, asm, _, wh = _setup_line(a)
+
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    codes = [c["lotNum"] for c in a.req("GET", "/cards/").json()]
+    assert all(c and len(c) == 6 and c == c.upper() for c in codes)      # generated codes
+    assert len(set(codes)) == 2                                          # distinct per card
+
+    _move_all_to(a, asm["_id"])
+    r = a.req("POST", f"/merge/{asm['_id']}")
+    assembly = a.req("GET", f"/cards/{r.json()['createdCardId']}").json()
+    assert assembly["lotNum"] and len(assembly["lotNum"]) == 6           # assembly gets a code
+
+    a.req("POST", f"/cards/{assembly['_id']}/unmerge", {"stationId": asm["_id"], "quantity": 1})
+    pieces = [c["lotNum"] for c in a.req("GET", "/cards/").json()]
+    assert pieces == [assembly["lotNum"]] * 2                            # pieces keep the code
+
+    # User-defined code on direct creation; blank → generated.
+    tmpl = next(t for t in a.req("GET", "/lot-templates/").json()
+                if t["startStationId"] == steel["_id"])
+    r = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": tmpl["processId"],
+                                  "lotNum": "RAW-042", "totalQuantity": 1,
+                                  "bins": {steel["_id"]: {"count": 1}}})
+    assert r.status_code == 201 and r.json()["lotNum"] == "RAW-042"
+    r = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": tmpl["processId"],
+                                  "totalQuantity": 1, "bins": {steel["_id"]: {"count": 1}}})
+    assert r.status_code == 201 and len(r.json()["lotNum"]) == 6
+
+
+def test_manual_merge_consumes_only_selected(actor):
+    """Merging is deliberate: with cardIds only the worker-selected lot cards
+    are consumed; without it (AUTO) any available precursors are used."""
+    a = actor(); bootstrap_admin(a)
+    steel, motor, asm, _, wh = _setup_line(a)
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})   # two pulls → two
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})   # cards per branch
+    _move_all_to(a, asm["_id"])
+    cards = a.req("GET", "/cards/").json()
+    steels = [c for c in cards if c["bins"][asm["_id"]]["count"] == 1]
+    motors = [c for c in cards if c["bins"][asm["_id"]]["count"] == 3]
+    assert len(steels) == 2 and len(motors) == 2
+
+    # Only a Steel card selected → the Motor branch has nothing → refuse.
+    r = a.req("POST", f"/merge/{asm['_id']}", {"cardIds": [steels[0]["_id"]]})
+    assert r.status_code == 400 and "selected" in r.json()["detail"]
+
+    # One Steel + one Motor selected → exactly one assembly; the others untouched.
+    r = a.req("POST", f"/merge/{asm['_id']}", {"cardIds": [steels[0]["_id"], motors[0]["_id"]]})
+    assert r.status_code == 201 and r.json()["assemblies"] == 1
+    after = {c["_id"]: c for c in a.req("GET", "/cards/").json()}
+    assert steels[0]["_id"] not in after and motors[0]["_id"] not in after
+    assert after[steels[1]["_id"]]["bins"][asm["_id"]]["count"] == 1
+    assert after[motors[1]["_id"]]["bins"][asm["_id"]]["count"] == 3
+    assert _units_by_station(a) == {asm["_id"]: 1 + 1 + 3}   # assembly + leftovers
+
+
+def test_member_can_merge(actor):
+    """Merging is the first step of working at a merge station, so operators
+    (members) may trigger it — pull and unmerge remain admin-only."""
+    a = actor(); bootstrap_admin(a)
+    m = actor(); add_member(a, m, role="user")
+    _, _, asm, _, wh = _setup_line(a)
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    _move_all_to(a, asm["_id"])
+
+    r = m.req("POST", f"/merge/{asm['_id']}")
+    assert r.status_code == 201, r.text
+    assert r.json()["assemblies"] == 1
+    # …but the member still cannot pull or unmerge.
+    assert m.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1}).status_code == 403
+    assert m.req("POST", f"/cards/{r.json()['createdCardId']}/unmerge",
+                 {"stationId": asm["_id"], "quantity": 1}).status_code == 403
+
+
+# ─── Concurrency: duplicate requests must not duplicate lots ──────────────────
+
+def _race(clients, fn):
+    """Fire fn(client) from one thread per client, as simultaneously as possible."""
+    barrier = threading.Barrier(len(clients))
+    results, threads = [], []
+
+    def run(c):
+        barrier.wait()
+        results.append(fn(c))
+
+    for c in clients:
+        t = threading.Thread(target=run, args=(c,))
+        threads.append(t); t.start()
+    for t in threads:
+        t.join()
+    return results
+
+
+def test_concurrent_merge_creates_one_assembly(actor):
+    """Two simultaneous merges (StrictMode double-fire) must yield exactly ONE
+    assembly — before the per-station lock, both consumed the same precursors
+    and each minted an assembly card."""
+    a = actor(); bootstrap_admin(a)
+    b = actor(); add_member(a, b, role="admin")
+    _, _, asm, _, wh = _setup_line(a)
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    _move_all_to(a, asm["_id"])
+
+    codes = sorted(_race([a, b], lambda c: c.req("POST", f"/merge/{asm['_id']}").status_code))
+    assert codes[0] == 201 and codes[1] in (400, 409), codes
+    assert _units_by_station(a) == {asm["_id"]: 1}
+    assert len(a.req("GET", "/cards/").json()) == 1
+
+
+def test_concurrent_unmerge_dissolves_once(actor):
+    """Two simultaneous unmerges of the same assembly must mint ONE set of
+    precursors, not two."""
+    a = actor(); bootstrap_admin(a)
+    b = actor(); add_member(a, b, role="super_admin")
+    steel, motor, asm, _, wh = _setup_line(a)
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    _move_all_to(a, asm["_id"])
+    card_id = a.req("POST", f"/merge/{asm['_id']}").json()["createdCardId"]
+
+    codes = sorted(_race([a, b], lambda c: c.req(
+        "POST", f"/cards/{card_id}/unmerge", {"stationId": asm["_id"], "quantity": 1}
+    ).status_code))
+    assert codes[0] == 200 and codes[1] in (400, 404), codes
+    assert _units_by_station(a) == {steel["_id"]: 1, motor["_id"]: 3}
+    assert len(a.req("GET", "/cards/").json()) == 2
+
+
+def test_concurrent_move_applies_once(actor):
+    """Two simultaneous identical moves of a full bin: only one may succeed —
+    otherwise the same physical units land downstream twice."""
+    a = actor(); bootstrap_admin(a)
+    b = actor(); add_member(a, b, role="super_admin")   # move is super-admin only
+    steel, _, asm, _, wh = _setup_line(a)
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    steel_card = next(c for c in a.req("GET", "/cards/").json()
+                      if c["bins"].get(steel["_id"], {}).get("count") == 1)
+
+    codes = sorted(_race([a, b], lambda c: c.req(
+        "POST", f"/cards/{steel_card['_id']}/move",
+        {"fromStationId": steel["_id"], "toStationId": asm["_id"], "quantity": 1},
+    ).status_code))
+    assert codes == [200, 400], codes
+    units = _units_by_station(a)
+    assert units[asm["_id"]] == 1 and steel["_id"] not in units

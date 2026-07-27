@@ -17,29 +17,48 @@ class Bin(BaseModel):
 LotStatus = Literal['idle', 'working', 'done']
 
 
+def _clean_lot_num(v: Optional[str]) -> Optional[str]:
+    """Lot code: user-defined or generated (e.g. "E4096A"). Trim; empty → None
+    (the backend then generates one); cap length for label printing."""
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not v:
+        return None
+    if len(v) > 24:
+        raise ValueError('lotNum must be at most 24 characters')
+    return v
+
+
 class Card(TimestampedModel):
     id: Optional[PyObjectId] = Field(default=None, alias="_id")
     lotTemplateId: str
     processId: str
-    lotNum: Optional[int] = None
+    lotNum: Optional[str] = None
     totalQuantity: int = 1
     bins: Dict[str, Bin] = {}
     fields: Dict[str, Any] = {}
     flagged: bool = False
     description: str = ""
     status: LotStatus = 'idle'
+    orderId: Optional[str] = None      # set when released by a production order
 
 
 class CardCreate(BaseModel):
     lotTemplateId: str
     processId: str
-    lotNum: Optional[int] = None
+    lotNum: Optional[str] = None
     totalQuantity: int = 1
     bins: Dict[str, Bin] = {}
     fields: Dict[str, Any] = {}
     flagged: bool = False
     description: str = ""
     status: LotStatus = 'idle'
+
+    @field_validator('lotNum')
+    @classmethod
+    def _clean_lot(cls, v: Optional[str]) -> Optional[str]:
+        return _clean_lot_num(v)
 
     @field_validator('totalQuantity')
     @classmethod
@@ -59,13 +78,18 @@ class CardCreate(BaseModel):
 
 
 class CardUpdate(BaseModel):
-    lotNum: Optional[int] = None
+    lotNum: Optional[str] = None
     totalQuantity: Optional[int] = None
     bins: Optional[Dict[str, Bin]] = None
     fields: Optional[Dict[str, Any]] = None
     flagged: Optional[bool] = None
     description: Optional[str] = None
     status: Optional[LotStatus] = None
+
+    @field_validator('lotNum')
+    @classmethod
+    def _clean_lot(cls, v: Optional[str]) -> Optional[str]:
+        return _clean_lot_num(v)
 
     @field_validator('totalQuantity')
     @classmethod

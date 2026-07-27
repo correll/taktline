@@ -1,21 +1,147 @@
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from typing import Optional
+"""Async SQLAlchemy database layer (PostgreSQL via asyncpg).
 
-_client: Optional[AsyncIOMotorClient] = None
+Replaces the previous Motor/MongoDB connection. Exposes:
+
+- ``engine``        — the async engine (one per process)
+- ``SessionLocal``  — async session factory (``expire_on_commit=False``)
+- ``Base``          — declarative base for ORM models
+- ``get_session``   — FastAPI dependency that wraps each request in a
+                       transaction (commit on success, rollback on error).
+                       This is what makes multi-write endpoints such as
+                       ``/merge`` and ``/cards/{id}/move`` atomic for free.
+- ``parse_uuid`` / ``require_uuid`` / ``optional_uuid`` — helpers for turning
+                       string ids from the API into ``uuid.UUID`` values.
+"""
+
+import os
+import uuid
+from typing import AsyncGenerator, Optional
+
+from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase
 
 
-async def connect_db(uri: str = "mongodb://localhost:27017") -> None:
-    global _client
-    _client = AsyncIOMotorClient(uri)
+# ─── Connection URL ──────────────────────────────────────────────────────────
+# On macOS Homebrew the local PostgreSQL server uses "trust" auth for the OS
+# user, so no password is needed. asyncpg falls back to the OS username when
+# one is not present in the URL.
+DATABASE_URL: str = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://localhost:5432/taktline",
+)
+
+
+# ─── Engine / session factory ────────────────────────────────────────────────
+# Under pytest (TESTING=1) use NullPool so connections aren't reused across the
+# per-test event loops that would otherwise break asyncpg.
+if os.getenv("TESTING"):
+    from sqlalchemy.pool import NullPool
+    engine: AsyncEngine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+else:
+    engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+
+SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=engine,
+    expire_on_commit=False,
+    autoflush=False,
+)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+# ─── Lifespan helpers (kept for main.py compatibility) ───────────────────────
+async def connect_db() -> None:
+    """Validate connectivity at startup so failures surface early."""
+    async with engine.connect():
+        pass
 
 
 async def close_db() -> None:
-    global _client
-    if _client:
-        _client.close()
-        _client = None
+    await engine.dispose()
 
 
-def get_db() -> AsyncIOMotorDatabase:
-    assert _client is not None, "Database not connected — call connect_db() first"
-    return _client["veridion"]
+# ─── Request-scoped transactional session ────────────────────────────────────
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """Yield a session and commit the whole request as one transaction.
+
+    Any exception (including ``HTTPException``) rolls the transaction back, so a
+    handler that raises partway through a multi-step operation never leaves
+    partial state behind.
+    """
+    from ..core.ws_events import flush_events
+
+    async with SessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        # Only after a successful commit: broadcast any staged card events, so
+        # clients never hear about state that rolled back.
+        await flush_events(session)
+
+
+# ─── UUID helpers ────────────────────────────────────────────────────────────
+def parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
+    """Return a UUID for a well-formed string, else ``None`` (no raise)."""
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def require_uuid(value: Optional[str], detail: str = "Resource not found") -> uuid.UUID:
+    """Parse an id that must be valid, else 404 (mirrors old ObjectId behaviour)."""
+    parsed = parse_uuid(value)
+    if parsed is None:
+        raise HTTPException(404, detail)
+    return parsed
+
+
+def optional_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
+    """Parse a nullable foreign-key id; empty/blank -> None, invalid -> 400."""
+    if value is None or value == "":
+        return None
+    parsed = parse_uuid(value)
+    if parsed is None:
+        raise HTTPException(400, f"Invalid id: {value!r}")
+    return parsed
+
+
+async def get_or_create_singleton(session, model, company_id, **defaults):
+    """Fetch a company's single per-company settings row, creating it on first
+    access. Concurrency-safe: two simultaneous first-loads no longer 500 on the
+    unique ``companyId`` index. The insert runs inside a SAVEPOINT so a duplicate
+    only rolls back that nested step (leaving the request's transaction intact),
+    after which we return the row the other request committed.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    stmt = select(model).where(model.companyId == company_id)
+    row = (await session.execute(stmt)).scalars().first()
+    if row is not None:
+        return row
+    try:
+        async with session.begin_nested():          # SAVEPOINT
+            row = model(companyId=company_id, **defaults)
+            session.add(row)
+            await session.flush()
+        return row
+    except IntegrityError:
+        # A concurrent request won the insert — the duplicate blocked on the
+        # unique index until they committed, so their row is now visible.
+        return (await session.execute(stmt)).scalars().one()

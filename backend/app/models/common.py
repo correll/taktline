@@ -1,4 +1,3 @@
-from bson import ObjectId
 from pydantic import BaseModel, Field
 from pydantic_core import core_schema
 from datetime import datetime, timezone
@@ -6,6 +5,12 @@ from typing import Any
 
 
 class PyObjectId(str):
+    """Opaque string id (a UUID in the Postgres backend).
+
+    Kept under the historical name so the API models are untouched. Accepts a
+    ``uuid.UUID`` or any string and always serialises to ``str``.
+    """
+
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: Any) -> Any:
         return core_schema.no_info_plain_validator_function(
@@ -15,15 +20,13 @@ class PyObjectId(str):
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
-        return {"type": "string", "example": "64a1f2b3c4d5e6f7a8b9c0d1"}
+        return {"type": "string", "example": "f47ac10b-58cc-4372-a567-0e02b2c3d479"}
 
     @classmethod
     def _validate(cls, v: Any) -> str:
-        if isinstance(v, ObjectId):
-            return str(v)
-        if isinstance(v, str) and ObjectId.is_valid(v):
-            return v
-        raise ValueError(f"Invalid ObjectId: {v!r}")
+        if v is None:
+            raise ValueError("id cannot be None")
+        return str(v)
 
 
 def utcnow() -> datetime:

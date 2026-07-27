@@ -1,9 +1,10 @@
-# Deploying Taktline (free tier)
+# Deploying Taktline
 
 Taktline is a FastAPI backend + Postgres + a React (Vite) SPA. It can be hosted
-for free. The documented path — and the one `render.yaml` builds — is **Render**
-for the app, **Neon** for Postgres (Render's own free database expires after 30
-days), and **Resend** for email. Two topologies are supported; pick one.
+on modest infrastructure: `render.yaml` builds it as **one Render web service
+plus Render Postgres** (~$13/month all in) with **Resend** for email. Cheaper
+and free-tier routes are documented alongside. Two topologies are supported;
+pick one.
 
 **Deploying to Render?** Jump to [Render, from the blueprint](#render-from-the-blueprint)
 — `render.yaml` + `Dockerfile` in the repo root do all of this for you.
@@ -76,16 +77,18 @@ your release branch into `main`, or set the branch explicitly in the Render UI
 (Service → Settings → Branch) after the blueprint is created. Deploying a branch
 that has no `Dockerfile` fails with a build error that does not explain itself.
 
-### 1. Create the database, then the blueprint
+### 1. Create the blueprint
 
-First make a Postgres instance and copy its connection string — [Neon](https://neon.tech)
-takes about a minute and needs no card (see [Which Postgres](#which-postgres)
-for why, and for the alternatives). Paste the string exactly as given; the app
-normalizes the driver prefix and `sslmode`/`channel_binding` itself.
+In Render: **New → Blueprint** → connect the GitHub repo → **Apply**. Render
+reads `render.yaml` and provisions both pieces: the web service `taktline`
+(Starter, always on) and the Postgres database `taktline-db`
+(`basic-256mb`). It wires `DATABASE_URL` between them and generates
+`SECRET_KEY` itself, so neither ever touches your repo.
 
-Then in Render: **New → Blueprint** → connect the GitHub repo → **Apply**.
-Render reads `render.yaml`, creates the web service `taktline`, and generates
-`SECRET_KEY` itself so it never touches your repo.
+**This starts billing on apply** — roughly $13/month, $7 for the web service
+and $6 for the database. Both were chosen deliberately over the free plans:
+free web services sleep, and free Postgres is deleted 30 days after creation.
+See [Which Postgres](#which-postgres) if you would rather start cheaper.
 
 `FRONTEND_BASE_URL` is pre-set to `https://taktline.com` in `render.yaml` —
 change that line if you are deploying anywhere else. The blueprint asks for
@@ -93,7 +96,6 @@ a handful of values it cannot invent:
 
 | Variable | What to put | If you skip it |
 |---|---|---|
-| `DATABASE_URL` | your Postgres connection string, verbatim | the service cannot start |
 | `PLATFORM_OWNER_EMAILS` | your email | no access to the `/platform` support dashboard |
 | `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` | any SMTP provider — see [Email](#email) | email is logged instead of sent, see step 4 |
 | `SMTP_FROM` | a **verified** sender, e.g. `Taktline <no-reply@taktline.com>` | the provider rejects the message |
@@ -167,91 +169,61 @@ points here, so nothing else changes once it is live.
 - [ ] `TAKTLINE_DEV` is `0` (the blueprint sets it) — confirm `/auth/dev/bootstrap` returns 404
 - [ ] Sign in on a phone and confirm the connection light shows **LIVE**
 - [ ] Upload a floor plan and reload — it is served from Postgres, so it survives redeploys
-- [ ] Decide whether to stay on free plans — Neon's is permanent, Render's web
-      service sleeps (see [Which Postgres](#which-postgres) and below)
+- [ ] Confirm the plans are what you intend — the blueprint bills ~$13/month
+      (see [Which Postgres](#which-postgres))
 - [ ] Take a first database backup (Render → database → Backups)
 
 ### Which Postgres
 
-**Render's free Postgres expires 30 days after it is created** (then 14 more
-days to upgrade before the data is deleted). That is a trial, not a free tier,
-so `render.yaml` deliberately does *not* provision a database — a blueprint
-that hands you a one-month fuse is worse than one that asks for a connection
-string. Bring your own and paste it into `DATABASE_URL`.
+The blueprint provisions **Render Postgres `basic-256mb`** (~$6/month, 1 GB
+storage) and wires it to the web service. That is the boring, co-located
+choice: one bill, one dashboard, no expiry, no pause, no usage meter to watch.
 
-| | Free plan | Catch |
-|---|---|---|
-| **Neon** ← default | permanent: 0.5 GB, 100 CU-hours/month, no card | idle compute suspends and **auto-resumes in ~1 s** |
-| **Supabase** | 500 MB | project **pauses after 7 days idle and needs a manual unpause**; deleted if left |
-| **Render** | 1 GB | **expires after 30 days** |
+It is *not* the free plan, on purpose — **Render's free Postgres expires 30
+days after creation**, with 14 further days to upgrade before the data is
+deleted. A blueprint that hands you a one-month fuse is worse than one that
+costs $6.
 
-**Why Neon over Supabase.** The pause behaviour is the whole argument. A shop
-that is quiet for a week — a holiday shutdown, a plant between contracts —
-comes back to a Taktline that woke up by itself on Neon, and to a dead one on
-Supabase until somebody remembers to log into a dashboard. Secondarily,
-Supabase's value is a *platform* (Auth, Storage, Realtime, PostgREST) and this
-app already has all four of its own: session auth with argon2, floor plans in
-Postgres, its own WebSocket broadcast, its own FastAPI. Adopting it would mean
-running two auth systems and duplicating `companyId` scoping in RLS. Neon is
-just Postgres, which is the amount of database this wants.
+**Use `connectionString`, never `connectionPoolString`.** Render offers a
+pooled endpoint (PgBouncer in transaction mode); asyncpg uses prepared
+statements, which PgBouncer breaks in that mode unless the driver's statement
+cache is disabled. We gain nothing from it either — the app keeps its own
+SQLAlchemy pool and runs as one instance. The blueprint is already correct;
+this note exists so nobody "optimises" it into an outage.
 
-**The one thing to watch on Neon's free plan** is compute-hours, not storage.
-0.5 GB is enormous for this data — stations, routes, lots and events are small,
-and floor plans are ~100 KB each. But the backend holds a connection pool open
-(`pool_pre_ping=True`, SQLAlchemy's default pool), and compute that never goes
-idle never suspends, which can outrun 100 CU-hours in a month. If Neon's usage
-dashboard shows that happening, the fix is to let the pool drain — run the
-engine with `poolclass=NullPool`, trading a little per-request connection
-latency for compute that actually suspends between shifts.
+#### Starting cheaper, or moving later
 
-### What it costs, once you stop wanting caveats
+Any managed Postgres works: delete the `databases:` block, set `DATABASE_URL`
+to `sync: false`, and paste a connection string. Every provider spelling —
+`postgresql://`, `postgres://`, Neon's trailing
+`?sslmode=require&channel_binding=require` — is normalized to asyncpg at boot,
+so there is nothing to hand-edit.
 
-Render bills the **web service and the database separately** — a $7 Starter
-web service does not include Postgres.
+| | Free plan | Paid | Catch |
+|---|---|---|---|
+| **Render** ← used here | 1 GB, **expires after 30 days** | $6 flat | none once paid |
+| **Neon** | permanent: 0.5 GB, 100 CU-hours | usage-based, ~$5/mo for one shift | idle compute suspends, auto-resumes in ~1 s |
+| **Supabase** | 500 MB | from ~$25/mo | free projects **pause after 7 days idle** and need a *manual* unpause |
 
-**Pay the $7 for the web service first.** That is the one that removes the
-~40 s wait when someone opens the board at 6am, and no database plan fixes it.
-Change `plan: free` to `plan: starter` in `render.yaml`.
+**Why not Supabase**, since it is the obvious name: free projects pause after a
+week of inactivity and have to be revived by hand from a dashboard. A shop
+quiet over a holiday shutdown comes back to a Taktline that woke itself up on
+Render or Neon, and to a dead one on Supabase. Beyond that, Supabase's value is
+a *platform* — Auth, Storage, Realtime, PostgREST — and this app already has
+all four of its own: session auth with argon2, floor plans in Postgres, its own
+WebSocket broadcast, its own FastAPI. Adopting it would mean two auth systems
+and `companyId` scoping duplicated in RLS.
 
-The database is the second, smaller decision:
+**Neon** is the one to consider if $6/month matters: no monthly minimum, and
+you pay only for active compute ($0.106/CU-hour) plus storage ($0.35/GB-month).
+One shift is about $5/month at the smallest compute — which is 1 GB RAM, four
+times Render Basic-256MB's 256 MB. The catch is that idle time is only free if
+the database actually goes idle: Taktline issues no queries when the floor is
+quiet, but the backend holds a connection pool open, and a database that never
+suspends costs ~$19/month instead of ~$5. Render's flat $6 has no such edge.
 
-| Setup | Cost/month | Caveats |
-|---|---|---|
-| Neon Free | $0 | 0.5 GB, 100 CU-hours — fits one shift with room to spare |
-| **Neon Launch** | **~$5** | usage-based, **no monthly minimum** — see the arithmetic below |
-| Render Basic-256MB | $6 flat | none; co-located, one invoice |
-
-**Neon after the free tier is cheaper than it looks.** There is no monthly
-floor any more: you pay $0.106 per CU-hour of *active* compute and $0.35 per
-GB-month of storage, and nothing while it is suspended. At the smallest compute
-(0.25 CU — which is 1 GB RAM, four times Render Basic-256MB's 256 MB):
-
-| Usage | Active hours | Cost |
-|---|---|---|
-| One shift (8h × 22 days) | 176 | **~$5.00** |
-| Two shifts (16h × 22 days) | 352 | ~$9.70 |
-| Never suspends | 720 | ~$19.40 |
-
-That last row is why the connection pool matters. On the free plan an
-always-awake database means running out of CU-hours; on Launch it means paying
-four times as much. Taktline itself is well behaved — it issues no queries when
-the floor is quiet, because the usage flusher returns early when nothing has
-happened — but the backend does hold a pool open (`pool_pre_ping=True` with
-SQLAlchemy's default pool). **Check Neon's usage dashboard after the first
-week.** If compute never suspends, switch the engine in
-`app/db/connection.py` to `poolclass=NullPool` so idle connections close; the
-cost is a little connection latency per request, and it is the difference
-between ~$5 and ~$19 a month.
-
-**If you would rather not watch a graph**, Render Basic-256MB at $6 flat is the
-boring answer: no expiry, no pause, no compute meter, co-located with the web
-service, one invoice. `render.yaml` carries the `databases:` block commented
-out — uncomment it and set `DATABASE_URL` back to `fromDatabase` and the
-blueprint provisions and wires it for you.
-
-Taktline being free forever is a statement about the software licence, not a
-reason to run a production shop floor on a hobby database. Whichever you pick,
-move before you have data you would miss, and take a backup.
+Whichever you run: take a backup before you have data you would miss
+(Render → database → Backups).
 
 ### What the image does
 
@@ -277,12 +249,13 @@ larger instance raise `ARGON2_TIME_COST` / `ARGON2_MEMORY_COST_KIB` /
 `ARGON2_PARALLELISM` — hashes record the cost they were made with, so existing
 passwords keep working and migrate to the new cost on their next login.
 
-**Free tier sleeps.** A free Render web service spins down after ~15 minutes of
-inactivity, and the next request pays the full ~40 s cold start (Python import
-plus migrations). Fine for a demo, wrong for a floor that opens at 6am. The fix
-is one line: change `plan: free` to `plan: starter` in `render.yaml`, or switch
-the instance type in the dashboard. Costs and the database side of the decision
-are in [Which Postgres](#which-postgres).
+**Deploys are downtime.** The blueprint runs `plan: starter`, so the service is
+always on and there is no idle spin-down — but with a single instance, each
+deploy still costs the ~40 s boot (Python import plus migrations) while the new
+container starts. Deploy outside shift hours once people depend on it. Dropping
+to `plan: free` saves $7/month and adds that same 40 s wait to the *first
+request after every 15 idle minutes*, which is the wrong trade for a floor that
+opens at 6am.
 
 **One instance, deliberately.** `numInstances: 1` is not a cost saving. The
 WebSocket connection registry, the per-IP rate limiter and the usage meter all

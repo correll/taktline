@@ -6,22 +6,17 @@
 # them on first deploy (or leave them blank and fill them in later under
 # Environment). Everything else is either derived or safe to commit.
 
-# No `databases:` block by default — deliberately, twice over. Render's FREE
-# Postgres expires 30 days after creation, and a blueprint that hands you a
-# one-month fuse is worse than one that asks for a connection string; and a
-# blueprint that silently creates a *paid* database bills you on apply. So
-# DATABASE_URL is prompted instead, and works with any provider.
-#
-# Want everything on Render and billed together? Uncomment this and set
-# DATABASE_URL back to `fromDatabase` (see DEPLOY.md → Which Postgres). Check
-# the plan name against Render's current Postgres plans before applying.
-#
-# databases:
-#   - name: taktline-db
-#     databaseName: taktline
-#     user: taktline
-#     plan: basic-256mb        # ~$6/mo · no expiry · 1 GB storage
-#     ipAllowList: []          # empty → reachable only inside Render's network
+# Render Postgres, billed with the web service. `basic-256mb` (~$6/mo) has no
+# expiry and no pause — unlike the `free` plan, which is deleted 30 days after
+# creation. Applying this blueprint therefore starts billing immediately; swap
+# the plan or delete this block if that is not what you want.
+
+databases:
+  - name: taktline-db
+    databaseName: taktline
+    user: taktline
+    plan: basic-256mb
+    ipAllowList: []          # empty → reachable only from inside Render's network
 
 services:
   - type: web
@@ -29,9 +24,9 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    # `free` sleeps after ~15 min idle and pays a ~40 s cold start on the next
-    # request. `starter` (~$7/mo) is always on — the fix for a 6am shift.
-    plan: free
+    # Always on. `free` sleeps after ~15 min idle and pays a ~40 s cold start on
+    # the next request, which is wrong for a floor that opens at 6am.
+    plan: starter
     region: oregon
     healthCheckPath: /health
 
@@ -44,12 +39,20 @@ services:
 
     envVars:
       # ── Wired automatically ───────────────────────────────────────────────
-      # Paste the connection string your provider gives you, verbatim.
-      # postgresql://…, postgres://… and Neon's trailing
-      # ?sslmode=require&channel_binding=require are all normalized to asyncpg
-      # at boot, so there is nothing to hand-edit.
+      # `connectionString`, NOT `connectionPoolString`. The pooled endpoint is
+      # PgBouncer in transaction mode, which breaks asyncpg's prepared
+      # statements ("prepared statement _asyncpg_… already exists") unless the
+      # driver's statement cache is disabled. We do not need it: the app keeps
+      # its own SQLAlchemy pool and runs as a single instance. Render hands out
+      # `postgresql://…`, which is normalized to asyncpg at boot.
+      #
+      # To use an external database instead (Neon, Supabase, RDS), delete the
+      # `databases:` block above and make this `sync: false`, then paste the
+      # connection string into the dashboard.
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: taktline-db
+          property: connectionString
       - key: SECRET_KEY
         generateValue: true            # 32-byte random, stored by Render, never in git
 

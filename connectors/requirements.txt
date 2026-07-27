@@ -1,0 +1,4 @@
+requests>=2.31.0
+requests-oauthlib>=1.3.1     # NetSuite token-based auth (OAuth 1.0a HMAC-SHA256)
+# dev/test only:
+# pytest>=8.0.0

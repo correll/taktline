@@ -64,6 +64,7 @@ export default function LandingView() {
       <TopNav />
       <main>
         <Hero />
+        <Thesis />
         <Steps />
         <Features />
         <Integrations />
@@ -158,6 +159,27 @@ function Hero() {
           </div>
           <LiveLineDemo />
         </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── The thesis ───────────────────────────────────────────────────────────────
+// The one sentence the whole product rests on, given room to land before the
+// page starts explaining how it works.
+
+function Thesis() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 104px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 780, margin: '0 auto', textAlign: 'center' }}>
+        <TaktlineLogo mark height={20} color={color.bluePrimary} />
+        <p style={{
+          margin: `${size.sp5} 0 0`, fontSize: 'clamp(22px, 3.2vw, 30px)',
+          lineHeight: 1.35, letterSpacing: '-0.01em', fontWeight: 500,
+          color: color.textPrimary, textWrap: 'balance',
+        }}>
+          You can’t optimize a process nobody has measured.
+        </p>
       </div>
     </section>
   )

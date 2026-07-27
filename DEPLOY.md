@@ -207,33 +207,47 @@ latency for compute that actually suspends between shifts.
 ### What it costs, once you stop wanting caveats
 
 Render bills the **web service and the database separately** — a $7 Starter
-web service does not include Postgres. The three combinations worth knowing:
-
-| Setup | Cost | Cold start? | Caveats |
-|---|---|---|---|
-| Render Free + Neon Free | $0 | **yes, ~40 s** after 15 min idle | none you would notice at this size |
-| **Render Starter + Neon Free** | **$7** | no | Neon's 100 CU-hours (see below) |
-| Render Starter + Render Basic-256MB | ~$13 | no | none — one bill, one dashboard |
+web service does not include Postgres.
 
 **Pay the $7 for the web service first.** That is the one that removes the
-40-second wait when someone opens the board at 6am, and no database plan fixes
-it. Whether you then pay another ~$6 for Postgres is a question about how much
-you want to think about it.
+~40 s wait when someone opens the board at 6am, and no database plan fixes it.
+Change `plan: free` to `plan: starter` in `render.yaml`.
 
-**Render Starter + Neon Free ($7 total) does work here**, because Taktline
-makes no database queries when the floor is quiet: the usage flusher skips the
-write when nothing has happened, so Neon's compute suspends overnight and at
-weekends. A single shift is roughly 176 active hours a month, about 44 of the
-100 free CU-hours. Two shifts still fit. The thing to watch is that the backend
-holds a connection pool open (`pool_pre_ping=True` with SQLAlchemy's default
-pool) — if Neon's usage dashboard shows compute never suspending, switch the
-engine to `poolclass=NullPool` so idle connections actually close.
+The database is the second, smaller decision:
 
-**Render Starter + Render Postgres (~$13 total)** is the version with nothing
-to monitor: no expiry, no pause, no compute ceiling, co-located with the web
-service, one invoice. `render.yaml` has the `databases:` block commented out —
-uncomment it and switch `DATABASE_URL` back to `fromDatabase` to have the
-blueprint provision and wire it for you.
+| Setup | Cost/month | Caveats |
+|---|---|---|
+| Neon Free | $0 | 0.5 GB, 100 CU-hours — fits one shift with room to spare |
+| **Neon Launch** | **~$5** | usage-based, **no monthly minimum** — see the arithmetic below |
+| Render Basic-256MB | $6 flat | none; co-located, one invoice |
+
+**Neon after the free tier is cheaper than it looks.** There is no monthly
+floor any more: you pay $0.106 per CU-hour of *active* compute and $0.35 per
+GB-month of storage, and nothing while it is suspended. At the smallest compute
+(0.25 CU — which is 1 GB RAM, four times Render Basic-256MB's 256 MB):
+
+| Usage | Active hours | Cost |
+|---|---|---|
+| One shift (8h × 22 days) | 176 | **~$5.00** |
+| Two shifts (16h × 22 days) | 352 | ~$9.70 |
+| Never suspends | 720 | ~$19.40 |
+
+That last row is why the connection pool matters. On the free plan an
+always-awake database means running out of CU-hours; on Launch it means paying
+four times as much. Taktline itself is well behaved — it issues no queries when
+the floor is quiet, because the usage flusher returns early when nothing has
+happened — but the backend does hold a pool open (`pool_pre_ping=True` with
+SQLAlchemy's default pool). **Check Neon's usage dashboard after the first
+week.** If compute never suspends, switch the engine in
+`app/db/connection.py` to `poolclass=NullPool` so idle connections close; the
+cost is a little connection latency per request, and it is the difference
+between ~$5 and ~$19 a month.
+
+**If you would rather not watch a graph**, Render Basic-256MB at $6 flat is the
+boring answer: no expiry, no pause, no compute meter, co-located with the web
+service, one invoice. `render.yaml` carries the `databases:` block commented
+out — uncomment it and set `DATABASE_URL` back to `fromDatabase` and the
+blueprint provisions and wires it for you.
 
 Taktline being free forever is a statement about the software licence, not a
 reason to run a production shop floor on a hobby database. Whichever you pick,

@@ -4,6 +4,9 @@ __pycache__/
 .env
 venv/
 .venv/
+# Floor-plan uploads are a read-through disk cache over Postgres (see
+# routers/map_settings.py) — regenerated on demand, never source.
+backend/uploads/
 
 # Frontend
 node_modules/
@@ -13,3 +16,7 @@ dist/
 # General
 .DS_Store
 *.log
+
+# Saved-page exports of the integrations map (source: linkedin/src/)
+/Taktline integrations map.html
+/Taktline integrations map_files/

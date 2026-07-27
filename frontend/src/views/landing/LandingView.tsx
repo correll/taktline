@@ -368,6 +368,9 @@ function Founder() {
                 Introduction to Autonomous Robots
               </a>{' '}(MIT Press).
             </p>
+            <p style={{ margin: `${size.sp3} 0 0`, fontSize: 13, lineHeight: 1.6, color: color.textDim }}>
+              His research has been funded by NSF, NIST, NASA, ARPA-E, ARO, AFOSR and DARPA.
+            </p>
           </div>
         </div>
       </div>

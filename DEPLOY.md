@@ -80,6 +80,14 @@ The SPA and API live on different origins, so cookies must be cross-site.
 
 ---
 
+## Analytics (optional)
+
+Conversion events (`cta_click`, `sandbox_start`, `signup_completed`,
+`outbound_click`) are emitted through `frontend/src/analytics.ts`. They go
+nowhere unless you build with `VITE_PLAUSIBLE_DOMAIN=taktline.com`, which
+injects the Plausible script; self-hosted instances stay silent by default.
+Swap the two lines in that file for any other provider.
+
 ## SendGrid
 
 SendGrid is just SMTP, so no code is needed — set `SENDGRID_API_KEY` and a

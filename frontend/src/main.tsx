@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { AuthProvider } from './auth/AuthProvider'
 import './theme/global.css'
+import { initAnalytics } from './analytics'
 
 // Offline shell (production only — it would fight Vite's dev HMR): a reload
 // during a server outage still renders the app from the SW cache, which then
@@ -13,6 +14,8 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.register('/sw.js').catch(() => {})
   })
 }
+
+initAnalytics()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

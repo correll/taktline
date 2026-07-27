@@ -209,3 +209,23 @@ html, body {
   transition: top 0.15s ease, left 0.15s ease, width 0.15s ease, height 0.15s ease;
   animation: taktline-tour-pulse 1.6s ease-out infinite;
 }
+
+
+/* ── Landing page: keep the nav on one line on phones ─────────────────────── */
+/* The CTA is the most important pixel on the page; it must never clip or wrap. */
+@media (max-width: 560px) {
+  .landing-nav .nav-secondary { display: none; }
+  .landing-nav a, .landing-nav button { font-size: 13px; padding: 7px 12px; }
+}
+@media (max-width: 380px) {
+  .landing-nav a, .landing-nav button { font-size: 12.5px; padding: 6px 10px; }
+}
+
+/* FAQ disclosure marker (list-style:none hides the default triangle) */
+.landing-faq summary::after {
+  content: "+";
+  float: right;
+  color: var(--tk-text-dim);
+  font-weight: 400;
+}
+.landing-faq details[open] summary::after { content: "\2013"; }

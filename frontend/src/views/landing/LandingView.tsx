@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Map, TabletSmartphone, TrendingUp, Boxes, Timer, Printer, GitMerge, GitBranch, WifiOff, Gauge } from 'lucide-react'
+import { Map, TabletSmartphone, TrendingUp, Boxes, GitMerge, GitBranch, Gauge, Receipt } from 'lucide-react'
+import { track } from '../../analytics'
 import { authApi } from '../../api/auth.api'
 import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
@@ -11,17 +12,22 @@ import LiveLineDemo from './LiveLineDemo'
 
 /** "Take the five-minute tutorial" — one click into an anonymous sandbox
  *  account (server-restricted: no uploads, invites, API keys, or orders). */
-function SandboxButton({ style, children }: { style?: React.CSSProperties; children: React.ReactNode }) {
+function SandboxButton({ style, where, variant = 'primary', children }: {
+  style?: React.CSSProperties; where: string
+  variant?: 'primary' | 'ghost'; children: React.ReactNode
+}) {
   const navigate = useNavigate()
   const refresh = useAuthStore((s) => s.refresh)
   const [busy, setBusy] = useState(false)
 
   const start = async () => {
     setBusy(true)
+    track('cta_click', { cta: 'sandbox', where })
     try {
       const { companyId } = await authApi.sandbox()
       localStorage.setItem(ACTIVE_COMPANY_KEY, companyId)
       await refresh()
+      track('sandbox_start', { where })
       navigate('/map')
     } catch {
       setBusy(false)
@@ -30,9 +36,22 @@ function SandboxButton({ style, children }: { style?: React.CSSProperties; child
 
   return (
     <button onClick={start} disabled={busy}
-            style={{ ...ghostBtn, cursor: busy ? 'wait' : 'pointer', ...style }}>
-      {busy ? 'Preparing your sandbox…' : children}
+            style={{ ...(variant === 'primary' ? primaryBtn : ghostBtn),
+                     cursor: busy ? 'wait' : 'pointer', ...style }}>
+      {busy ? 'Building your line…' : children}
     </button>
+  )
+}
+
+/** A tracked link to the signup form. */
+function SignupLink({ style, where, children }: {
+  style?: React.CSSProperties; where: string; children: React.ReactNode
+}) {
+  return (
+    <Link to="/signup" style={{ ...ghostBtn, ...style }}
+          onClick={() => track('cta_click', { cta: 'signup', where })}>
+      {children}
+    </Link>
   )
 }
 
@@ -48,6 +67,9 @@ export default function LandingView() {
         <Steps />
         <Features />
         <Integrations />
+        <Founder />
+        <BusinessModel />
+        <Questions />
         <FinalCta />
       </main>
       <Footer />
@@ -64,14 +86,15 @@ function TopNav() {
       background: color.bgPanel, borderBottom: `1px solid ${color.border}`,
       padding: `0 ${size.sp6}`, height: 56, display: 'flex', alignItems: 'center',
     }}>
-      <div style={{ ...rowStyle, width: '100%', maxWidth: 1120, margin: '0 auto' }}>
-        <TaktlineLogo height={24} color={color.textPrimary} />
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: size.sp3 }}>
-          <Link to="/manual" style={{ color: color.textSecondary, textDecoration: 'none', fontSize: 14, padding: '8px 10px' }}>
+      <div className="landing-nav" style={{ ...rowStyle, width: '100%', maxWidth: 1120, margin: '0 auto' }}>
+        <TaktlineLogo height={22} color={color.textPrimary} />
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: size.sp2 }}>
+          <Link to="/manual" className="nav-secondary"
+                style={{ color: color.textSecondary, textDecoration: 'none', fontSize: 14, padding: '8px 10px' }}>
             Manual
           </Link>
-          <Link to="/login" style={ghostBtn}>Sign in</Link>
-          <Link to="/signup" style={primaryBtn}>Start free</Link>
+          <Link to="/login" style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>Sign in</Link>
+          <SandboxButton where="nav" style={{ whiteSpace: 'nowrap' }}>Try it live</SandboxButton>
         </div>
       </div>
     </header>
@@ -89,26 +112,29 @@ function Hero() {
           margin: '0 auto', maxWidth: 720, fontSize: 'clamp(34px, 5.5vw, 58px)',
           lineHeight: 1.06, letterSpacing: '-0.02em', fontWeight: 500, color: color.textPrimary,
         }}>
-          Digitize your shop floor <span style={{ color: color.blueBright, whiteSpace: 'nowrap' }}>in minutes.</span>
+          Your whole shop floor, <span style={{ color: color.blueBright }}>at a glance.</span>
         </h1>
         <p style={{
-          margin: `${size.sp5} auto 0`, maxWidth: 600, fontSize: 17, lineHeight: 1.7,
+          margin: `${size.sp5} auto 0`, maxWidth: 620, fontSize: 17, lineHeight: 1.7,
           color: color.textSecondary,
         }}>
-          Taktline models your production as a living graph — locations, routes, and lot
-          cards that flow through them, splitting and merging exactly like your material
-          does. Takt time and OEE update as work moves. No installs, no consultants.
+          Every lot, every station, live on your own floor plan — so you know what is
+          where, what is late, and what a job actually costs. Your material splits and
+          merges on the board exactly as it does in the shop. No installs, no consultants.
+        </p>
+        <p style={{ margin: `${size.sp3} auto 0`, fontSize: 14, color: color.textDim }}>
+          Built for job shops, assembly and remanufacturing lines of 5–200 people.
         </p>
         <div style={{ marginTop: size.sp8, display: 'flex', gap: size.sp3, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Link to="/signup" style={{ ...primaryBtn, fontSize: 16, padding: '12px 28px' }}>
-            Start free
-          </Link>
-          <SandboxButton style={{ fontSize: 16, padding: '12px 24px' }}>
-            Take the five-minute tutorial
+          <SandboxButton where="hero" style={{ fontSize: 16, padding: '12px 28px' }}>
+            Try a live line — no signup
           </SandboxButton>
+          <SignupLink where="hero" style={{ fontSize: 16, padding: '12px 24px' }}>
+            Create a free account
+          </SignupLink>
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
-          No credit card needed · free forever
+          Free forever · no credit card · your data exports any time
         </div>
 
         {/* Live demo — an e-bike line drawn with the app's own map primitives:
@@ -153,7 +179,7 @@ const STEPS = [
   {
     Icon: TrendingUp,
     title: 'Start maximizing your flow',
-    body: 'The live heatmap, takt time and OEE per station show the bottleneck while it forms — not in next month’s spreadsheet.',
+    body: 'Check the board each morning instead of walking the floor asking. The heatmap, takt time and OEE show where work piles up — and what each job really cost you.',
   },
 ]
 
@@ -193,13 +219,18 @@ function Steps() {
 // ─── Features ─────────────────────────────────────────────────────────────────
 
 const FEATURES = [
-  { Icon: Boxes,    title: 'Lot cards, digital and printed', body: 'Kanban cards travel with the material — on the board and as barcode labels off a thermal printer.' },
-  { Icon: GitMerge,  title: 'Merges: assemblies done right', body: 'A merge station consumes precursors by your edge weights — one frame + three motors = one e-bike, never “a few extra”.' },
-  { Icon: GitBranch, title: 'Splits: one input, many pieces', body: 'A split station multiplies a lot the other way: one steel bar becomes four tubes, and pulling four tubes orders exactly one bar.' },
-  { Icon: Timer,    title: 'Timing without timekeeping', body: 'Start/stop at the station drives takt time and OEE per location. No stopwatch, no forms.' },
-  { Icon: Gauge,    title: 'The bottleneck, visibly', body: 'A violet heatmap over your floor plan shows where work piles up — status colors stay reserved for status.' },
-  { Icon: Printer,  title: 'Print & scan to advance', body: 'Scan a lot label and it moves down the route. A scanner and a phone are all a station needs.' },
-  { Icon: WifiOff,  title: 'Survives bad Wi-Fi', body: 'Tablets keep showing the board through outages and resync automatically when the network returns.' },
+  { Icon: Map,       title: 'The whole floor on one screen',
+    body: 'Your real floor plan with every lot on it, updating as work moves. Walk in, glance at the board, and know what is where and what is waiting — before anyone has to ask.' },
+  { Icon: Boxes,     title: 'Lot cards, on screen and on paper',
+    body: 'Kanban cards travel with the material — on the board and as barcode labels off a thermal printer. Scan a label and the lot moves down its route.' },
+  { Icon: GitMerge,  title: 'Merges: assemblies done right',
+    body: 'A merge station consumes precursors by your edge weights — one frame + three motors = one e-bike, never “a few extra”.' },
+  { Icon: GitBranch, title: 'Splits: one input, many pieces',
+    body: 'Disassembly is the mirror image: a battery teardown yields modules, busbars and cables — each its own product, on its own card. Ask for four cables and Taktline orders one battery, not four.' },
+  { Icon: Receipt,   title: 'Know what a job really costs',
+    body: 'Every lot carries its own timing, so you quote from what the work actually took — not a guess. Nobody argues you down on price when you have the numbers.' },
+  { Icon: Gauge,     title: 'And yes — it finds the bottleneck',
+    body: 'A violet heatmap shows where work piles up, with takt time and OEE per station. Usually a one-time revelation; then it just keeps you honest.' },
 ]
 
 function Features() {
@@ -254,6 +285,155 @@ function Integrations() {
 
 // ─── Final CTA + footer ───────────────────────────────────────────────────────
 
+// ─── How we make money ───────────────────────────────────────────────────────
+
+function BusinessModel() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{
+        maxWidth: 820, margin: '0 auto', textAlign: 'center',
+        border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
+        background: color.bgCard, padding: `${size.sp8} ${size.sp6}`,
+      }}>
+        <h2 style={{ ...h2Style, fontSize: 'clamp(20px, 2.8vw, 26px)' }}>
+          Free forever — and here is how we stay in business
+        </h2>
+        <p style={{ margin: `${size.sp4} auto 0`, maxWidth: 620, fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary }}>
+          Running Taktline on your own line costs nothing, with no seat limits and no
+          feature held back. We earn our living from the things a factory actually wants
+          help with:
+        </p>
+        <div style={{
+          margin: `${size.sp5} auto 0`, display: 'flex', gap: size.sp2,
+          flexWrap: 'wrap', justifyContent: 'center',
+        }}>
+          {['Premium support', 'Hosted instances', 'Hardware integration', 'Robotics'].map((item) => (
+            <span key={item} style={{
+              fontSize: 13, color: color.textPrimary, background: color.bgPanel,
+              border: `1px solid ${color.border}`, borderRadius: size.radiusFull,
+              padding: '6px 14px',
+            }}>{item}</span>
+          ))}
+        </div>
+        <p style={{ margin: `${size.sp5} auto 0`, maxWidth: 560, fontSize: 13.5, lineHeight: 1.65, color: color.textDim }}>
+          Nothing in the free product expires, and your data exports any time — so
+          choosing us is never a lock-in.
+        </p>
+      </div>
+    </section>
+  )
+}
+
+// ─── Who is behind it ────────────────────────────────────────────────────────
+
+function Founder() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 820, margin: '0 auto' }}>
+        <h2 style={h2Style}>Who is behind Taktline</h2>
+        <div style={{
+          marginTop: size.sp8, display: 'flex', gap: size.sp6, alignItems: 'flex-start',
+          flexWrap: 'wrap', justifyContent: 'center', textAlign: 'left',
+        }}>
+          <img
+            src="/landing/nikolaus-correll.jpg"
+            alt="Nikolaus Correll"
+            width={160} height={160}
+            style={{
+              width: 160, height: 160, borderRadius: size.radiusLg, objectFit: 'cover',
+              objectPosition: 'center 22%', border: `1px solid ${color.border}`, flexShrink: 0,
+            }}
+          />
+          <div style={{ flex: '1 1 380px', minWidth: 280 }}>
+            <div style={{ fontSize: 17, fontWeight: 500, color: color.textPrimary }}>
+              Nikolaus Correll
+            </div>
+            <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14.5, lineHeight: 1.7, color: color.textSecondary }}>
+              Professor of Aerospace and Mechanical Engineering at the University of
+              Notre Dame, and adjoint Professor of Computer Science at the University of
+              Colorado at Boulder. Nikolaus founded Robotic Materials Inc., where he
+              co-created Optio — a digital value-stream-mapping system for high-mix,
+              low-volume (re)manufacturers. Taktline continues that work.
+            </p>
+            <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14, lineHeight: 1.7, color: color.textSecondary }}>
+              He is the author of{' '}
+              <a href="https://www.amazon.com/dp/B09B1PPF91/" target="_blank" rel="noopener noreferrer"
+                 style={bookLink}
+                 onClick={() => track('outbound_click', { to: 'book-seven-deadly-wastes' })}>
+                The Seven Deadly Wastes
+              </a>{' '}— the lean thinking this product is built on — and{' '}
+              <a href="https://www.amazon.com/Introduction-Autonomous-Robots-Mechanisms-Algorithms/dp/0262047551"
+                 target="_blank" rel="noopener noreferrer" style={bookLink}
+                 onClick={() => track('outbound_click', { to: 'book-autonomous-robots' })}>
+                Introduction to Autonomous Robots
+              </a>{' '}(MIT Press).
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Questions a plant manager actually asks ─────────────────────────────────
+
+const FAQ: { q: string; a: React.ReactNode }[] = [
+  { q: 'How long until it is running?',
+    a: <>Minutes. Draw your locations and routes on the map, print lot cards, and the
+        board is live. The five-minute tutorial builds a line end to end so you can see
+        the shape of it before touching your own.</> },
+  { q: 'Is my data mine?',
+    a: <>Yes. Everything exports at any time, and Taktline is free to run on your own
+        server — so nothing is held hostage by a subscription.</> },
+  { q: 'What happens when the Wi-Fi drops?',
+    a: <>Tablets keep showing the board from a local snapshot and reconnect on their
+        own, with an amber banner naming how old the data is. Changes are never queued
+        silently — they fail loudly rather than reordering your lot movements later.</> },
+  { q: 'Do I need scanners or special hardware?',
+    a: <>No. A phone or tablet browser is enough. If you want them, barcode labels print
+        on ordinary Zebra or Brother thermal printers, and a scanner can advance a lot
+        without anyone logging in.</> },
+  { q: 'Can it talk to my ERP or shop system?',
+    a: <>Odoo, NetSuite, Shopify, WooCommerce, QuickBooks, Xero and ShipStation have
+        ready-made connectors; anything else goes through one small order API, a CSV
+        import, or Zapier and Make.</> },
+  { q: 'What does it cost?',
+    a: <>The product is free forever, with no seat limits. We charge only for premium
+        support, hosted instances, hardware integration and robotics work.</> },
+]
+
+function Questions() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 820, margin: '0 auto' }}>
+        <h2 style={h2Style}>Questions worth asking</h2>
+        <div className="landing-faq" style={{ marginTop: size.sp8, display: 'grid', gap: size.sp3 }}>
+          {FAQ.map(({ q, a }) => (
+            <details key={q} style={{
+              background: color.bgCard, border: `1px solid ${color.border}`,
+              borderRadius: size.radiusMd, padding: `${size.sp4} ${size.sp5}`,
+            }}>
+              <summary style={{
+                cursor: 'pointer', fontSize: 15, fontWeight: 500, color: color.textPrimary,
+                listStyle: 'none',
+              }}>
+                {q}
+              </summary>
+              <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14, lineHeight: 1.7, color: color.textSecondary }}>
+                {a}
+              </p>
+            </details>
+          ))}
+        </div>
+        <p style={{ marginTop: size.sp5, fontSize: 13.5, color: color.textDim, textAlign: 'center' }}>
+          Still deciding? The <Link to="/manual" style={{ color: color.blueBright }}>full user manual</Link> is
+          public — philosophy, lean method and every screen, no sign-in.
+        </p>
+      </div>
+    </section>
+  )
+}
+
 function FinalCta() {
   return (
     <section style={{ padding: `clamp(64px, 10vw, 120px) ${size.sp6}` }}>
@@ -270,10 +450,13 @@ function FinalCta() {
           Create an account, take the five-minute tutorial, and watch your first
           lot move across your own floor plan.
         </p>
-        <div style={{ marginTop: size.sp6 }}>
-          <Link to="/signup" style={{ ...primaryBtn, fontSize: 16, padding: '13px 32px' }}>
-            Start free
-          </Link>
+        <div style={{ marginTop: size.sp6, display: 'flex', gap: size.sp3, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <SandboxButton where="footer" style={{ fontSize: 16, padding: '13px 32px' }}>
+            Try a live line — no signup
+          </SandboxButton>
+          <SignupLink where="footer" style={{ fontSize: 16, padding: '13px 26px' }}>
+            Create a free account
+          </SignupLink>
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textDim }}>
           No credit card needed — Taktline is free, and stays free
@@ -294,7 +477,8 @@ function Footer() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: size.sp5, fontSize: 13 }}>
           <Link to="/manual" style={{ color: color.textSecondary, textDecoration: 'none' }}>User manual</Link>
           <Link to="/login" style={{ color: color.textSecondary, textDecoration: 'none' }}>Sign in</Link>
-          <Link to="/signup" style={{ color: color.blueBright, textDecoration: 'none' }}>Create account</Link>
+          <Link to="/signup" style={{ color: color.blueBright, textDecoration: 'none' }}
+                onClick={() => track('cta_click', { cta: 'signup', where: 'footer-nav' })}>Create account</Link>
         </div>
       </div>
     </footer>
@@ -319,6 +503,11 @@ const cardStyle: React.CSSProperties = {
   background: color.bgCard, border: `1px solid ${color.border}`,
   borderRadius: size.radiusLg, padding: size.sp6, boxShadow: shadow.sm,
   textAlign: 'left',
+}
+
+const bookLink: React.CSSProperties = {
+  color: color.blueBright, textDecoration: 'underline',
+  textUnderlineOffset: 2, textDecorationThickness: 1,
 }
 
 const primaryBtn: React.CSSProperties = {

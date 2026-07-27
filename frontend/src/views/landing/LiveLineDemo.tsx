@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import FlowScene, { useFlowSimulation, type SceneEdge, type SceneStation, type Wip }
   from '../../components/demo/FlowScene'
 
@@ -57,10 +57,40 @@ function step(prev: Wip, tick: number): Wip {
   return w
 }
 
+// On a phone the full line renders at ~4px per station label — unreadable. A
+// narrow viewport gets a shorter line at a larger relative node size instead,
+// so the idea (flow, heat, a weighted merge) still reads.
+const COMPACT: SceneStation[] = [
+  { id: 'steel',    name: 'Steel',    icon: 'Box',        color: '#6B7280', x: 10,  y: 30 },
+  { id: 'weld',     name: 'Welding',  icon: 'Hammer',     color: '#EF4444', x: 250, y: 30 },
+  { id: 'parts',    name: 'Parts',    icon: 'Box',        color: '#6B7280', x: 10,  y: 250 },
+  { id: 'qc',       name: 'QC',       icon: 'ScanSearch', color: '#10B981', x: 250, y: 250 },
+  { id: 'assembly', name: 'Assembly', icon: 'Factory',    color: '#8B5CF6', x: 500, y: 140 },
+]
+const COMPACT_EDGES: SceneEdge[] = [
+  { from: 'steel', to: 'weld',     qty: 1 },
+  { from: 'weld',  to: 'assembly', qty: 1 },
+  { from: 'parts', to: 'qc',       qty: 2 },
+  { from: 'qc',    to: 'assembly', qty: 1 },
+]
+
+function useIsNarrow(breakpoint = 720): boolean {
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < breakpoint)
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < breakpoint)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [breakpoint])
+  return narrow
+}
+
 export default function LiveLineDemo() {
   const wip = useFlowSimulation(INITIAL, step, 650)
-  return (
-    <FlowScene stations={STATIONS} edges={EDGES} wip={wip}
-               worldW={1180} worldH={400} node={92} maxWip={MAX_WIP} />
-  )
+  const narrow = useIsNarrow()
+  return narrow
+    ? <FlowScene stations={COMPACT} edges={COMPACT_EDGES} wip={wip}
+                 worldW={702} worldH={372} node={92} maxWip={MAX_WIP} />
+    : <FlowScene stations={STATIONS} edges={EDGES} wip={wip}
+                 worldW={1180} worldH={400} node={92} maxWip={MAX_WIP} />
 }

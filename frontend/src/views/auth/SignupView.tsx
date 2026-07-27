@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { track } from '../../analytics'
 import { authApi } from '../../api/auth.api'
 import { AuthCard, AuthFooter, Field, FormError, FormInfo, PrimaryButton, linkStyle } from './authUi'
 
@@ -19,6 +20,7 @@ export default function SignupView() {
     setBusy(true)
     try {
       const res = await authApi.signup(email, password, name || undefined)
+      track('signup_completed')
       setDevLink(res.devLink ?? null)
       setDone(true)
     } catch (err) {

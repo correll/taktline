@@ -19,7 +19,8 @@ from ..models.card import Card, CardCreate, CardUpdate, LotStatus
 from ..models.card_event import CardEvent, EventType
 from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
-from .merge import _ensure_origination_template, _leaf_sources, _gen_lot_code
+from .merge import (_assembly_template, _ensure_origination_template, _gen_lot_code,
+                    _incoming_routes, _leaf_sources, _precursor_template_ids)
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -341,6 +342,14 @@ async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_
     new_bins[to_id] = {"count": to_count + quantity}
 
     row.bins = new_bins
+    # `status` is the work state *at the station the lot was worked at*, not a
+    # property of the lot. Carrying 'done' along with the units made the next
+    # station greet the worker with a finished-work screen for a lot nobody has
+    # touched there — at a merge station that reads as "the assembly is ready"
+    # when what actually arrived is one unmerged precursor. Timing already lives
+    # in the work sessions, so clearing this loses nothing.
+    if row.status != "idle":
+        row.status = "idle"
     row.updatedAt = utcnow()
     await session.flush()
     card = _to_card(row)
@@ -354,6 +363,38 @@ async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_
     if to_count == 0:
         await plugin_registry.notify_lot_arrive(to_id, card_id, card.model_dump(mode="json"))
     return card
+
+
+async def _assert_not_unmerged_precursor(session, company_id, row: CardRow, from_id: str) -> None:
+    """Refuse to advance a precursor out of a station that assembles it.
+
+    At a merge station the thing that leaves for the downstream is the assembly
+    the merge minted, not the parts waiting to be consumed. Letting a precursor
+    through pushes an unmerged part into finished goods wearing its own product
+    identity — a motor booked as a finished e-bike — and quietly destroys the
+    units it should have been merged with. The Operator view already hides
+    precursors from the lot picker, but that is UX: this endpoint is also the
+    public scan-to-advance API, so a scanner pointed at a precursor label would
+    otherwise walk straight through the gate.
+    """
+    from_uuid = parse_uuid(from_id)
+    if from_uuid is None:
+        return
+    incoming = await _incoming_routes(session, company_id, from_uuid)
+    if len(incoming) < 2:
+        return                      # not a merge station — ordinary pass-through
+    # Only a station that actually mints a product here is assembling: two feeds
+    # into a shared resource (a paint booth both lines use) is not a merge, and
+    # work must keep flowing through it.
+    if await _assembly_template(session, company_id, from_uuid) is None:
+        return
+    precursor_ids: set = set()
+    for route in incoming:
+        precursor_ids.update(await _precursor_template_ids(session, company_id, route))
+    if row.lotTemplateId in precursor_ids:
+        raise HTTPException(
+            409, "This lot is a precursor waiting to be merged here — merge it "
+                 "into an assembly before moving it on.")
 
 
 async def _record_order_progress(session, company_id, card_row: CardRow, to_station_id: str, quantity: int) -> None:
@@ -442,6 +483,7 @@ async def advance_card(card_id: str, body: AdvanceBody,
     )).scalars().first()
     if route is None:
         raise HTTPException(400, "No route from the current station to the target station")
+    await _assert_not_unmerged_precursor(session, ctx.company_id, row, body.fromStationId)
     branches = await _split_branches(session, ctx.company_id, row, body.fromStationId,
                                      body.toStationId)
     if branches is not None:

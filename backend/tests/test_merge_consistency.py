@@ -244,3 +244,83 @@ def test_concurrent_move_applies_once(actor):
     assert codes == [200, 400], codes
     units = _units_by_station(a)
     assert units[asm["_id"]] == 1 and steel["_id"] not in units
+
+
+# ─── A precursor is not this station's finished work ──────────────────────────
+
+def test_status_does_not_survive_a_move(actor):
+    """`status` is the work state at the station the lot was worked at, not a
+    property of the lot. Carried along, a precursor finished upstream arrives at
+    the merge still marked 'done' — and the Operator view greets the worker with
+    a finished-work screen offering to move it downstream, for a lot nobody has
+    touched there and an assembly that does not exist yet."""
+    a = actor(); bootstrap_admin(a)
+    steel, motor, asm, _, wh = _setup_line(a)
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+
+    card = next(c for c in a.req("GET", "/cards/").json() if c["bins"].get(steel["_id"]))
+    assert a.req("PATCH", f"/cards/{card['_id']}/status", {"status": "done"}).json()["status"] == "done"
+
+    moved = a.req("POST", f"/cards/{card['_id']}/advance",
+                  {"fromStationId": steel["_id"], "toStationId": asm["_id"], "quantity": 1})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["status"] == "idle"
+    assert a.req("GET", f"/cards/{card['_id']}").json()["status"] == "idle"
+
+
+def test_precursor_cannot_be_advanced_out_of_a_merge_station(actor):
+    """Pushing an unmerged precursor downstream books a motor as a finished
+    e-bike and strands the parts it should have been merged with. The Operator
+    view hides precursors from the picker, but /advance is also the public
+    scan-to-advance API — a scanner pointed at a precursor label must not walk
+    through the gate."""
+    a = actor(); bootstrap_admin(a)
+    steel, motor, asm, test, wh = _setup_line(a)
+    proc = a.req("GET", "/processes/").json()[0]
+    # Declaring a product at the merge is what makes it an assembly point rather
+    # than a shared resource two lines happen to feed.
+    a.req("POST", "/lot-templates/", {"name": "E-Bike", "processId": proc["_id"],
+                                      "startStationId": asm["_id"]})
+    a.req("POST", f"/merge/{wh['_id']}/pull", {"quantity": 1})
+    _move_all_to(a, asm["_id"])          # precursors staged at the merge, unmerged
+
+    for c in a.req("GET", "/cards/").json():
+        r = a.req("POST", f"/cards/{c['_id']}/advance",
+                  {"fromStationId": asm["_id"], "toStationId": test["_id"], "quantity": 1})
+        assert r.status_code == 409, f"precursor escaped the merge: {r.status_code} {r.text}"
+        assert "merge" in r.json()["detail"].lower()
+
+    # The assembly minted by the merge advances normally.
+    assert a.req("POST", f"/merge/{asm['_id']}").status_code == 201
+    assembly = next(c for c in a.req("GET", "/cards/").json() if c["bins"].get(asm["_id"]))
+    r = a.req("POST", f"/cards/{assembly['_id']}/advance",
+              {"fromStationId": asm["_id"], "toStationId": test["_id"], "quantity": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["bins"][test["_id"]]["count"] == 1
+
+
+def test_shared_resource_with_two_feeds_still_passes_work_through(actor):
+    """Two lines feeding one station is only a merge if something is assembled
+    there. A shared paint booth mints no product of its own, so lots must keep
+    flowing through it."""
+    a = actor(); bootstrap_admin(a)
+    line_a = _mk_station(a, "Line A", 100)
+    line_b = _mk_station(a, "Line B", 200)
+    booth  = _mk_station(a, "Paint booth", 300)
+    ship   = _mk_station(a, "Shipping", 400)
+    proc = a.req("POST", "/processes/", {"name": "Paint"}).json()
+    for load, unload in [(line_a, booth), (line_b, booth), (booth, ship)]:
+        assert a.req("POST", "/routes/", {"processId": proc["_id"], "load": load["_id"],
+                                          "unload": unload["_id"], "quantity": 1}).status_code == 201
+    tmpl = a.req("POST", "/lot-templates/", {"name": "Panel", "processId": proc["_id"],
+                                             "startStationId": line_a["_id"]}).json()
+    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": proc["_id"],
+                                     "totalQuantity": 1, "bins": {line_a["_id"]: {"count": 1}},
+                                     "fields": {}, "flagged": False, "description": "",
+                                     "status": "idle"}).json()
+    assert a.req("POST", f"/cards/{card['_id']}/advance",
+                 {"fromStationId": line_a["_id"], "toStationId": booth["_id"],
+                  "quantity": 1}).status_code == 200
+    r = a.req("POST", f"/cards/{card['_id']}/advance",
+              {"fromStationId": booth["_id"], "toStationId": ship["_id"], "quantity": 1})
+    assert r.status_code == 200, f"pass-through blocked: {r.text}"

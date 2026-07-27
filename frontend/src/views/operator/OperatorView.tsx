@@ -52,6 +52,7 @@ export default function OperatorView() {
 
   const cards       = useCardsStore((s) => s.cards)
   const routes      = useProcessesStore((s) => s.routes)
+  const templates   = useProcessesStore((s) => s.lotTemplates)
   const setStatus   = useCardsStore((s) => s.setStatus)
   const upsertCard  = useCardsStore((s) => s.upsert)
 
@@ -102,10 +103,21 @@ export default function OperatorView() {
     } catch { /* fall through */ }
     // 2. Resume a card that was stopped but not yet moved (status = 'done') —
     //    preferring the card the worker tapped to get here (feeding-station jump).
+    //    At a merge station only an assembly qualifies: a precursor waiting to be
+    //    consumed is not this station's finished work, and greeting the worker
+    //    with "DONE → move it downstream" for one would push an unmerged part
+    //    into finished goods. Same rule the lot picker applies.
     const atHere = (c: Card | null | undefined) => (c?.bins[id]?.count ?? 0) > 0
+    const workableHere = (c: Card | null | undefined) => {
+      if (!c || !atHere(c)) return false
+      if (!mergeNodeSet.has(id)) return true
+      const origin = templates[c.lotTemplateId]?.startStationId
+      // Unknown template → can't prove it's an assembly, so don't resume it.
+      return origin != null && origin === id
+    }
     const doneCard =
-      (preferred && preferred.status === 'done' && atHere(preferred) ? preferred : null)
-      ?? Object.values(cards).find((c) => atHere(c) && c.status === 'done')
+      (preferred && preferred.status === 'done' && workableHere(preferred) ? preferred : null)
+      ?? Object.values(cards).find((c) => workableHere(c) && c.status === 'done')
     if (doneCard) {
       setCard(doneCard)
       setQuantity(doneCard.bins[id]?.count ?? 1)
@@ -119,7 +131,7 @@ export default function OperatorView() {
       setQuantity(preferred.bins[id]?.count ?? 1)
     }
     setPhase('pick-lot')
-  }, [cards])
+  }, [cards, templates, mergeNodeSet])
 
   const handleSelectLot = useCallback((c: Card | null) => {
     setSelectedCard(c)

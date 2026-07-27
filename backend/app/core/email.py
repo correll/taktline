@@ -89,7 +89,10 @@ mailer: Mailer = get_mailer()
 
 # ── Message builders (return the link so dev responses can echo it) ───────────
 def _link(path: str, token: str) -> str:
-    return f"{settings.frontend_base_url}{path}?token={quote(token)}"
+    # safe="" so a slash is escaped too: this is a query-string value, not a
+    # path. Real tokens are token_urlsafe ([A-Za-z0-9_-]) so nothing changes
+    # for them — this is about not depending on that.
+    return f"{settings.frontend_base_url}{path}?token={quote(token, safe='')}"
 
 
 async def send_verification_email(to: str, token: str) -> str:

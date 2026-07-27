@@ -2,9 +2,8 @@
 
 Taktline is a FastAPI backend + Postgres + a React (Vite) SPA. It can be hosted
 for free. The documented path — and the one `render.yaml` builds — is **Render**
-(web service + Postgres) with **Resend** for email; **Neon** is the Postgres to
-move to when you outgrow Render's free database. Two topologies are supported;
-pick one.
+for the app, **Neon** for Postgres (Render's own free database expires after 30
+days), and **Resend** for email. Two topologies are supported; pick one.
 
 **Deploying to Render?** Jump to [Render, from the blueprint](#render-from-the-blueprint)
 — `render.yaml` + `Dockerfile` in the repo root do all of this for you.
@@ -77,12 +76,16 @@ your release branch into `main`, or set the branch explicitly in the Render UI
 (Service → Settings → Branch) after the blueprint is created. Deploying a branch
 that has no `Dockerfile` fails with a build error that does not explain itself.
 
-### 1. Create the blueprint
+### 1. Create the database, then the blueprint
 
-In Render: **New → Blueprint** → connect the GitHub repo → **Apply**. Render
-reads `render.yaml` and provisions two things: the web service `taktline` and a
-Postgres database `taktline-db`. It wires `DATABASE_URL` between them and
-generates `SECRET_KEY` itself, so neither ever touches your repo.
+First make a Postgres instance and copy its connection string — [Neon](https://neon.tech)
+takes about a minute and needs no card (see [Which Postgres](#which-postgres)
+for why, and for the alternatives). Paste the string exactly as given; the app
+normalizes the driver prefix and `sslmode`/`channel_binding` itself.
+
+Then in Render: **New → Blueprint** → connect the GitHub repo → **Apply**.
+Render reads `render.yaml`, creates the web service `taktline`, and generates
+`SECRET_KEY` itself so it never touches your repo.
 
 `FRONTEND_BASE_URL` is pre-set to `https://taktline.com` in `render.yaml` —
 change that line if you are deploying anywhere else. The blueprint asks for
@@ -90,6 +93,7 @@ a handful of values it cannot invent:
 
 | Variable | What to put | If you skip it |
 |---|---|---|
+| `DATABASE_URL` | your Postgres connection string, verbatim | the service cannot start |
 | `PLATFORM_OWNER_EMAILS` | your email | no access to the `/platform` support dashboard |
 | `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` | any SMTP provider — see [Email](#email) | email is logged instead of sent, see step 4 |
 | `SMTP_FROM` | a **verified** sender, e.g. `Taktline <no-reply@taktline.com>` | the provider rejects the message |
@@ -163,36 +167,48 @@ points here, so nothing else changes once it is live.
 - [ ] `TAKTLINE_DEV` is `0` (the blueprint sets it) — confirm `/auth/dev/bootstrap` returns 404
 - [ ] Sign in on a phone and confirm the connection light shows **LIVE**
 - [ ] Upload a floor plan and reload — it is served from Postgres, so it survives redeploys
-- [ ] Move the service and database off the free plans (see below)
+- [ ] Decide whether to stay on free plans — Neon's is permanent, Render's web
+      service sleeps (see [Which Postgres](#which-postgres) and below)
 - [ ] Take a first database backup (Render → database → Backups)
 
 ### Which Postgres
 
-The blueprint provisions **Render's own Postgres**, because it is one less
-account and Render wires `DATABASE_URL` for you. Its free plan expires, so
-before you have data you care about, either move it to a paid Render plan or
-point `DATABASE_URL` at **Neon** — the app normalizes whatever connection
-string a host hands out, so switching is one environment variable.
+**Render's free Postgres expires 30 days after it is created** (then 14 more
+days to upgrade before the data is deleted). That is a trial, not a free tier,
+so `render.yaml` deliberately does *not* provision a database — a blueprint
+that hands you a one-month fuse is worse than one that asks for a connection
+string. Bring your own and paste it into `DATABASE_URL`.
 
-**Why Neon rather than Supabase**, given both are hosted Postgres with a free
-tier:
+| | Free plan | Catch |
+|---|---|---|
+| **Neon** ← default | permanent: 0.5 GB, 100 CU-hours/month, no card | idle compute suspends and **auto-resumes in ~1 s** |
+| **Supabase** | 500 MB | project **pauses after 7 days idle and needs a manual unpause**; deleted if left |
+| **Render** | 1 GB | **expires after 30 days** |
 
-*Supabase free projects pause after 7 days of inactivity and need a **manual**
-unpause from the dashboard* — left paused long enough, they are deleted. Neon
-suspends idle compute too, but **resumes automatically in about a second** when
-a connection arrives. For a shop-floor tool that is the whole argument: a
-quiet week over a holiday shutdown means Taktline comes back by itself on Neon,
-and comes back dead on Supabase until somebody remembers to log into a
-dashboard. Render's own database does not sleep at all on a paid plan, which is
-why it is the default here.
+**Why Neon over Supabase.** The pause behaviour is the whole argument. A shop
+that is quiet for a week — a holiday shutdown, a plant between contracts —
+comes back to a Taktline that woke up by itself on Neon, and to a dead one on
+Supabase until somebody remembers to log into a dashboard. Secondarily,
+Supabase's value is a *platform* (Auth, Storage, Realtime, PostgREST) and this
+app already has all four of its own: session auth with argon2, floor plans in
+Postgres, its own WebSocket broadcast, its own FastAPI. Adopting it would mean
+running two auth systems and duplicating `companyId` scoping in RLS. Neon is
+just Postgres, which is the amount of database this wants.
 
-The second reason is that Supabase's value is a *platform* — Auth, Storage,
-Realtime, PostgREST — and Taktline already has all four of its own: session
-auth with argon2, floor plans stored in Postgres, its own WebSocket broadcast,
-its own FastAPI. Adopting Supabase would mean either ignoring most of what you
-are there for, or running two auth systems and duplicating tenant scoping in
-RLS that `companyId` filtering already does. Neon is *just Postgres*, which is
-exactly the amount of database this application wants.
+**The one thing to watch on Neon's free plan** is compute-hours, not storage.
+0.5 GB is enormous for this data — stations, routes, lots and events are small,
+and floor plans are ~100 KB each. But the backend holds a connection pool open
+(`pool_pre_ping=True`, SQLAlchemy's default pool), and compute that never goes
+idle never suspends, which can outrun 100 CU-hours in a month. If Neon's usage
+dashboard shows that happening, the fix is to let the pool drain — run the
+engine with `poolclass=NullPool`, trading a little per-request connection
+latency for compute that actually suspends between shifts.
+
+**When to just pay.** Roughly $6–7/month buys Render's Basic-256MB or Neon's
+Launch plan and removes every caveat above — no expiry, no pause, no
+compute-hour ceiling. Taktline being free forever is a statement about the
+software licence, not a reason to run a production shop floor on a hobby
+database. Move before you have data you would miss, and take a backup.
 
 ### What the image does
 
@@ -221,8 +237,8 @@ passwords keep working and migrate to the new cost on their next login.
 **Free tier sleeps.** A free Render web service spins down after ~15 minutes of
 inactivity; the next request pays a cold start of roughly 30 seconds. Fine for
 a demo, wrong for a shop floor that opens at 6am — use a paid instance for
-anything real. Render's free Postgres also **expires**; check Render's current
-policy and move to a paid plan or Neon before you have data you care about.
+anything real. (The database is a separate decision, covered in
+[Which Postgres](#which-postgres).)
 
 **One instance, deliberately.** `numInstances: 1` is not a cost saving. The
 WebSocket connection registry, the per-IP rate limiter and the usage meter all

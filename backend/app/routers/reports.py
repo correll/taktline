@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session
+from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import LotTemplate as LotTemplateRow, ProductionOrder as OrderRow
 from ..deps.auth import CompanyContext, require_scope
 
@@ -23,7 +23,7 @@ _reports_access = require_scope("reports", session_role="user")
 @router.get("/orders")
 async def report_orders(status: Optional[str] = None, limit: int = 5000,
                         ctx: CompanyContext = Depends(_reports_access),
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Flat order feed — one row per production order, product resolved to its
     template name. The primary BI dataset."""
     stmt = select(OrderRow).where(OrderRow.companyId == ctx.company_id)
@@ -52,7 +52,7 @@ async def report_orders(status: Optional[str] = None, limit: int = 5000,
 
 @router.get("/throughput")
 async def report_throughput(ctx: CompanyContext = Depends(_reports_access),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Daily completed-order rollup: [{date, orders, units}] ascending by date.
     A ready-made time series for a throughput chart."""
     completed = (await session.execute(

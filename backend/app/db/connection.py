@@ -69,6 +69,18 @@ async def close_db() -> None:
 
 
 # ─── Request-scoped transactional session ────────────────────────────────────
+# Function-scoped (FastAPI ≥0.113 dependency scopes): the request stack that
+# holds request-scoped dependencies is closed only AFTER the response has been
+# sent, so a commit living there races the client's NEXT request — a tablet (or
+# the next request on a keep-alive connection) can act on a 201 whose row has
+# not landed yet and get a 404, a 401 on a fresh session, or a stale board.
+# Function scope closes the stack BEFORE the response bytes leave the server:
+# commit first, respond second. Every Depends on get_session must carry this
+# scope — the first declaration FastAPI solves decides which stack the shared
+# session lands in, so one stray unscoped Depends would reintroduce the race.
+SESSION_SCOPE = {"scope": "function"}
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Yield a session and commit the whole request as one transaction.
 

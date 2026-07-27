@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core import usage
 from ..core.config import settings
 from ..core.security import generate_token, hash_token
-from ..db.connection import get_session, parse_uuid
+from ..db.connection import SESSION_SCOPE, get_session, parse_uuid
 from ..db.tables import ApiKey, AuthSession, Membership, SupportGrant, User
 from ..models.common import utcnow
 
@@ -84,7 +84,7 @@ SANDBOX_IDLE_TTL = 7 * 24 * 60 * 60
 
 # ── Dependencies ───────────────────────────────────────────────────────────────
 async def get_current_user(
-    request: Request, session: AsyncSession = Depends(get_session)
+    request: Request, session: AsyncSession = Depends(get_session, **SESSION_SCOPE)
 ) -> User:
     raw = request.cookies.get(settings.session_cookie_name)
     if not raw:
@@ -209,7 +209,7 @@ async def require_platform_owner(user: User = Depends(get_current_user)) -> User
 async def get_active_company(
     request: Request,
     user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_session, **SESSION_SCOPE),
 ) -> CompanyContext:
     company_uuid = parse_uuid(request.headers.get("X-Company-Id"))
     if company_uuid is None:
@@ -263,7 +263,7 @@ def require_scope(scope: str, *, session_role: str = "admin"):
     (``'user'`` | ``'admin'`` | ``'super_admin'``). A key resolves its own company,
     so ``X-Company-Id`` is ignored for key callers — automatic tenant isolation.
     """
-    async def dep(request: Request, session: AsyncSession = Depends(get_session)) -> CompanyContext:
+    async def dep(request: Request, session: AsyncSession = Depends(get_session, **SESSION_SCOPE)) -> CompanyContext:
         raw = _extract_api_key(request)
         if raw is not None:
             key = (await session.execute(

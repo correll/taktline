@@ -911,9 +911,9 @@ function DonePanel({
   const timeStr = formatElapsed(elapsed)
 
   const nextStation = useMemo(() => {
-    const ids = getValidDestinations(stationId, routes)
+    const ids = getValidDestinations(stationId, routes, card?.processId)
     return ids.length > 0 ? stations[ids[0]] : null
-  }, [stationId, routes, stations])
+  }, [stationId, routes, stations, card])
 
   const doMove = async () => {
     if (!nextStation) return

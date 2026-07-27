@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.ws_events import queue_event
-from ..db.connection import get_session, require_uuid, parse_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
 from ..db.tables import (
     Card as CardRow, CardEvent as CardEventRow,
     LotTemplate as LotTemplateRow, Process as ProcessRow, Route as RouteRow,
@@ -104,7 +104,7 @@ async def _get_owned(session: AsyncSession, card_id: str, ctx: CompanyContext,
 
 @router.get("/", response_model=List[Card])
 async def list_cards(ctx: CompanyContext = Depends(get_active_company),
-                     session: AsyncSession = Depends(get_session)):
+                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(CardRow).where(CardRow.companyId == ctx.company_id)
     )).scalars().all()
@@ -113,7 +113,7 @@ async def list_cards(ctx: CompanyContext = Depends(get_active_company),
 
 @router.post("/", response_model=Card, status_code=201)
 async def create_card(body: CardCreate, ctx: CompanyContext = Depends(require_admin),  # admin+ may create lots
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     await ensure_sandbox_quota(session, ctx, CardRow)
     data = body.model_dump()
     if not data.get("lotNum"):
@@ -146,13 +146,13 @@ async def create_card(body: CardCreate, ctx: CompanyContext = Depends(require_ad
 
 @router.get("/{card_id}", response_model=Card)
 async def get_card(card_id: str, ctx: CompanyContext = Depends(get_active_company),
-                   session: AsyncSession = Depends(get_session)):
+                   session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     return _to_card(await _get_owned(session, card_id, ctx))
 
 
 @router.put("/{card_id}", response_model=Card)
 async def update_card(card_id: str, body: CardUpdate, ctx: CompanyContext = Depends(require_super_admin),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, card_id, ctx)
     old_bins = dict(row.bins or {})
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -185,7 +185,7 @@ class CardStatusUpdate(BaseModel):
 @router.patch("/{card_id}/status", response_model=Card)
 async def update_card_status(card_id: str, body: CardStatusUpdate,
                              ctx: CompanyContext = Depends(get_active_company),
-                             session: AsyncSession = Depends(get_session)):
+                             session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Member-allowed: operators may reflect a lot's working/done state without
     otherwise mutating the card (no bin / location changes)."""
     row = await _get_owned(session, card_id, ctx)
@@ -198,7 +198,7 @@ async def update_card_status(card_id: str, body: CardStatusUpdate,
 
 @router.delete("/{card_id}", status_code=204)
 async def delete_card(card_id: str, ctx: CompanyContext = Depends(require_super_admin),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, card_id, ctx)
     await session.delete(row)
     await session.flush()
@@ -217,6 +217,14 @@ async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id
     consuming one precursor per incoming branch. Alternative ("either/or")
     routing is modelled as a *separate process*, so branches are only ever
     counted within the card's own process.
+
+    Only **source material** fans out. A card that already wears one of the
+    branches' product templates IS a piece of a previous disassembly — you
+    cannot take apart a module into modules — so it simply relocates along the
+    chosen branch. Without this, setting two surplus modules aside to a spares
+    warehouse would re-trigger the split: the two would be relabelled as the
+    warehouse's product while two phantom modules were minted toward the merge
+    — identity destroyed on one branch, material duplicated on the other.
     """
     from_uuid, to_uuid = parse_uuid(from_id), parse_uuid(to_id)
     if from_uuid is None or to_uuid is None:
@@ -230,6 +238,25 @@ async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id
     )).scalars().all())
     if len(branches) < 2 or not any(b.unload == to_uuid for b in branches):
         return None
+    # Piece check — resolve each branch's product read-only (never provisioning:
+    # a template that does not exist yet cannot be what this card wears).
+    for branch in branches:
+        if branch.outputTemplateId is not None:
+            if branch.outputTemplateId == row.lotTemplateId:
+                return None
+            continue
+        into_merge = await _is_merge_station(session, company_id, branch.unload, row.processId)
+        tmpl_station = branch.load if into_merge else branch.unload
+        exists = (await session.execute(
+            select(LotTemplateRow.id).where(
+                LotTemplateRow.companyId == company_id,
+                LotTemplateRow.processId == row.processId,
+                LotTemplateRow.startStationId == tmpl_station,
+                LotTemplateRow.id == row.lotTemplateId,
+            ).limit(1)
+        )).first()
+        if exists:
+            return None
     return branches
 
 
@@ -380,13 +407,16 @@ async def _assert_not_unmerged_precursor(session, company_id, row: CardRow, from
     from_uuid = parse_uuid(from_id)
     if from_uuid is None:
         return
-    incoming = await _incoming_routes(session, company_id, from_uuid)
+    # Scoped to the card's own process: the station may host another process's
+    # merge, but that is a different value stream — a card passing through on
+    # its own process's single feed is not that merge's precursor.
+    incoming = await _incoming_routes(session, company_id, from_uuid, row.processId)
     if len(incoming) < 2:
         return                      # not a merge station — ordinary pass-through
     # Only a station that actually mints a product here is assembling: two feeds
     # into a shared resource (a paint booth both lines use) is not a merge, and
     # work must keep flowing through it.
-    if await _assembly_template(session, company_id, from_uuid) is None:
+    if await _assembly_template(session, company_id, from_uuid, row.processId) is None:
         return
     precursor_ids: set = set()
     for route in incoming:
@@ -407,7 +437,9 @@ async def _record_order_progress(session, company_id, card_row: CardRow, to_stat
     if to_uuid is None:
         return
     has_outgoing = (await session.execute(
-        select(RouteRow.id).where(RouteRow.companyId == company_id, RouteRow.load == to_uuid).limit(1)
+        select(RouteRow.id).where(RouteRow.companyId == company_id,
+                                  RouteRow.processId == card_row.processId,
+                                  RouteRow.load == to_uuid).limit(1)
     )).first()
     if has_outgoing:
         return  # not a finished-goods location
@@ -438,7 +470,7 @@ class MoveBody(BaseModel):
 
 @router.post("/{card_id}/move", response_model=Card)
 async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(require_super_admin),
-                    session: AsyncSession = Depends(get_session)):
+                    session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Super-admin lot-board drag: unconstrained move of units between any two
     bins (forward or backward along the graph — backward can trigger unmerge)."""
     row = await _get_owned(session, card_id, ctx, for_update=True)
@@ -462,7 +494,7 @@ class AdvanceBody(BaseModel):
 @router.post("/{card_id}/advance", response_model=Card)
 async def advance_card(card_id: str, body: AdvanceBody,
                        ctx: CompanyContext = Depends(require_scope("cards:advance", session_role="user")),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Operator (member-allowed) move: advance a lot to a station that is a valid
     downstream destination along a defined route. Unlike /move it is
     route-constrained, so operators can push work forward without gaining the
@@ -474,9 +506,13 @@ async def advance_card(card_id: str, body: AdvanceBody,
     row = await _get_owned(session, card_id, ctx, for_update=True)
     from_uuid = require_uuid(body.fromStationId, "Station not found")
     to_uuid = require_uuid(body.toStationId, "Station not found")
+    # The route must belong to the card's own process: routes of a sibling
+    # process sharing these stations are a different value stream, and riding
+    # one would teleport the lot out of its own flow.
     route = (await session.execute(
         select(RouteRow).where(
             RouteRow.companyId == ctx.company_id,
+            RouteRow.processId == row.processId,
             RouteRow.load == from_uuid,
             RouteRow.unload == to_uuid,
         )
@@ -503,7 +539,7 @@ def _zpl_escape(s: str) -> str:
 @router.get("/{card_id}/label", response_class=PlainTextResponse)
 async def card_label(card_id: str,
                      ctx: CompanyContext = Depends(require_scope("cards:advance", session_role="user")),
-                     session: AsyncSession = Depends(get_session)):
+                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """ZPL for a lot-card label (Zebra/Brother). The Code128 barcode encodes the
     card id, so scanning it and POSTing /cards/{id}/advance closes the
     print → move → scan-to-advance loop. `Accept: application/pdf`? No — this is
@@ -537,7 +573,7 @@ class UnmergeBody(BaseModel):
 
 @router.post("/{card_id}/unmerge")
 async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = Depends(require_super_admin),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Reverse a merge: dissolve `quantity` assembly units of a lot at its merge
     station and recreate the precursor lots at each direct-upstream station
     (using each upstream station's originating template). This is what backward-
@@ -549,8 +585,12 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
     row = await _get_owned(session, card_id, ctx, for_update=True)
     station_uuid = require_uuid(body.stationId, "Station not found")
 
+    # The assembly dissolves along its OWN process's feeds — a sibling process
+    # sharing this station contributes no branches (and must gain no lots).
     incoming = (await session.execute(
-        select(RouteRow).where(RouteRow.companyId == ctx.company_id, RouteRow.unload == station_uuid)
+        select(RouteRow).where(RouteRow.companyId == ctx.company_id,
+                               RouteRow.processId == row.processId,
+                               RouteRow.unload == station_uuid)
     )).scalars().all()
     if len(incoming) < 2:
         raise HTTPException(400, "Not a merge station — nothing to unmerge")
@@ -604,12 +644,19 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
 
     for route in incoming:
         units = qty * max(1, route.quantity)
-        up_tmpl = (await session.execute(
-            select(LotTemplateRow).where(
-                LotTemplateRow.companyId == ctx.company_id,
-                LotTemplateRow.startStationId == route.load,
-            )
-        )).scalars().first()
+        # A disassembly feed names its product (battery → cable): the precursor
+        # this branch consumed wore THAT template, so it is what comes back.
+        up_tmpl = None
+        if route.outputTemplateId is not None:
+            up_tmpl = await session.get(LotTemplateRow, route.outputTemplateId)
+        if up_tmpl is None:
+            up_tmpl = (await session.execute(
+                select(LotTemplateRow).where(
+                    LotTemplateRow.companyId == ctx.company_id,
+                    LotTemplateRow.processId == row.processId,
+                    LotTemplateRow.startStationId == route.load,
+                ).order_by(LotTemplateRow.createdAt.asc())
+            )).scalars().first()
         if up_tmpl is not None:
             await _spawn(str(route.load), up_tmpl, units)
         else:
@@ -624,7 +671,7 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
 
 @router.get("/{card_id}/events", response_model=List[CardEvent])
 async def get_card_events(card_id: str, ctx: CompanyContext = Depends(get_active_company),
-                          session: AsyncSession = Depends(get_session)):
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(CardEventRow)
         .where(CardEventRow.cardId == card_id, CardEventRow.companyId == ctx.company_id)

@@ -21,11 +21,16 @@ interface DragState    { cardId: string; fromStationId: string }
 export function getValidDestinations(
   fromStationId: string,
   routes: Record<string, Route>,
+  processId?: string,
 ): string[] {
   const outgoing: Record<string, string[]> = {}
   const inDegree: Record<string, number>   = {}
 
-  for (const r of Object.values(routes)) {
+  // A lot only travels its own process's routes — a sibling process sharing
+  // these stations is a different value stream, and the server refuses hops
+  // along its routes.
+  const pool = Object.values(routes).filter((r) => !processId || r.processId === processId)
+  for (const r of pool) {
     if (!outgoing[r.load]) outgoing[r.load] = []
     outgoing[r.load].push(r.unload)
     inDegree[r.unload] = (inDegree[r.unload] ?? 0) + 1
@@ -54,9 +59,10 @@ export function getValidDestinations(
 export function getBackwardDestinations(
   fromStationId: string,
   routes: Record<string, Route>,
+  processId?: string,
 ): string[] {
   return Object.values(routes)
-    .filter((r) => r.unload === fromStationId)
+    .filter((r) => r.unload === fromStationId && (!processId || r.processId === processId))
     .map((r) => r.load)
 }
 
@@ -132,11 +138,13 @@ export default function LotsView() {
   const validDropTargets = useMemo(
     () => dragging
       ? new Set([
-          ...getValidDestinations(dragging.fromStationId, routes),    // forward
-          ...getBackwardDestinations(dragging.fromStationId, routes), // one step back
+          ...getValidDestinations(dragging.fromStationId, routes,
+                                  cards[dragging.cardId]?.processId),    // forward
+          ...getBackwardDestinations(dragging.fromStationId, routes,
+                                     cards[dragging.cardId]?.processId), // one step back
         ])
       : new Set<string>(),
-    [dragging, routes],
+    [dragging, routes, cards],
   )
 
   const handleDrop = useCallback(async (toStationId: string) => {

@@ -3,7 +3,7 @@ from typing import List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid, optional_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid, optional_uuid
 from ..db.tables import LotTemplate as LotTemplateRow
 from ..deps.auth import CompanyContext, ensure_sandbox_quota, get_active_company, require_super_admin
 from ..models.lot_template import LotTemplate, LotTemplateCreate, LotTemplateUpdate
@@ -37,7 +37,7 @@ async def _get_owned(session: AsyncSession, template_id: str, ctx: CompanyContex
 
 @router.get("/", response_model=List[LotTemplate])
 async def list_templates(ctx: CompanyContext = Depends(get_active_company),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(LotTemplateRow).where(LotTemplateRow.companyId == ctx.company_id)
     )).scalars().all()
@@ -46,7 +46,7 @@ async def list_templates(ctx: CompanyContext = Depends(get_active_company),
 
 @router.post("/", response_model=LotTemplate, status_code=201)
 async def create_template(body: LotTemplateCreate, ctx: CompanyContext = Depends(require_super_admin),
-                          session: AsyncSession = Depends(get_session)):
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     await ensure_sandbox_quota(session, ctx, LotTemplateRow)
     data = body.model_dump()
     for f in _FK_FIELDS:
@@ -59,14 +59,14 @@ async def create_template(body: LotTemplateCreate, ctx: CompanyContext = Depends
 
 @router.get("/{template_id}", response_model=LotTemplate)
 async def get_template(template_id: str, ctx: CompanyContext = Depends(get_active_company),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     return _to_template(await _get_owned(session, template_id, ctx))
 
 
 @router.put("/{template_id}", response_model=LotTemplate)
 async def update_template(template_id: str, body: LotTemplateUpdate,
                           ctx: CompanyContext = Depends(require_super_admin),
-                          session: AsyncSession = Depends(get_session)):
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, template_id, ctx)
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     for f in _FK_FIELDS:
@@ -81,7 +81,7 @@ async def update_template(template_id: str, body: LotTemplateUpdate,
 
 @router.delete("/{template_id}", status_code=204)
 async def delete_template(template_id: str, ctx: CompanyContext = Depends(require_super_admin),
-                          session: AsyncSession = Depends(get_session)):
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, template_id, ctx)
     await session.delete(row)
     await session.flush()

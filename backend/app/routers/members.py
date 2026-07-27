@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import Membership, User
 from ..deps.auth import get_current_user, load_membership
 from ..models.company import MemberPublic, RoleUpdate
@@ -27,7 +27,7 @@ def _to_member(m: Membership, u: User) -> MemberPublic:
 
 @router.get("/{company_id}/members", response_model=List[MemberPublic])
 async def list_members(company_id: str, user: User = Depends(get_current_user),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     cid = require_uuid(company_id, "Company not found")
     await load_membership(session, user, cid)  # any member may view the roster
     rows = (await session.execute(
@@ -41,7 +41,7 @@ async def list_members(company_id: str, user: User = Depends(get_current_user),
 
 @router.delete("/{company_id}/members/{user_id}", status_code=204)
 async def remove_member(company_id: str, user_id: str, user: User = Depends(get_current_user),
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     cid = require_uuid(company_id, "Company not found")
     target_uid = require_uuid(user_id, "Member not found")
     await load_membership(session, user, cid, min_role="super_admin")
@@ -59,7 +59,7 @@ async def remove_member(company_id: str, user_id: str, user: User = Depends(get_
 @router.patch("/{company_id}/members/{user_id}", response_model=MemberPublic)
 async def change_role(company_id: str, user_id: str, body: RoleUpdate,
                       user: User = Depends(get_current_user),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     cid = require_uuid(company_id, "Company not found")
     target_uid = require_uuid(user_id, "Member not found")
     await load_membership(session, user, cid, min_role="super_admin")

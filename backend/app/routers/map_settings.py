@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
-from ..db.connection import get_session, get_or_create_singleton
+from ..db.connection import SESSION_SCOPE, get_session, get_or_create_singleton
 from ..db.tables import MapSettings as MapSettingsRow, UploadedImage
 from ..deps.auth import CompanyContext, ensure_full_account, get_active_company, require_super_admin
 from ..models.map_settings import MapSettings, MapSettingsUpdate
@@ -67,14 +67,14 @@ def _to_model(r: MapSettingsRow) -> MapSettings:
 
 @router.get("/", response_model=MapSettings)
 async def get_map_settings(ctx: CompanyContext = Depends(get_active_company),
-                           session: AsyncSession = Depends(get_session)):
+                           session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     return _to_model(await _get_or_create(session, ctx.company_id))
 
 
 @router.post("/upload-floor-plan")
 async def upload_floor_plan(file: UploadFile = File(...),
                             ctx: CompanyContext = Depends(require_super_admin),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     ensure_full_account(ctx)   # sandbox: no floor-plan uploads
     content_type = file.content_type or ""
     if not content_type.startswith("image/"):
@@ -118,7 +118,7 @@ async def upload_floor_plan(file: UploadFile = File(...),
 @router.put("/", response_model=MapSettings)
 async def update_map_settings(body: MapSettingsUpdate,
                               ctx: CompanyContext = Depends(require_super_admin),
-                              session: AsyncSession = Depends(get_session)):
+                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_or_create(session, ctx.company_id)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(row, k, v)
@@ -147,7 +147,7 @@ def _safe_upload_path(filename: str) -> Path:
 
 
 @uploads_router.get("/uploads/{filename}")
-async def serve_upload(filename: str, session: AsyncSession = Depends(get_session)):
+async def serve_upload(filename: str, session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     path = _safe_upload_path(filename)
     media_type = _MIME_BY_EXT[Path(filename).suffix.lower()]
 

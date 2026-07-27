@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid, parse_uuid, optional_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid, optional_uuid
 from ..db.tables import (Route as RouteRow, Process as ProcessRow, Station as StationRow,
                          LotTemplate as LotTemplateRow)
 from ..deps.auth import CompanyContext, get_active_company, require_super_admin
@@ -79,19 +79,24 @@ def _would_create_cycle(edges, new_load: str, new_unload: str) -> bool:
 
 @router.get("/", response_model=List[Route])
 async def list_routes(ctx: CompanyContext = Depends(get_active_company),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(RouteRow).where(RouteRow.companyId == ctx.company_id)
     )).scalars().all()
     return [_to_route(r) for r in rows]
 
 
-async def _other_incoming_count(session, company_id, unload_uuid, exclude_id=None) -> int:
-    """How many routes (other than exclude_id) feed this station."""
+async def _other_incoming_count(session, company_id, unload_uuid, exclude_id=None,
+                                process_id=None) -> int:
+    """How many routes (other than exclude_id) feed this station within the
+    same process — a sibling process's feed into a shared station is a
+    different value stream, not a merge partner."""
     stmt = select(func.count()).select_from(RouteRow).where(
         RouteRow.companyId == company_id, RouteRow.unload == unload_uuid)
     if exclude_id is not None:
         stmt = stmt.where(RouteRow.id != exclude_id)
+    if process_id is not None:
+        stmt = stmt.where(RouteRow.processId == process_id)
     return (await session.execute(stmt)).scalar_one()
 
 
@@ -122,32 +127,39 @@ async def _weight_allowed(session, company_id, load_uuid, unload_uuid, exclude_i
     Anywhere else a lot simply moves along 1:1.
     """
     return (
-        await _other_incoming_count(session, company_id, unload_uuid, exclude_id) >= 1
+        await _other_incoming_count(session, company_id, unload_uuid, exclude_id,
+                                    process_id) >= 1
         or await _other_outgoing_count(session, company_id, load_uuid, exclude_id,
                                        process_id) >= 1
     )
 
 
-async def _normalize_weights(session, company_id, *, unload_uuid=None, load_uuid=None) -> None:
+async def _normalize_weights(session, company_id, *, unload_uuid=None, load_uuid=None,
+                             process_id=None) -> None:
     """Weights only mean something where the graph branches. When a station
     drops back to a single incoming route (no longer a merge) or a single
-    outgoing route (no longer a split), the survivor's weight resets to 1."""
+    outgoing route (no longer a split), the survivor's weight resets to 1.
+    Branch-hood is judged within one process throughout."""
     if unload_uuid is not None:
-        rows = (await session.execute(
-            select(RouteRow).where(RouteRow.companyId == company_id, RouteRow.unload == unload_uuid)
-        )).scalars().all()
+        stmt = select(RouteRow).where(RouteRow.companyId == company_id,
+                                      RouteRow.unload == unload_uuid)
+        if process_id is not None:
+            stmt = stmt.where(RouteRow.processId == process_id)
+        rows = (await session.execute(stmt)).scalars().all()
         for r in rows:
             if len(rows) == 1 and r.quantity != 1 and not await _other_outgoing_count(
-                    session, company_id, r.load, r.id):
+                    session, company_id, r.load, r.id, process_id=r.processId):
                 r.quantity = 1
                 r.updatedAt = utcnow()
     if load_uuid is not None:
-        rows = (await session.execute(
-            select(RouteRow).where(RouteRow.companyId == company_id, RouteRow.load == load_uuid)
-        )).scalars().all()
+        stmt = select(RouteRow).where(RouteRow.companyId == company_id,
+                                      RouteRow.load == load_uuid)
+        if process_id is not None:
+            stmt = stmt.where(RouteRow.processId == process_id)
+        rows = (await session.execute(stmt)).scalars().all()
         for r in rows:
             if len(rows) == 1 and r.quantity != 1 and not await _other_incoming_count(
-                    session, company_id, r.unload, r.id):
+                    session, company_id, r.unload, r.id, process_id=r.processId):
                 r.quantity = 1
                 r.updatedAt = utcnow()
 
@@ -179,7 +191,7 @@ _WEIGHT_ERROR = ("A weight only applies where the graph branches — a feed into
 
 @router.post("/", response_model=Route, status_code=201)
 async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_super_admin),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     process_uuid = _req_fk(body.processId)
     load_uuid = _req_fk(body.load)
     unload_uuid = _req_fk(body.unload)
@@ -222,14 +234,14 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
 
 @router.get("/{route_id}", response_model=Route)
 async def get_route(route_id: str, ctx: CompanyContext = Depends(get_active_company),
-                    session: AsyncSession = Depends(get_session)):
+                    session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     return _to_route(await _get_owned(session, route_id, ctx))
 
 
 @router.put("/{route_id}", response_model=Route)
 async def update_route(route_id: str, body: RouteUpdate,
                        ctx: CompanyContext = Depends(require_super_admin),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, route_id, ctx)
 
     new_load = body.load or str(row.load)
@@ -274,19 +286,21 @@ async def update_route(route_id: str, body: RouteUpdate,
     except IntegrityError:
         raise HTTPException(400, "Route references a non-existent process or station")
     if row.unload != old_unload:
-        await _normalize_weights(session, ctx.company_id, unload_uuid=old_unload)
+        await _normalize_weights(session, ctx.company_id, unload_uuid=old_unload,
+                                 process_id=row.processId)
     if row.load != old_load:
-        await _normalize_weights(session, ctx.company_id, load_uuid=old_load)
+        await _normalize_weights(session, ctx.company_id, load_uuid=old_load,
+                                 process_id=row.processId)
     return _to_route(row)
 
 
 @router.delete("/{route_id}", status_code=204)
 async def delete_route(route_id: str, ctx: CompanyContext = Depends(require_super_admin),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, route_id, ctx)
-    unload, load = row.unload, row.load
+    unload, load, proc = row.unload, row.load, row.processId
     await session.delete(row)
     await session.flush()
     # If either end just stopped branching, the surviving weight is moot.
-    await _normalize_weights(session, ctx.company_id, unload_uuid=unload)
-    await _normalize_weights(session, ctx.company_id, load_uuid=load)
+    await _normalize_weights(session, ctx.company_id, unload_uuid=unload, process_id=proc)
+    await _normalize_weights(session, ctx.company_id, load_uuid=load, process_id=proc)

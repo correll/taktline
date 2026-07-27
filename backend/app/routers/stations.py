@@ -3,7 +3,7 @@ from typing import List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import Station as StationRow, StationFavorite as FavoriteRow
 from ..deps.auth import CompanyContext, ensure_sandbox_quota, get_active_company, require_super_admin
 from ..models.station import Station, StationCreate, StationUpdate
@@ -37,7 +37,7 @@ async def _get_owned(session: AsyncSession, station_id: str, ctx: CompanyContext
 
 @router.get("/", response_model=List[Station])
 async def list_stations(ctx: CompanyContext = Depends(get_active_company),
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(StationRow).where(StationRow.companyId == ctx.company_id)
     )).scalars().all()
@@ -46,7 +46,7 @@ async def list_stations(ctx: CompanyContext = Depends(get_active_company),
 
 @router.post("/", response_model=Station, status_code=201)
 async def create_station(body: StationCreate, ctx: CompanyContext = Depends(require_super_admin),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     await ensure_sandbox_quota(session, ctx, StationRow)
     row = StationRow(**body.model_dump(), companyId=ctx.company_id)
     session.add(row)
@@ -68,7 +68,7 @@ def _require_user(ctx: CompanyContext):
 
 @router.get("/favorites", response_model=List[str])
 async def list_favorites(ctx: CompanyContext = Depends(get_active_company),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """The current user's favorite locations in the active company — surfaced
     first in the operator view's location picker."""
     user = _require_user(ctx)
@@ -83,7 +83,7 @@ async def list_favorites(ctx: CompanyContext = Depends(get_active_company),
 
 @router.put("/{station_id}/favorite", status_code=204)
 async def add_favorite(station_id: str, ctx: CompanyContext = Depends(get_active_company),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     user = _require_user(ctx)
     row = await _get_owned(session, station_id, ctx)
     if await session.get(FavoriteRow, (user.id, row.id)) is None:   # idempotent
@@ -93,7 +93,7 @@ async def add_favorite(station_id: str, ctx: CompanyContext = Depends(get_active
 
 @router.delete("/{station_id}/favorite", status_code=204)
 async def remove_favorite(station_id: str, ctx: CompanyContext = Depends(get_active_company),
-                          session: AsyncSession = Depends(get_session)):
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     user = _require_user(ctx)
     fav = await session.get(
         FavoriteRow, (user.id, require_uuid(station_id, "Station not found")))
@@ -103,14 +103,14 @@ async def remove_favorite(station_id: str, ctx: CompanyContext = Depends(get_act
 
 @router.get("/{station_id}", response_model=Station)
 async def get_station(station_id: str, ctx: CompanyContext = Depends(get_active_company),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     return _to_station(await _get_owned(session, station_id, ctx))
 
 
 @router.put("/{station_id}", response_model=Station)
 async def update_station(station_id: str, body: StationUpdate,
                          ctx: CompanyContext = Depends(require_super_admin),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, station_id, ctx)
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     for k, v in patch.items():
@@ -127,7 +127,7 @@ async def update_station(station_id: str, body: StationUpdate,
 
 @router.delete("/{station_id}", status_code=204)
 async def delete_station(station_id: str, ctx: CompanyContext = Depends(require_super_admin),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, station_id, ctx)
     await session.delete(row)
     await session.flush()
@@ -137,7 +137,7 @@ async def delete_station(station_id: str, ctx: CompanyContext = Depends(require_
 @router.post("/{station_id}/command")
 async def send_command(station_id: str, body: dict,
                        ctx: CompanyContext = Depends(require_super_admin),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     await _get_owned(session, station_id, ctx)  # ensure the station is in this company
     from ..models.machine_state import StationCommand
     cmd = StationCommand(**body)

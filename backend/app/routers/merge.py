@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (
     Route as RouteRow, LotTemplate as LotTemplateRow,
     Card as CardRow, Station as StationRow,
@@ -71,21 +71,45 @@ async def _assert_station(session: AsyncSession, station_uuid: uuid.UUID, compan
         raise HTTPException(404, "Station not found")
 
 
-async def _incoming_routes(session, company_id, station_uuid) -> list[RouteRow]:
-    return list((await session.execute(
-        select(RouteRow).where(
-            RouteRow.companyId == company_id, RouteRow.unload == station_uuid
-        )
-    )).scalars().all())
+async def _incoming_routes(session, company_id, station_uuid, process_id=None) -> list[RouteRow]:
+    """Routes feeding a station — scoped to one process when given. Stations are
+    physical and may be shared by several processes (the documented pattern for
+    either/or routing), but merges, like splits, only ever exist *within* a
+    process: an unscoped read makes one process's merge demand another
+    process's material."""
+    stmt = select(RouteRow).where(
+        RouteRow.companyId == company_id, RouteRow.unload == station_uuid)
+    if process_id is not None:
+        stmt = stmt.where(RouteRow.processId == process_id)
+    return list((await session.execute(stmt)).scalars().all())
 
 
-async def _assembly_template(session, company_id, station_uuid) -> Optional[LotTemplateRow]:
-    return (await session.execute(
-        select(LotTemplateRow).where(
-            LotTemplateRow.companyId == company_id,
-            LotTemplateRow.startStationId == station_uuid,
-        )
-    )).scalars().first()
+def _merge_process(incoming: list[RouteRow]):
+    """The process whose merge lives at this station: the one with 2+ feeds.
+
+    A station shared by several processes only assembles within one of them
+    (either/or routing passes through, it does not merge). Should a factory ever
+    point two different processes' merges at one physical bench, the choice is
+    made deterministic — most feeds first, then process id — so preview and
+    perform always agree."""
+    by_proc: dict = {}
+    for r in incoming:
+        by_proc.setdefault(r.processId, []).append(r)
+    qualifying = [(pid, rs) for pid, rs in by_proc.items() if len(rs) >= 2]
+    if not qualifying:
+        return None, []
+    qualifying.sort(key=lambda x: (-len(x[1]), str(x[0])))
+    return qualifying[0]
+
+
+async def _assembly_template(session, company_id, station_uuid, process_id=None) -> Optional[LotTemplateRow]:
+    stmt = select(LotTemplateRow).where(
+        LotTemplateRow.companyId == company_id,
+        LotTemplateRow.startStationId == station_uuid,
+    )
+    if process_id is not None:
+        stmt = stmt.where(LotTemplateRow.processId == process_id)
+    return (await session.execute(stmt.order_by(LotTemplateRow.createdAt.asc()))).scalars().first()
 
 
 async def _ensure_origination_template(session, company_id, station_uuid, process_id=None) -> LotTemplateRow:
@@ -94,7 +118,7 @@ async def _ensure_origination_template(session, company_id, station_uuid, proces
     lets a line run — pull and merge — without an admin hand-defining a template
     for every source and every merge. An explicit template still wins; the
     default only fills the gap."""
-    tmpl = await _assembly_template(session, company_id, station_uuid)
+    tmpl = await _assembly_template(session, company_id, station_uuid, process_id)
     if tmpl is not None:
         return tmpl
     station = await session.get(StationRow, station_uuid)
@@ -109,13 +133,15 @@ async def _ensure_origination_template(session, company_id, station_uuid, proces
     return tmpl
 
 
-async def _source_template_ids(session, company_id, source_station_uuid) -> list[uuid.UUID]:
-    return list((await session.execute(
-        select(LotTemplateRow.id).where(
-            LotTemplateRow.companyId == company_id,
-            LotTemplateRow.startStationId == source_station_uuid,
-        )
-    )).scalars().all())
+async def _source_template_ids(session, company_id, source_station_uuid,
+                               process_id=None) -> list[uuid.UUID]:
+    stmt = select(LotTemplateRow.id).where(
+        LotTemplateRow.companyId == company_id,
+        LotTemplateRow.startStationId == source_station_uuid,
+    )
+    if process_id is not None:
+        stmt = stmt.where(LotTemplateRow.processId == process_id)
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def _precursor_template_ids(session, company_id, route: RouteRow) -> list[uuid.UUID]:
@@ -123,10 +149,11 @@ async def _precursor_template_ids(session, company_id, route: RouteRow) -> list[
 
     A disassembly branch says what it yields (battery → cable), so the merge
     matches that product. Otherwise the branch is identified the ordinary way:
-    whatever originates at its source station."""
+    whatever originates at its source station — within the branch's own process,
+    so a sibling process's product standing at the same bench is never eaten."""
     if route.outputTemplateId is not None:
         return [route.outputTemplateId]
-    return await _source_template_ids(session, company_id, route.load)
+    return await _source_template_ids(session, company_id, route.load, route.processId)
 
 
 async def _station_lock(session: AsyncSession, company_id, station_id: str) -> None:
@@ -195,16 +222,17 @@ async def _build_requirements(session, company_id, station_id: str, incoming: li
 
 @router.get("/{station_id}", response_model=MergePreview)
 async def get_merge_preview(station_id: str, ctx: CompanyContext = Depends(get_active_company),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     station_uuid = require_uuid(station_id, "Station not found")
     await _assert_station(session, station_uuid, ctx.company_id)
-    incoming = await _incoming_routes(session, ctx.company_id, station_uuid)
+    process_id, incoming = _merge_process(
+        await _incoming_routes(session, ctx.company_id, station_uuid))
 
-    if len(incoming) < 2:
+    if process_id is None:
         return MergePreview(isMergeStation=False, hasAssemblyTemplate=False,
                             assembliesPossible=0, requirements=[])
 
-    assembly_tmpl = await _assembly_template(session, ctx.company_id, station_uuid)
+    assembly_tmpl = await _assembly_template(session, ctx.company_id, station_uuid, process_id)
     requirements = await _build_requirements(session, ctx.company_id, station_id, incoming)
     assemblies = min((r.canMake for r in requirements), default=0)
 
@@ -221,7 +249,7 @@ async def get_merge_preview(station_id: str, ctx: CompanyContext = Depends(get_a
 @router.post("/{station_id}", response_model=MergeResult, status_code=201)
 async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None,
                         ctx: CompanyContext = Depends(get_active_company),
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Member-allowed: merging precursors into the assembled good is the first
     step of working at a merge station, so operators must be able to do it.
     With ``cardIds`` the worker chooses exactly which precursor lot cards get
@@ -232,9 +260,10 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     # Take the per-station merge lock BEFORE reading availability, so a
     # concurrent duplicate merge waits and then sees the already-consumed state.
     await _station_lock(session, ctx.company_id, station_id)
-    incoming = await _incoming_routes(session, ctx.company_id, station_uuid)
+    process_id, incoming = _merge_process(
+        await _incoming_routes(session, ctx.company_id, station_uuid))
 
-    if len(incoming) < 2:
+    if process_id is None:
         raise HTTPException(400, "Not a merge station (fewer than 2 incoming routes)")
 
     # Manual mode: restrict planning AND consumption to the selected cards.
@@ -245,7 +274,7 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     # Provision a default assembly template if the admin never made one — the
     # merge should just work.
     assembly_tmpl = await _ensure_origination_template(
-        session, ctx.company_id, station_uuid, incoming[0].processId)
+        session, ctx.company_id, station_uuid, process_id)
 
     requirements = await _build_requirements(session, ctx.company_id, station_id, incoming,
                                              card_ids=selected)
@@ -305,7 +334,6 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
             # move). Abort — the transaction rolls back all partial consumption.
             raise HTTPException(409, "Precursor units changed during merge — try again")
 
-    process_id = incoming[0].processId
     new_card = CardRow(
         companyId=ctx.company_id,
         lotTemplateId=assembly_tmpl.id,
@@ -357,7 +385,10 @@ def _coalesce_sources(sources: list[dict]) -> list[dict]:
 
 
 async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, process_id=None) -> list[dict]:
-    incoming = await _incoming_routes(session, company_id, station_uuid)
+    # The walk stays inside one process: a shared station's feeds from OTHER
+    # processes are different value streams, and walking them would spawn
+    # precursors for material this pull never consumes.
+    incoming = await _incoming_routes(session, company_id, station_uuid, process_id)
     if not incoming:
         # A leaf source always yields a lot — provisioning a default template if
         # the admin never made one, so pulling never silently skips a branch.
@@ -385,7 +416,7 @@ async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, 
 @router.post("/{station_id}/pull", response_model=PullResult, status_code=201)
 async def pull_for_merge(station_id: str, body: PullRequest,
                          ctx: CompanyContext = Depends(require_admin),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     if body.quantity < 1:
         raise HTTPException(400, "quantity must be ≥ 1")
 
@@ -395,7 +426,12 @@ async def pull_for_merge(station_id: str, body: PullRequest,
     if len(incoming) < 1:
         raise HTTPException(400, "This location has no upstream sources to pull from")
 
-    process_id = incoming[0].processId
+    # The pull walks ONE process's upstream chain. On a shared station prefer
+    # the process that actually merges here (most feeds), deterministically.
+    by_proc: dict = {}
+    for r in incoming:
+        by_proc.setdefault(r.processId, []).append(r)
+    process_id = sorted(by_proc, key=lambda pid: (-len(by_proc[pid]), str(pid)))[0]
     sources = await _leaf_sources(session, ctx.company_id, station_uuid, body.quantity, process_id)
     if not sources:
         raise HTTPException(422, "No upstream source stations found")

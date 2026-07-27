@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session
+from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import Card as CardRow, CardEvent as CardEventRow
 from ..deps.auth import CompanyContext, get_active_company
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 
 @router.get("/overview")
 async def get_overview(ctx: CompanyContext = Depends(get_active_company),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Aggregate stats for the dashboard: lots per station, recent moves, process throughput."""
     cards = (await session.execute(
         select(CardRow).where(CardRow.companyId == ctx.company_id)

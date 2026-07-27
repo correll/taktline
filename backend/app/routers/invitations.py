@@ -9,7 +9,7 @@ from ..core.config import settings
 from ..core.email import send_invitation_email
 from ..core.ratelimit import limiter
 from ..core.security import generate_token, hash_password, hash_token
-from ..db.connection import get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import Company, Invitation, Membership, User
 from ..deps.auth import create_auth_session, ensure_full_account, get_current_user, load_membership, set_auth_cookies
 from ..models.auth import MeResponse
@@ -55,7 +55,7 @@ async def _valid_pending_invite(session: AsyncSession, token: str) -> Invitation
 @router.post("/companies/{company_id}/invitations", response_model=InvitationPublic, status_code=201)
 async def create_invitation(company_id: str, body: InviteCreate,
                             user: User = Depends(get_current_user),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     ensure_full_account(user)   # sandbox: no inviting real users
     cid = require_uuid(company_id, "Company not found")
     await load_membership(session, user, cid, min_role="super_admin")
@@ -90,7 +90,7 @@ async def create_invitation(company_id: str, body: InviteCreate,
 
 @router.get("/companies/{company_id}/invitations", response_model=List[InvitationPublic])
 async def list_invitations(company_id: str, user: User = Depends(get_current_user),
-                           session: AsyncSession = Depends(get_session)):
+                           session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     cid = require_uuid(company_id, "Company not found")
     await load_membership(session, user, cid, min_role="super_admin")
     rows = (await session.execute(
@@ -107,7 +107,7 @@ async def list_invitations(company_id: str, user: User = Depends(get_current_use
 @router.delete("/companies/{company_id}/invitations/{invitation_id}", status_code=204)
 async def revoke_invitation(company_id: str, invitation_id: str,
                             user: User = Depends(get_current_user),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     cid = require_uuid(company_id, "Company not found")
     inv_id = require_uuid(invitation_id, "Invitation not found")
     await load_membership(session, user, cid, min_role="super_admin")
@@ -120,7 +120,7 @@ async def revoke_invitation(company_id: str, invitation_id: str,
 
 # ── Public / invitee: preview and accept ───────────────────────────────────────
 @router.get("/invitations/{token}", response_model=InvitePreview)
-async def preview_invitation(token: str, session: AsyncSession = Depends(get_session)):
+async def preview_invitation(token: str, session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     inv = (await session.execute(
         select(Invitation).where(Invitation.tokenHash == hash_token(token))
     )).scalars().first()
@@ -136,7 +136,7 @@ async def preview_invitation(token: str, session: AsyncSession = Depends(get_ses
 
 @router.post("/invitations/{token}/accept", response_model=MeResponse)
 async def accept_invitation(token: str, user: User = Depends(get_current_user),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     inv = await _valid_pending_invite(session, token)
     if inv is None:
         raise HTTPException(400, "This invitation is no longer valid")
@@ -159,7 +159,7 @@ async def accept_invitation(token: str, user: User = Depends(get_current_user),
 @limiter.limit("10/hour")
 async def accept_invitation_signup(token: str, body: AcceptInviteSignup,
                                    request: Request, response: Response,
-                                   session: AsyncSession = Depends(get_session)):
+                                   session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Create a brand-new (auto-verified) account for the invited email and join
     the company in one step. The invite itself proves control of the inbox."""
     inv = await _valid_pending_invite(session, token)

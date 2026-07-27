@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import settings
 from ..core.traffic import traffic
 from ..core.usage import month_bucket
-from ..db.connection import get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (
     AuthSession, Card, CardEvent, Company, Membership, PlatformAudit,
     Station, SupportGrant, UsageCounter, User, WorkSession,
@@ -50,7 +50,7 @@ def _audit(session, actor: User, action: str, target_type: Optional[str] = None,
 
 @router.get("/status")
 async def platform_status(user: User = Depends(require_platform_staff),
-                          session: AsyncSession = Depends(get_session)):
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     async def count(stmt) -> int:
         return (await session.execute(stmt)).scalar_one()
 
@@ -95,7 +95,7 @@ async def platform_status(user: User = Depends(require_platform_staff),
 
 @router.get("/users")
 async def list_platform_users(user: User = Depends(require_platform_staff),
-                              session: AsyncSession = Depends(get_session)):
+                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     users = (await session.execute(select(User).order_by(User.email))).scalars().all()
     memberships = (await session.execute(
         select(Membership, Company.name).join(Company, Company.id == Membership.companyId)
@@ -128,7 +128,7 @@ class PlatformRoleBody(BaseModel):
 @router.put("/users/{user_id}/platform-role", status_code=204)
 async def set_platform_role(user_id: str, body: PlatformRoleBody,
                             actor: User = Depends(require_platform_owner),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Owner-only: grant or revoke the customer-service tier."""
     target = await session.get(User, require_uuid(user_id, "User not found"))
     if target is None:
@@ -143,7 +143,7 @@ async def set_platform_role(user_id: str, body: PlatformRoleBody,
 
 @router.delete("/users/{user_id}", status_code=204)
 async def delete_platform_user(user_id: str, actor: User = Depends(require_platform_staff),
-                               session: AsyncSession = Depends(get_session)):
+                               session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Delete any account — including a company super_admin (this deliberately
     bypasses the tenant-side last-super-admin guard; that's the point of the
     support tier). Owners and yourself are off-limits."""
@@ -168,7 +168,7 @@ async def delete_platform_user(user_id: str, actor: User = Depends(require_platf
 
 @router.get("/companies")
 async def list_platform_companies(user: User = Depends(require_platform_staff),
-                                  session: AsyncSession = Depends(get_session)):
+                                  session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     now = utcnow()
     companies = (await session.execute(select(Company).order_by(Company.name))).scalars().all()
     members = dict((await session.execute(
@@ -221,7 +221,7 @@ class DeleteCompanyBody(BaseModel):
 @router.delete("/companies/{company_id}", status_code=204)
 async def delete_platform_company(company_id: str, body: DeleteCompanyBody,
                                   actor: User = Depends(require_platform_staff),
-                                  session: AsyncSession = Depends(get_session)):
+                                  session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     company = await session.get(Company, require_uuid(company_id, "Company not found"))
     if company is None:
         raise HTTPException(404, "Company not found")
@@ -245,7 +245,7 @@ class ImpersonateBody(BaseModel):
 @router.post("/impersonate", status_code=201)
 async def start_impersonation(body: ImpersonateBody,
                               actor: User = Depends(require_platform_staff),
-                              session: AsyncSession = Depends(get_session)):
+                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     company = await session.get(Company, require_uuid(body.companyId, "Company not found"))
     if company is None:
         raise HTTPException(404, "Company not found")
@@ -263,7 +263,7 @@ async def start_impersonation(body: ImpersonateBody,
 
 @router.delete("/impersonate/{company_id}", status_code=204)
 async def end_impersonation(company_id: str, actor: User = Depends(require_platform_staff),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     grants = (await session.execute(
         select(SupportGrant).where(
             SupportGrant.userId == actor.id,
@@ -281,7 +281,7 @@ async def end_impersonation(company_id: str, actor: User = Depends(require_platf
 
 @router.get("/audit")
 async def list_audit(limit: int = 100, user: User = Depends(require_platform_staff),
-                     session: AsyncSession = Depends(get_session)):
+                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(PlatformAudit).order_by(PlatformAudit.createdAt.desc()).limit(min(limit, 500))
     )).scalars().all()

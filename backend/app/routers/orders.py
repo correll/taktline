@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid, parse_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
 from ..db.tables import (
     Card as CardRow, IntegrationOutbox as OutboxRow, LotTemplate as LotTemplateRow,
     ProductionOrder as OrderRow, Route as RouteRow, Station as StationRow,
@@ -99,10 +99,15 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
     if lot_code and len(lot_code) > 24:
         lot_code = lot_code[:24]
 
-    incoming = await _incoming_routes(session, company_id, target)
-    if len(incoming) >= 2:
-        # Assembled product → pull precursor lots at the leaf source queues, tagged.
-        process_id = incoming[0].processId
+    # Scoped to the product's own process: a sibling process sharing the origin
+    # station must neither trigger a pull nor have its queues seeded.
+    process_id = await _resolve_process(session, company_id, target, tmpl)
+    incoming = await _incoming_routes(session, company_id, target, process_id)
+    if len(incoming) >= 1:
+        # The product is made here — assembled at a merge, or yielded by an
+        # upstream disassembly. Either way it cannot be conjured into existence
+        # at its origin: the pull walks the graph back and seeds the leaf source
+        # queues (ordering 8 modules orders the one pack they are torn from).
         sources = await _leaf_sources(session, company_id, target, body.quantity, process_id)
         if not sources:
             raise HTTPException(422, "No source queues feed this product")
@@ -111,8 +116,7 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
             await _spawn_lot(session, company_id, src["template"].id, process_id,
                              src["station_id"], units, order.id, lot_code)
     else:
-        # Single-source product → create one lot of the product at its origin.
-        process_id = await _resolve_process(session, company_id, target, tmpl)
+        # True source product (its origin is a leaf queue) → mint it there.
         if process_id is None:
             raise HTTPException(422, "Cannot determine the process for this product")
         await _spawn_lot(session, company_id, tmpl.id, process_id, str(target), body.quantity, order.id, lot_code)
@@ -125,7 +129,7 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
 @router.post("/", response_model=OrderPublic, status_code=201)
 async def create_order(body: OrderCreate, response: Response,
                        ctx: CompanyContext = Depends(require_orders_access),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Create + release a production order. Idempotent on (source, externalRef).
 
     **201** when this call released the order, **200** when it returned one that
@@ -152,7 +156,7 @@ def _cell(row: dict, *names: str) -> str:
 @router.post("/import")
 async def import_orders(file: UploadFile = File(...),
                         ctx: CompanyContext = Depends(require_orders_access),
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Bulk-release orders from a CSV — the no-API on-ramp for tools that can only
     export a spreadsheet. Header row required; columns (case-insensitive):
 
@@ -236,7 +240,7 @@ async def _spawn_lot(session, company_id, template_id, process_id, station_id: s
 
 @router.get("/", response_model=List[OrderPublic])
 async def list_orders(ctx: CompanyContext = Depends(get_active_company),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(OrderRow).where(OrderRow.companyId == ctx.company_id).order_by(OrderRow.createdAt.desc())
     )).scalars().all()
@@ -251,7 +255,7 @@ MAX_DELIVERY_ATTEMPTS = 10
 @router.get("/outbox", response_model=List[OutboxEvent])
 async def list_outbox(status: Optional[str] = "pending", source: Optional[str] = None,
                       ctx: CompanyContext = Depends(require_orders_access),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Poll pending ERP-delivery events. A connector delivers, then acks.
 
     ``source`` restricts the page to events a given connector owns. Without it
@@ -272,7 +276,7 @@ async def list_outbox(status: Optional[str] = "pending", source: Optional[str] =
 
 @router.post("/outbox/{event_id}/ack", status_code=204)
 async def ack_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders_access),
-                     session: AsyncSession = Depends(get_session)):
+                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await session.get(OutboxRow, require_uuid(event_id, "Event not found"))
     if row is None or row.companyId != ctx.company_id:
         raise HTTPException(404, "Event not found")
@@ -283,7 +287,7 @@ async def ack_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders
 
 @router.post("/outbox/{event_id}/fail", status_code=200)
 async def fail_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders_access),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Record a failed delivery attempt. The event stays ``pending`` (and is
     retried) until :data:`MAX_DELIVERY_ATTEMPTS`, then parks as ``failed`` so a
     permanently undeliverable event — an ERP order deleted on their side — stops
@@ -302,7 +306,7 @@ async def fail_outbox(event_id: str, ctx: CompanyContext = Depends(require_order
 
 @router.get("/{order_id}", response_model=OrderPublic)
 async def get_order(order_id: str, ctx: CompanyContext = Depends(get_active_company),
-                    session: AsyncSession = Depends(get_session)):
+                    session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     o = await session.get(OrderRow, require_uuid(order_id, "Order not found"))
     if o is None or o.companyId != ctx.company_id:
         raise HTTPException(404, "Order not found")
@@ -332,7 +336,7 @@ async def _cancel_order(session, company_id, o: OrderRow) -> None:
 
 @router.post("/cancel", response_model=OrderPublic)
 async def cancel_order_by_ref(body: CancelByRef, ctx: CompanyContext = Depends(require_orders_access),
-                              session: AsyncSession = Depends(get_session)):
+                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Cancel by (source, externalRef) — the Shopify/WooCommerce cancel & refund
     path, where the connector knows the shop's order id but not Taktline's."""
     o = (await session.execute(
@@ -350,7 +354,7 @@ async def cancel_order_by_ref(body: CancelByRef, ctx: CompanyContext = Depends(r
 
 @router.post("/{order_id}/cancel", response_model=OrderPublic)
 async def cancel_order(order_id: str, ctx: CompanyContext = Depends(require_orders_access),
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     o = await session.get(OrderRow, require_uuid(order_id, "Order not found"))
     if o is None or o.companyId != ctx.company_id:
         raise HTTPException(404, "Order not found")

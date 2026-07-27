@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import Company, Membership, User
 from ..deps.auth import ensure_full_account, get_current_user, load_membership
 from ..models.company import CompanyCreate, CompanyPublic
@@ -18,7 +18,7 @@ def _to_company(c: Company, role: Optional[str] = None) -> CompanyPublic:
 
 @router.post("/", response_model=CompanyPublic, status_code=201)
 async def create_company(body: CompanyCreate, user: User = Depends(get_current_user),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     ensure_full_account(user)   # sandbox visitors stay in their sandbox
     if not user.emailVerified:
         raise HTTPException(403, "Verify your email before creating a company")
@@ -32,7 +32,7 @@ async def create_company(body: CompanyCreate, user: User = Depends(get_current_u
 
 @router.get("/", response_model=List[CompanyPublic])
 async def list_my_companies(user: User = Depends(get_current_user),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(Membership, Company)
         .join(Company, Membership.companyId == Company.id)
@@ -44,7 +44,7 @@ async def list_my_companies(user: User = Depends(get_current_user),
 
 @router.get("/{company_id}", response_model=CompanyPublic)
 async def get_company(company_id: str, user: User = Depends(get_current_user),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     cid = require_uuid(company_id, "Company not found")
     membership = await load_membership(session, user, cid)
     company = await session.get(Company, cid)

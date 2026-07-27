@@ -18,7 +18,7 @@ from ..core.email import (
 )
 from ..core.ratelimit import limiter
 from ..core.security import dummy_verify, generate_token, hash_password, hash_token, verify_password
-from ..db.connection import get_session
+from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import AuthSession, AuthToken, Company, Membership, SupportGrant, User
 from ..deps.auth import (
     clear_auth_cookies,
@@ -154,7 +154,7 @@ async def _adopt_sandbox(session: AsyncSession, request: Request, new_user: User
 
 @router.post("/signup", response_model=MessageResponse, status_code=202)
 @limiter.limit("10/hour")
-async def signup(request: Request, body: SignupBody, session: AsyncSession = Depends(get_session)):
+async def signup(request: Request, body: SignupBody, session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     email = body.email.lower()
     existing = (await session.execute(select(User).where(User.email == email))).scalars().first()
     link = None
@@ -182,7 +182,7 @@ async def signup(request: Request, body: SignupBody, session: AsyncSession = Dep
 
 
 @router.post("/verify-email", response_model=MessageResponse)
-async def verify_email(body: VerifyEmailBody, session: AsyncSession = Depends(get_session)):
+async def verify_email(body: VerifyEmailBody, session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _consume_token(session, body.token, "email_verify")
     if row is None:
         raise HTTPException(400, "Invalid or expired verification link")
@@ -195,7 +195,7 @@ async def verify_email(body: VerifyEmailBody, session: AsyncSession = Depends(ge
 @router.post("/resend-verification", response_model=MessageResponse)
 @limiter.limit("5/hour")
 async def resend_verification(request: Request, body: ResendVerificationBody,
-                              session: AsyncSession = Depends(get_session)):
+                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     email = body.email.lower()
     user = (await session.execute(select(User).where(User.email == email))).scalars().first()
     link = None
@@ -212,7 +212,7 @@ async def resend_verification(request: Request, body: ResendVerificationBody,
 @router.post("/login", response_model=MeResponse)
 @limiter.limit("10/minute")
 async def login(request: Request, response: Response, body: LoginBody,
-                session: AsyncSession = Depends(get_session)):
+                session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     email = body.email.lower()
     user = (await session.execute(select(User).where(User.email == email))).scalars().first()
     if user is None:
@@ -231,7 +231,7 @@ async def login(request: Request, response: Response, body: LoginBody,
 @router.post("/logout", status_code=204)
 async def logout(request: Request, response: Response,
                  user: User = Depends(get_current_user),
-                 session: AsyncSession = Depends(get_session)):
+                 session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     raw = request.cookies.get(settings.session_cookie_name)
     if raw:
         row = (await session.execute(
@@ -243,14 +243,14 @@ async def logout(request: Request, response: Response,
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def me(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     return await _me_response(session, user)
 
 
 @router.patch("/me/preferences", response_model=UserPublic)
 async def update_preferences(body: PreferencesPatch,
                              user: User = Depends(get_current_user),
-                             session: AsyncSession = Depends(get_session)):
+                             session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Merge the provided keys into the user's cross-device preferences
     (currently just the day/night theme)."""
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -266,7 +266,7 @@ async def update_preferences(body: PreferencesPatch,
 @router.post("/forgot-password", response_model=MessageResponse)
 @limiter.limit("5/hour")
 async def forgot_password(request: Request, body: ForgotPasswordBody,
-                          session: AsyncSession = Depends(get_session)):
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     email = body.email.lower()
     user = (await session.execute(select(User).where(User.email == email))).scalars().first()
     link = None
@@ -280,7 +280,7 @@ async def forgot_password(request: Request, body: ForgotPasswordBody,
 
 
 @router.post("/reset-password", response_model=MessageResponse)
-async def reset_password(body: ResetPasswordBody, session: AsyncSession = Depends(get_session)):
+async def reset_password(body: ResetPasswordBody, session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _consume_token(session, body.token, "password_reset")
     if row is None:
         raise HTTPException(400, "Invalid or expired reset link")
@@ -313,7 +313,7 @@ async def _current_sandbox(request: Request, session: AsyncSession) -> Optional[
 @router.post("/sandbox")
 @limiter.limit("10/hour")
 async def create_sandbox(request: Request, response: Response,
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """One-click throwaway account + company for trying Taktline without
     signing up. The account is permanently marked isSandbox, which blocks
     floor-plan uploads, invitations, API keys, orders, and creating further
@@ -354,7 +354,7 @@ class DevBootstrapBody(BaseModel):
 
 @router.post("/dev/bootstrap")
 async def dev_bootstrap(request: Request, response: Response, body: DevBootstrapBody,
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Create a verified admin + company and return a logged-in session in one
     call. Disabled unless TAKTLINE_DEV=1."""
     if not settings.dev:

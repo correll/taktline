@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid, parse_uuid
+from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
 from ..db.tables import (
     WorkSession as SessionRow, Station as StationRow, Card as CardRow,
     GlobalSettings as GlobalSettingsRow, Route as RouteRow,
@@ -59,7 +59,7 @@ async def _get_owned(session: AsyncSession, session_id: str, ctx: CompanyContext
 @router.get("/", response_model=List[WorkSession])
 async def list_sessions(stationId: Optional[str] = None, open_only: bool = False,
                         ctx: CompanyContext = Depends(get_active_company),
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     stmt = select(SessionRow).where(SessionRow.companyId == ctx.company_id)
     if stationId:
         sid = parse_uuid(stationId)
@@ -75,7 +75,7 @@ async def list_sessions(stationId: Optional[str] = None, open_only: bool = False
 
 @router.post("/", response_model=WorkSession, status_code=201)
 async def start_session(body: SessionCreate, ctx: CompanyContext = Depends(get_active_company),
-                        session: AsyncSession = Depends(get_session)):
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     station_uuid = require_uuid(body.stationId, "Station not found")
     station = await session.get(StationRow, station_uuid)
     if station is None or station.companyId != ctx.company_id:
@@ -118,7 +118,7 @@ async def start_session(body: SessionCreate, ctx: CompanyContext = Depends(get_a
 
 @router.get("/open", response_model=List[WorkSession])
 async def get_open_sessions(ctx: CompanyContext = Depends(get_active_company),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     rows = (await session.execute(
         select(SessionRow).where(
             SessionRow.companyId == ctx.company_id, SessionRow.endedAt.is_(None)
@@ -130,7 +130,7 @@ async def get_open_sessions(ctx: CompanyContext = Depends(get_active_company),
 @router.post("/{session_id}/end", response_model=WorkSession)
 async def end_session(session_id: str, body: SessionEnd,
                       ctx: CompanyContext = Depends(get_active_company),
-                      session: AsyncSession = Depends(get_session)):
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, session_id, ctx)
     if row.endedAt is not None:
         raise HTTPException(400, "Session already closed")
@@ -145,7 +145,7 @@ async def end_session(session_id: str, body: SessionEnd,
 
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(session_id: str, ctx: CompanyContext = Depends(get_active_company),
-                         session: AsyncSession = Depends(get_session)):
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, session_id, ctx)
     await session.delete(row)
     await session.flush()
@@ -169,7 +169,7 @@ async def _warehouse_ids(session, company_id) -> set:
 
 @router.get("/stats")
 async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
-                            session: AsyncSession = Depends(get_session)):
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     stmt = (
         select(
             SessionRow.stationId,
@@ -209,7 +209,7 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
 
 @router.get("/stats/{station_id}")
 async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(get_active_company),
-                                session: AsyncSession = Depends(get_session)):
+                                session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     empty = {
         "stationId": station_id, "sessionCount": 0, "totalUnits": 0,
         "totalWorkingSec": 0.0, "taktTimeSec": None, "oee": None, "isWarehouse": False,

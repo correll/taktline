@@ -1,0 +1,65 @@
+# Render Blueprint — one web service (API + SPA on a single origin) and one
+# Postgres database. Point Render at this repo ("New → Blueprint") and it
+# provisions both, wires DATABASE_URL, and generates SECRET_KEY.
+#
+# Values marked `sync: false` are NOT stored in the repo; Render prompts for
+# them on first deploy (or leave them blank and fill them in later under
+# Environment). Everything else is either derived or safe to commit.
+
+databases:
+  - name: taktline-db
+    databaseName: taktline
+    user: taktline
+    plan: free           # Free Postgres EXPIRES — see DEPLOY.md before going live.
+    # ipAllowList left empty → reachable only from inside Render's network.
+    ipAllowList: []
+
+services:
+  - type: web
+    name: taktline
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free           # Free instances sleep after ~15 min idle (cold start ~30 s).
+    region: oregon
+    healthCheckPath: /health
+
+    # ONE instance, deliberately. The WebSocket connection registry, the
+    # per-IP rate limiter and the usage meter all live in process memory, so a
+    # second instance would serve boards that never receive another instance's
+    # events. Scaling out needs a cross-instance relay first — see the scaling
+    # note in DEPLOY.md.
+    numInstances: 1
+
+    envVars:
+      # ── Wired automatically ───────────────────────────────────────────────
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taktline-db
+          property: connectionString   # postgresql://… → normalized to asyncpg at boot
+      - key: SECRET_KEY
+        generateValue: true            # 32-byte random, stored by Render, never in git
+
+      # ── Production posture ────────────────────────────────────────────────
+      - key: TAKTLINE_DEV
+        value: "0"                     # disables dev links + /auth/dev/bootstrap
+      - key: COOKIE_SECURE
+        value: "1"                     # Render terminates TLS; cookies are HTTPS-only
+      - key: COOKIE_SAMESITE
+        value: lax                     # same-origin hosting → no cross-site cookies
+
+      # ── Set these after the first deploy (Render prompts) ─────────────────
+      # Your service URL, e.g. https://taktline.onrender.com (or your custom
+      # domain). Used for the links in verification / invite / reset emails.
+      - key: FRONTEND_BASE_URL
+        sync: false
+      # Platform staff (customer-service dashboard at /platform). Deliberately
+      # env-only: no API path can mint an owner.
+      - key: PLATFORM_OWNER_EMAILS
+        sync: false
+      # Outbound email. Without these, Taktline runs but cannot send
+      # verification or invite links — see DEPLOY.md.
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SMTP_FROM
+        sync: false

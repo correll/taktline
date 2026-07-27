@@ -165,6 +165,30 @@ async def health():
     return {"status": "ok", "service": "taktline-api"}
 
 
+def _origin_allowed(origin: str, websocket: WebSocket) -> bool:
+    """CSWSH guard: is this handshake's Origin one of ours?
+
+    An explicitly configured origin always passes (that is the cross-origin
+    deployment: SPA on one host, API on another). **Same-origin** is also
+    accepted — when the page that opened the socket is served by this very
+    service, the request is by definition not cross-site, so there is nothing
+    for CORS_ORIGINS to authorize. Without that, single-service hosting (the
+    recommended shape: one container serving API + SPA) would silently lose
+    every live board unless the operator remembered to restate their own URL in
+    CORS_ORIGINS — a misconfiguration whose only symptom is a permanently amber
+    connection light.
+
+    The scheme comes from ``websocket.url``, which honours X-Forwarded-Proto
+    only when uvicorn runs with --proxy-headers; behind a TLS-terminating load
+    balancer without it the scheme reads ``ws`` while the browser sends
+    ``https``, so both spellings of our own host are accepted.
+    """
+    if origin in settings.cors_origin_list:
+        return True
+    host = websocket.headers.get("host")
+    return bool(host) and origin in (f"https://{host}", f"http://{host}")
+
+
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket):
     """Authenticated, company-scoped event stream.
@@ -177,7 +201,7 @@ async def ws_events(websocket: WebSocket):
     # Origin; only our configured app origins are allowed. Non-browser clients
     # (no Origin header) are permitted.
     origin = websocket.headers.get("origin")
-    if origin is not None and origin not in settings.cors_origin_list:
+    if origin is not None and not _origin_allowed(origin, websocket):
         await websocket.close(code=4403)
         return
 

@@ -1,0 +1,29 @@
+# Keep the build context small and secrets out of the image.
+.git
+.gitignore
+**/.DS_Store
+
+# Secrets / local env
+**/.env
+**/.env.local
+**/.taktline-tokens.json
+
+# Dependencies + build output (rebuilt inside the image)
+**/node_modules
+**/.venv
+**/venv
+frontend/dist
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Local-only artifacts
+backend/uploads
+book/
+linkedin/
+docs/
+*.md
+!backend/alembic/README
+Taktline integrations map*

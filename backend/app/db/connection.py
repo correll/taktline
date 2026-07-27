@@ -18,6 +18,7 @@ import uuid
 from typing import AsyncGenerator, Optional
 
 from fastapi import HTTPException
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -27,14 +28,44 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 
+def normalize_db_url(raw: str) -> str:
+    """Accept the connection string a host actually hands out.
+
+    Managed Postgres providers emit libpq/psycopg URLs — Render wires
+    ``postgresql://…``, Neon and Supabase append ``?sslmode=require`` (Neon adds
+    ``channel_binding`` too), and some tooling still says ``postgres://``. None
+    of those reach asyncpg intact: the bare driver name resolves to psycopg2
+    (not installed), and ``sslmode``/``channel_binding`` are forwarded verbatim
+    into ``asyncpg.connect()``, which rejects them as unexpected keywords. So a
+    correct, copy-pasted production URL would fail at boot.
+
+    Normalizing here rather than asking an operator to hand-edit the URL is what
+    lets a Render blueprint wire the database in automatically. asyncpg's ``ssl``
+    parameter takes the same vocabulary as libpq's ``sslmode``
+    (disable/allow/prefer/require/verify-ca/verify-full), so the TLS posture is
+    carried across unchanged rather than downgraded.
+    """
+    url = make_url(raw)
+    if url.drivername in ("postgres", "postgresql"):
+        url = url.set(drivername="postgresql+asyncpg")
+    if url.drivername == "postgresql+asyncpg":
+        query = dict(url.query)
+        sslmode = query.pop("sslmode", None)
+        query.pop("channel_binding", None)   # libpq-only; asyncpg has no such arg
+        if sslmode and "ssl" not in query:
+            query["ssl"] = sslmode
+        url = url.set(query=query)
+    return url.render_as_string(hide_password=False)
+
+
 # ─── Connection URL ──────────────────────────────────────────────────────────
 # On macOS Homebrew the local PostgreSQL server uses "trust" auth for the OS
 # user, so no password is needed. asyncpg falls back to the OS username when
 # one is not present in the URL.
-DATABASE_URL: str = os.getenv(
+DATABASE_URL: str = normalize_db_url(os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://localhost:5432/taktline",
-)
+))
 
 
 # ─── Engine / session factory ────────────────────────────────────────────────

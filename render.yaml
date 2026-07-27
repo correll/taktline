@@ -62,9 +62,23 @@ services:
       # env-only: no API path can mint an owner.
       - key: PLATFORM_OWNER_EMAILS
         sync: false
-      # Outbound email. Without these, Taktline runs but cannot send
-      # verification or invite links — see DEPLOY.md.
-      - key: SENDGRID_API_KEY
+      # Outbound email — any SMTP provider. Without it Taktline runs, but
+      # verification and invite links are only printed to the service log, so
+      # nobody but you can ever join. SendGrid's free plan ended in May 2025;
+      # Brevo and Resend still have free tiers. See DEPLOY.md.
+      #   Brevo:  smtp-relay.brevo.com : 587
+      #   Resend: smtp.resend.com      : 587   (user "resend")
+      - key: SMTP_HOST
         sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      # The From address. Must be a sender/domain you have verified with the
+      # provider, or it will refuse the message.
       - key: SMTP_FROM
+        sync: false
+      # Shortcut for SendGrid specifically (paid): set this instead of the
+      # SMTP_* trio and the host/user are filled in for you.
+      - key: SENDGRID_API_KEY
         sync: false

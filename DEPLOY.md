@@ -2,7 +2,7 @@
 
 Taktline is a FastAPI backend + Postgres + a React (Vite) SPA. It can be hosted
 for free with **Neon** (Postgres), a container/web host (**Render**, **Fly.io**,
-**Railway**), and **SendGrid** (email). Two topologies are supported; pick one.
+**Railway**), and a free-tier mail provider such as **Brevo** or **Resend**. Two topologies are supported; pick one.
 
 **Deploying to Render?** Jump to [Render, from the blueprint](#render-from-the-blueprint)
 — `render.yaml` + `Dockerfile` in the repo root do all of this for you.
@@ -44,7 +44,9 @@ cross-site cookie handling.
    COOKIE_SECURE=1
    FRONTEND_BASE_URL=https://your-app.onrender.com
    FRONTEND_DIST=/opt/render/project/src/frontend/dist   # path to the built SPA
-   SENDGRID_API_KEY=SG.xxxx
+   SMTP_HOST=smtp-relay.brevo.com          # or any provider — see Email
+   SMTP_USER=...
+   SMTP_PASSWORD=...
    SMTP_FROM=Taktline <no-reply@yourdomain.com>
    ```
 4. **Start command:** `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
@@ -53,7 +55,7 @@ cross-site cookie handling.
    every request appears to come from the proxy's IP, so the per-IP rate limits
    (login, password reset, the public `/auth/sandbox`) collapse into one shared
    bucket that a single abuser can exhaust for everyone.
-5. Open the service URL, **Create account → verify (SendGrid) → create a company**.
+5. Open the service URL, **Create account → verify by email → create a company**.
 
 `CORS_ORIGINS` and `COOKIE_SAMESITE` can stay at their defaults here (same origin).
 
@@ -82,13 +84,13 @@ generates `SECRET_KEY` itself, so neither ever touches your repo.
 
 `FRONTEND_BASE_URL` is pre-set to `https://taktline.com` in `render.yaml` —
 change that line if you are deploying anywhere else. The blueprint asks for
-three values it cannot invent:
+a handful of values it cannot invent:
 
 | Variable | What to put | If you skip it |
 |---|---|---|
 | `PLATFORM_OWNER_EMAILS` | your email | no access to the `/platform` support dashboard |
-| `SENDGRID_API_KEY` | a SendGrid API key | email is logged instead of sent — see step 4 |
-| `SMTP_FROM` | a **verified** sender, e.g. `Taktline <no-reply@taktline.com>` | SendGrid rejects the message |
+| `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` | any SMTP provider — see [Email](#email) | email is logged instead of sent, see step 4 |
+| `SMTP_FROM` | a **verified** sender, e.g. `Taktline <no-reply@taktline.com>` | the provider rejects the message |
 
 Leave any of them blank for now; you can fill them in later under
 Service → Environment. Saving an env var triggers a redeploy automatically.
@@ -123,15 +125,15 @@ deploy outside shift hours once you have people on the floor.
 
 Open the service URL and **Create account**. Then verify the email:
 
-- **With SendGrid configured** — the verification email arrives normally. Click
+- **With SMTP configured** — the verification email arrives normally. Click
   the link.
 - **Without it** — Taktline falls back to a console mailer, which prints the
   whole message *including the verification link* to stdout. Open
   Service → **Logs**, find the `===== DEV EMAIL =====` block, and paste the link
   into your browser. This is a perfectly good way to bootstrap the very first
   account, but it is not a way to run: invitations to your team go to the same
-  place, so nobody but you can ever join. Configure SendGrid before inviting
-  anyone.
+  place, so nobody but you can ever join. Configure a mail provider before
+  inviting anyone.
 
 Then **create a company**, and you are on the map. The email you put in
 `PLATFORM_OWNER_EMAILS` also unlocks `/platform` for support and metrics.
@@ -219,7 +221,9 @@ The SPA and API live on different origins, so cookies must be cross-site.
    COOKIE_SAMESITE=none                     # required for cross-site cookies
    CORS_ORIGINS=https://your-app.vercel.app
    FRONTEND_BASE_URL=https://your-app.vercel.app
-   SENDGRID_API_KEY=SG.xxxx
+   SMTP_HOST=smtp-relay.brevo.com          # or any provider — see Email
+   SMTP_USER=...
+   SMTP_PASSWORD=...
    SMTP_FROM=Taktline <no-reply@yourdomain.com>
    ```
    Start: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
@@ -240,11 +244,34 @@ nowhere unless you build with `VITE_PLAUSIBLE_DOMAIN=taktline.com`, which
 injects the Plausible script; self-hosted instances stay silent by default.
 Swap the two lines in that file for any other provider.
 
-## SendGrid
+## Email
 
-SendGrid is just SMTP, so no code is needed — set `SENDGRID_API_KEY` and a
-**verified** `SMTP_FROM` sender. Free tier is ~100 emails/day (enough for
-verification + invites). Locally, leave it unset and links print to the console.
+Taktline speaks plain SMTP, so any provider works — nothing about it is
+SendGrid-specific. Set `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`,
+`SMTP_PASSWORD`, and an `SMTP_FROM` address you have **verified** with the
+provider. `SENDGRID_API_KEY` remains as a one-variable shortcut: it fills in
+`smtp.sendgrid.net` with user `apikey` for you.
+
+**SendGrid's permanent free plan ended on 27 May 2025.** New accounts get a
+60-day trial (100 emails/day), then paid plans from about $19.95/month. Still a
+fine choice if you are already paying for it; a poor default now. Options with
+a standing free tier, all plain SMTP:
+
+| Provider | Free tier | SMTP host |
+|---|---|---|
+| **Brevo** | ~300 emails/day | `smtp-relay.brevo.com:587` |
+| **Resend** | 3,000 emails/month | `smtp.resend.com:587` (user `resend`) |
+| **SMTP2GO** | 1,000 emails/month | `mail.smtp2go.com:587` |
+| **Amazon SES** | no free tier, but ~$0.10 per 1,000 | `email-smtp.<region>.amazonaws.com:587` |
+
+Taktline's volume is tiny — it sends only verification, invitation and
+password-reset messages, so a shop of 50 people might send a few dozen emails
+in its lifetime. Any of the above is comfortable; pick on deliverability and
+whether you can verify your domain, not on headroom.
+
+Locally, leave all of it unset: the console mailer prints the message and its
+link to stdout, which is what makes the flows testable with no account
+anywhere.
 
 ## Dockerfile
 
@@ -266,7 +293,7 @@ docker run -p 8000:8000 \
 - [ ] `TAKTLINE_DEV=0` (disables dev links + `/auth/dev/bootstrap`)
 - [ ] `COOKIE_SECURE=1` (+ `COOKIE_SAMESITE=none` only for split hosting)
 - [ ] `CORS_ORIGINS` limited to your real frontend origin(s)
-- [ ] `SENDGRID_API_KEY` + a verified `SMTP_FROM`
+- [ ] SMTP configured + a verified `SMTP_FROM` (SendGrid is no longer free — see Email)
 - [ ] Default admin password rotated / that account removed
 - [ ] `alembic upgrade head` runs on deploy
 - [ ] Tests pass: `createdb taktline_test && python -m pytest`

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { useProcessesStore, useStationsStore } from '../../store'
 import { color, font, size } from '../../theme/tokens'
-import type { Process, Route } from '../../models'
+import type { LotTemplate, Process, Route } from '../../models'
 import { Modal, FieldLabel, inputStyle, primaryBtn, secondaryBtn, dangerBtn, ErrorMsg, ListRow } from './shared'
 import { wouldCreateCycle } from '../../domain/graph'
 
@@ -217,8 +217,9 @@ function QtyStepper({ value, onChange, min = 1, title }: {
 
 // ─── Route editor for a single process ───────────────────────────────────────
 
-function RouteRow({ route, label, selected, isMergeFeed, onEditEndpoints }: {
-  route: Route; label: React.ReactNode; selected: boolean; isMergeFeed: boolean; onEditEndpoints: () => void
+function RouteRow({ route, label, selected, isMergeFeed, isSplitBranch, templates, onEditEndpoints }: {
+  route: Route; label: React.ReactNode; selected: boolean; isMergeFeed: boolean
+  isSplitBranch: boolean; templates: LotTemplate[]; onEditEndpoints: () => void
 }) {
   const updateRoute = useProcessesStore((s) => s.updateRoute)
   const deleteRoute = useProcessesStore((s) => s.deleteRoute)
@@ -255,6 +256,23 @@ function RouteRow({ route, label, selected, isMergeFeed, onEditEndpoints }: {
           ×1
         </span>
       )}
+      {isSplitBranch && (
+        <select
+          value={route.outputTemplateId ?? ''}
+          onChange={(e) => updateRoute(route._id, e.target.value
+            ? { outputTemplateId: e.target.value }
+            : { clearOutputTemplate: true }).catch(() => {})}
+          title="What this branch yields — disassembly turns one product into several"
+          style={{
+            background: color.bgInput, color: color.textSecondary,
+            border: `1px solid ${color.border}`, borderRadius: size.radius,
+            fontSize: 11, padding: '2px 4px', maxWidth: 130, outline: 'none',
+          }}
+        >
+          <option value="">yields: auto</option>
+          {templates.map((t) => <option key={t._id} value={t._id}>yields: {t.name}</option>)}
+        </select>
+      )}
       <button
         onClick={() => deleteRoute(route._id)}
         title="Delete route"
@@ -266,6 +284,7 @@ function RouteRow({ route, label, selected, isMergeFeed, onEditEndpoints }: {
 
 function RouteEditorModal({ process, onClose }: { process: Process; onClose: () => void }) {
   const routes       = useProcessesStore((s) => s.routes)
+  const templates    = useProcessesStore((s) => s.lotTemplates)
   const createRoute  = useProcessesStore((s) => s.createRoute)
   const updateRoute  = useProcessesStore((s) => s.updateRoute)
   const stations     = useStationsStore((s) => s.stations)
@@ -278,6 +297,9 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
   const [error,   setError]   = useState<string | null>(null)
 
   const processRoutes = Object.values(routes).filter((r) => r.processId === process._id)
+  const processTemplates = Object.values(templates)
+    .filter((t) => !t.processId || t.processId === process._id)
+    .sort((a, b) => a.name.localeCompare(b.name))
   const stationList   = Object.values(stations).sort((a, b) => a.name.localeCompare(b.name))
   const stationName   = (id: string) => stations[id]?.name ?? id
 
@@ -342,6 +364,8 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
                   route={r}
                   selected={editingId === r._id}
                   isMergeFeed={incomingCount(r.unload) >= 2 || outgoingCount(r.load) >= 2}
+                  isSplitBranch={outgoingCount(r.load) >= 2}
+                  templates={processTemplates}
                   onEditEndpoints={() => loadForEdit(r)}
                   label={<>
                     {stationName(r.load)}
@@ -353,8 +377,10 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
             </div>
             <div style={{ fontSize: 10, color: color.textDim, marginTop: 4 }}>
               Use the <span style={{ fontFamily: font.mono }}>▲▼</span> arrows to set each route's weight —
-              units consumed per assembly at a merge, pieces produced per unit at a split;
-              click a route to change its from/to locations.
+              units consumed per assembly at a merge, pieces produced per unit at a split.
+              A split branch can also name what it <i>yields</i>, so a disassembly can turn one
+              product into several (battery → modules, busbars, cables). Click a route to change
+              its from/to locations.
             </div>
           </>
         )}

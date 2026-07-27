@@ -118,6 +118,17 @@ async def _source_template_ids(session, company_id, source_station_uuid) -> list
     )).scalars().all())
 
 
+async def _precursor_template_ids(session, company_id, route: RouteRow) -> list[uuid.UUID]:
+    """Which products count as *this* incoming branch's precursor at the merge.
+
+    A disassembly branch says what it yields (battery → cable), so the merge
+    matches that product. Otherwise the branch is identified the ordinary way:
+    whatever originates at its source station."""
+    if route.outputTemplateId is not None:
+        return [route.outputTemplateId]
+    return await _source_template_ids(session, company_id, route.load)
+
+
 async def _station_lock(session: AsyncSession, company_id, station_id: str) -> None:
     """Serialize merge/consume operations per (company, station). Without this,
     two concurrent merges (e.g. React StrictMode double-firing the operator
@@ -168,7 +179,7 @@ async def _build_requirements(session, company_id, station_id: str, incoming: li
     result: list[RequirementInfo] = []
     for route in incoming:
         route_qty = max(1, route.quantity)
-        tmpl_ids = await _source_template_ids(session, company_id, route.load)
+        tmpl_ids = await _precursor_template_ids(session, company_id, route)
         available = await _available_units(session, company_id, station_id, tmpl_ids, card_ids=card_ids)
         result.append(RequirementInfo(
             routeId=str(route.id),
@@ -254,7 +265,7 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     consumed_codes: set = set()       # to carry the lot code through when all agree
     for route in incoming:
         route_qty = max(1, route.quantity)
-        tmpl_ids = await _source_template_ids(session, ctx.company_id, route.load)
+        tmpl_ids = await _precursor_template_ids(session, ctx.company_id, route)
         to_consume = assemblies * route_qty
 
         # Row-lock the cards being consumed so a concurrent /move can't shift

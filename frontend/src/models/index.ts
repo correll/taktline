@@ -34,6 +34,7 @@ export interface Route {
   load: ID        // source station
   unload: ID      // destination station
   quantity: number
+  outputTemplateId?: ID | null   // product this split branch yields (disassembly)
   createdAt: string
   updatedAt: string
 }

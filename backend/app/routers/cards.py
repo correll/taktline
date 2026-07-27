@@ -286,16 +286,21 @@ async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id:
         # On a merge feed the weight counts units consumed per assembly and is
         # applied at the merge, so the branch itself moves 1:1.
         units = quantity * (1 if into_merge else max(1, branch.quantity))
-        # Which product the piece *is*. Normally it is whatever that branch
-        # originates. But a branch landing on a merge station must stay
-        # identifiable as "the piece that came from this branch": the merge
-        # matches precursors by their template's origin, and the target's own
-        # template is the one it mints assemblies with — so a piece carrying it
-        # would be invisible as a precursor and would masquerade as finished
-        # output. Pin it to the branch's source instead, exactly like a lot that
-        # simply travels into a merge.
-        tmpl_station = branch.load if into_merge else branch.unload
-        tmpl = await _ensure_origination_template(session, company_id, tmpl_station, process_id)
+        # Which product the piece *is*. A disassembly yields different products
+        # per branch (a battery → modules, busbars, cables), so the branch may
+        # name its own output template. Without one we infer: normally the
+        # target station's product, but for a branch landing on a merge station
+        # the source's — the merge matches precursors by their template's
+        # origin, and the target's own template is what it mints assemblies
+        # with, so a piece wearing it would be invisible as a precursor and
+        # would masquerade as finished output.
+        if branch.outputTemplateId is not None:
+            tmpl = await session.get(LotTemplateRow, branch.outputTemplateId)
+        else:
+            tmpl = None
+        if tmpl is None:
+            tmpl_station = branch.load if into_merge else branch.unload
+            tmpl = await _ensure_origination_template(session, company_id, tmpl_station, process_id)
         piece = CardRow(
             companyId=company_id, lotTemplateId=tmpl.id, processId=process_id,
             lotNum=inherit_num, totalQuantity=units,

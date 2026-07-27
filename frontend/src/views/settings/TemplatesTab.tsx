@@ -46,10 +46,14 @@ export default function TemplatesTab({ initialStationId }: Props = {}) {
   const createTemplate  = useProcessesStore((s) => s.createTemplate)
   const updateTemplate  = useProcessesStore((s) => s.updateTemplate)
   const deleteTemplate  = useProcessesStore((s) => s.deleteTemplate)
+  const routes          = useProcessesStore((s) => s.routes)
+  const updateRoute     = useProcessesStore((s) => s.updateRoute)
 
   const [editing, setEditing]         = useState<LotTemplate | null>(null)
   const [creating, setCreating]       = useState(false)
   const [form, setForm]               = useState<FormState>(blank())
+  // Which disassembly branch this product belongs to ('' = the station's own).
+  const [branchRouteId, setBranchRouteId] = useState('')
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<LotTemplate | null>(null)
@@ -69,12 +73,43 @@ export default function TemplatesTab({ initialStationId }: Props = {}) {
     const ps = Object.values(processes)
     return ps.length === 1 ? ps[0]._id : ''
   }
-  const openCreate = () => { setForm({ ...blank(), processId: soleProcessId() }); setCreating(true); setError(null) }
-  const openEdit   = (t: LotTemplate) => { setForm(templateToForm(t)); setEditing(t); setError(null) }
-  const closeModal = () => { setCreating(false); setEditing(null) }
+  const openCreate = () => {
+    setForm({ ...blank(), processId: soleProcessId() }); setBranchRouteId('')
+    setCreating(true); setError(null)
+  }
+  const openEdit   = (t: LotTemplate) => {
+    setForm(templateToForm(t))
+    // Reflect the branch this product is already the output of, if any.
+    const owning = Object.values(routes).find((r) => r.outputTemplateId === t._id)
+    setBranchRouteId(owning?._id ?? '')
+    setEditing(t); setError(null)
+  }
+  const closeModal = () => { setCreating(false); setEditing(null); setBranchRouteId('') }
 
   const setF = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }))
+
+  // A station that both receives a disassembly branch AND merges has more than
+  // one product: its own assembly, plus the piece arriving from each split.
+  // Naming them apart is what lets the merge tell a precursor from its output.
+  const branchOptions = React.useMemo(() => {
+    const sid = form.startStationId
+    if (!sid) return []
+    const all = Object.values(routes)
+    const incoming = all.filter((r) => r.unload === sid)
+    if (incoming.length < 2) return []            // not a merge — no ambiguity
+    return incoming
+      .filter((r) => all.filter((o) => o.load === r.load && o.processId === r.processId).length >= 2)
+      .map((r) => ({ route: r, source: stations[r.load] }))
+      .filter((o) => !!o.source)
+  }, [form.startStationId, routes, stations])
+
+  const autoName = (routeId: string) => {
+    const opt = branchOptions.find((o) => o.route._id === routeId)
+    const station = stations[form.startStationId]
+    if (!station) return ''
+    return opt ? `${station.name} (from ${opt.source.name})` : station.name
+  }
 
   const handleSave = async () => {
     if (!form.name.trim()) { setError('Name is required'); return }
@@ -93,10 +128,18 @@ export default function TemplatesTab({ initialStationId }: Props = {}) {
         color:          form.color,
         fields:         form.fields,
       }
-      if (editing) {
-        await updateTemplate(editing._id, body)
-      } else {
-        await createTemplate(body)
+      const saved = editing
+        ? await updateTemplate(editing._id, body)
+        : await createTemplate(body)
+      // Point the chosen disassembly branch at this product (or release it).
+      if (branchOptions.length > 0) {
+        const previous = branchOptions.find((o) => o.route.outputTemplateId === saved._id)
+        if (branchRouteId && branchRouteId !== previous?.route._id) {
+          await updateRoute(branchRouteId, { outputTemplateId: saved._id })
+        }
+        if (previous && previous.route._id !== branchRouteId) {
+          await updateRoute(previous.route._id, { clearOutputTemplate: true })
+        }
       }
       closeModal()
     } catch (e) {
@@ -181,12 +224,48 @@ export default function TemplatesTab({ initialStationId }: Props = {}) {
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <FieldLabel>START LOCATION</FieldLabel>
-              <select value={form.startStationId} onChange={(e) => setF('startStationId', e.target.value)} style={inputStyle}>
+              <select
+                value={form.startStationId}
+                onChange={(e) => { setF('startStationId', e.target.value); setBranchRouteId('') }}
+                style={inputStyle}
+              >
                 <option value="">— none —</option>
                 {stationList.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
               </select>
             </label>
           </div>
+
+          {/* A merge station that also receives a disassembly branch holds more
+              than one product: its own assembly, and the piece each split sends
+              it. Saying which one this is keeps precursors and output apart. */}
+          {branchOptions.length > 0 && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <FieldLabel>WHICH PRODUCT AT {stations[form.startStationId]?.name?.toUpperCase()}</FieldLabel>
+              <select
+                value={branchRouteId}
+                onChange={(e) => {
+                  const next = e.target.value
+                  const wasAuto = !form.name.trim() || form.name === autoName(branchRouteId)
+                  setBranchRouteId(next)
+                  if (wasAuto) setF('name', autoName(next))
+                }}
+                style={inputStyle}
+              >
+                <option value="">
+                  {stations[form.startStationId]?.name} — assembled here
+                </option>
+                {branchOptions.map(({ route, source }) => (
+                  <option key={route._id} value={route._id}>
+                    {stations[form.startStationId]?.name} (from {source.name}) — disassembled
+                  </option>
+                ))}
+              </select>
+              <span style={{ fontSize: 10, color: color.textDim }}>
+                Picking a branch makes this the product that branch yields, so the merge
+                here sees it as a precursor rather than as its own output.
+              </span>
+            </label>
+          )}
 
           {/* Color */}
           <div>

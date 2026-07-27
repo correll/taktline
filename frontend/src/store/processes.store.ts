@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import type { Process, Route, LotTemplate } from '../models'
-import { processesApi } from '../api/processes.api'
+import { processesApi, type RoutePatch } from '../api/processes.api'
 import { loadSlice, saveSlice } from './offlineCache'
 
 interface ProcessesState {
@@ -17,7 +17,7 @@ interface ProcessesState {
   updateProcess:   (id: string, patch: Partial<Process>)          => Promise<Process>
   deleteProcess:   (id: string)                                    => Promise<void>
   createRoute:     (body: Partial<Route>)                         => Promise<Route>
-  updateRoute:     (id: string, patch: Partial<Route>)            => Promise<Route>
+  updateRoute:     (id: string, patch: RoutePatch)                => Promise<Route>
   deleteRoute:     (id: string)                                    => Promise<void>
   createTemplate:  (body: Partial<LotTemplate>)                   => Promise<LotTemplate>
   updateTemplate:  (id: string, patch: Partial<LotTemplate>)      => Promise<LotTemplate>

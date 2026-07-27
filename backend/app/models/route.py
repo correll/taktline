@@ -8,7 +8,8 @@ class Route(TimestampedModel):
     processId: str
     load: str       # source station ID
     unload: str     # destination station ID
-    quantity: int = 1   # edge weight: units of this input consumed per assembly cycle
+    quantity: int = 1   # edge weight: units consumed per assembly (merge) or pieces produced per unit (split)
+    outputTemplateId: Optional[str] = None   # product this split branch yields
 
 
 class RouteCreate(BaseModel):
@@ -16,6 +17,7 @@ class RouteCreate(BaseModel):
     load: str
     unload: str
     quantity: int = 1
+    outputTemplateId: Optional[str] = None
 
     @field_validator('quantity')
     @classmethod
@@ -35,6 +37,8 @@ class RouteUpdate(BaseModel):
     load: Optional[str] = None
     unload: Optional[str] = None
     quantity: Optional[int] = None
+    outputTemplateId: Optional[str] = None
+    clearOutputTemplate: bool = False   # explicit reset (None means "unchanged")
 
     @field_validator('quantity')
     @classmethod

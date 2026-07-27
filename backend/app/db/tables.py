@@ -337,6 +337,15 @@ class Route(Base):
         nullable=False,
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # What this branch of a split yields. Disassembly turns one product into
+    # several different ones — a battery into modules, busbars and cables — so
+    # each branch names its own output. NULL means "infer it" (the target
+    # station's product, or the source's when the branch lands on a merge).
+    outputTemplateId: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("lot_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
 

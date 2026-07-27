@@ -4,8 +4,9 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import get_session, require_uuid, parse_uuid
-from ..db.tables import Route as RouteRow, Process as ProcessRow, Station as StationRow
+from ..db.connection import get_session, require_uuid, parse_uuid, optional_uuid
+from ..db.tables import (Route as RouteRow, Process as ProcessRow, Station as StationRow,
+                         LotTemplate as LotTemplateRow)
 from ..deps.auth import CompanyContext, get_active_company, require_super_admin
 from ..models.route import Route, RouteCreate, RouteUpdate
 from ..models.common import utcnow
@@ -20,6 +21,7 @@ def _to_route(r: RouteRow) -> Route:
         load=str(r.load),
         unload=str(r.unload),
         quantity=r.quantity,
+        outputTemplateId=str(r.outputTemplateId) if r.outputTemplateId else None,
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
     )
@@ -150,6 +152,26 @@ async def _normalize_weights(session, company_id, *, unload_uuid=None, load_uuid
                 r.updatedAt = utcnow()
 
 
+_OUTPUT_TEMPLATE_ERROR = (
+    "An output product only applies to a branch of a split — disassembly turns "
+    "one product into several. Add the sibling route first")
+
+
+async def _validate_output_template(session, company_id, template_id, load_uuid,
+                                    process_id, exclude_id=None):
+    """A split branch may declare which product it yields (battery → module /
+    busbar / cable). Only splits may: elsewhere a lot keeps its own product."""
+    tmpl_uuid = optional_uuid(template_id)
+    if tmpl_uuid is None:
+        return None
+    if await _other_outgoing_count(session, company_id, load_uuid, exclude_id, process_id) < 1:
+        raise HTTPException(400, _OUTPUT_TEMPLATE_ERROR)
+    tmpl = await session.get(LotTemplateRow, tmpl_uuid)
+    if tmpl is None or tmpl.companyId != company_id:
+        raise HTTPException(404, "Output product not found")
+    return tmpl_uuid
+
+
 _WEIGHT_ERROR = ("A weight only applies where the graph branches — a feed into a "
                  "merge station, or one of several routes out of a split station. "
                  "Add the sibling route first")
@@ -187,6 +209,8 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
     row = RouteRow(
         companyId=ctx.company_id, processId=process_uuid,
         load=load_uuid, unload=unload_uuid, quantity=body.quantity,
+        outputTemplateId=await _validate_output_template(
+            session, ctx.company_id, body.outputTemplateId, load_uuid, process_uuid),
     )
     session.add(row)
     try:
@@ -238,6 +262,12 @@ async def update_route(route_id: str, body: RouteUpdate,
             session, ctx.company_id, row.load, row.unload, exclude_id=row.id,
             process_id=row.processId):
         row.quantity = 1   # a re-target that leaves this unbranched drops its weight
+    if body.clearOutputTemplate:
+        row.outputTemplateId = None
+    elif body.outputTemplateId is not None:
+        row.outputTemplateId = await _validate_output_template(
+            session, ctx.company_id, body.outputTemplateId, row.load, row.processId,
+            exclude_id=row.id)
     row.updatedAt = utcnow()
     try:
         await session.flush()

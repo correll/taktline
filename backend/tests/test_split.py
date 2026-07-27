@@ -293,3 +293,73 @@ def test_two_split_fed_branches_into_one_merge_stay_distinct():
     prev = a.req("GET", f"/merge/{asm['_id']}").json()
     assert [r["availableUnits"] for r in prev["requirements"]] == [1, 1]   # not [2, 0]
     assert prev["assembliesPossible"] == 1
+
+
+def test_disassembly_branches_carry_their_own_products():
+    """A battery disassembles into modules, busbars and cables; the cable then
+    merges with a cap. Each branch must yield its own named product, including
+    the branch that lands on the merge station."""
+    a = Actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    teardown, mod_store, bus_store = st("teardown"), st("module store"), st("busbar store")
+    cap_line, reassembly = st("cap line"), st("cable+cap")
+    p = a.req("POST", "/processes/", {"name": "Recycling"}).json()["_id"]
+    mk_t = lambda n, sid: a.req("POST", "/lot-templates/", {
+        "name": n, "processId": p, "startStationId": sid}).json()
+    battery = mk_t("Battery", teardown["_id"])
+    module, busbar, cable = (mk_t("Module", mod_store["_id"]),
+                             mk_t("Busbar", bus_store["_id"]),
+                             mk_t("Cable", teardown["_id"]))
+    cap = mk_t("Cap", cap_line["_id"])
+
+    # Three disassembly branches, each declaring its product; the cable branch
+    # lands straight on the merge station.
+    def route(load, unload, qty, out=None):
+        body = {"processId": p, "load": load["_id"], "unload": unload["_id"], "quantity": qty}
+        if out: body["outputTemplateId"] = out["_id"]
+        return a.req("POST", "/routes/", body)
+    assert route(teardown, mod_store, 1).status_code == 201            # sibling first
+    assert route(teardown, bus_store, 4, busbar).status_code == 201
+    assert route(teardown, reassembly, 1, cable).status_code == 201
+    assert route(cap_line, reassembly, 1).status_code == 201
+    # Name the module branch's product too, now that the split exists.
+    mod_route = next(r for r in a.req("GET", "/routes/").json()
+                     if r["load"] == teardown["_id"] and r["unload"] == mod_store["_id"])
+    assert a.req("PUT", f"/routes/{mod_route['_id']}",
+                 {"outputTemplateId": module["_id"], "quantity": 6}).status_code == 200
+
+    mk_c = lambda t, sid, n=1: a.req("POST", "/cards/", {
+        "lotTemplateId": t["_id"], "processId": p, "totalQuantity": n,
+        "bins": {sid: {"count": n}}, "fields": {}, "flagged": False,
+        "description": "", "status": "idle"}).json()
+    scrap = mk_c(battery, teardown["_id"])
+    a.req("POST", f"/cards/{scrap['_id']}/advance",
+          {"fromStationId": teardown["_id"], "toStationId": mod_store["_id"], "quantity": 1})
+
+    tmpls = {t["_id"]: t["name"] for t in a.req("GET", "/lot-templates/").json()}
+    cards = a.req("GET", "/cards/").json()
+    named = {tmpls[c["lotTemplateId"]]: sum(b["count"] for b in c["bins"].values())
+             for c in cards}
+    assert named["Module"] == 6 and named["Busbar"] == 4
+    assert named["Cable"] == 1      # lands straight on the merge, so 1:1
+    assert "Battery" not in named   # fully disassembled
+
+    # The cable is a precursor at the merge, not a stray "Battery".
+    a.req("POST", f"/cards/{mk_c(cap, cap_line['_id'])['_id']}/advance",
+          {"fromStationId": cap_line["_id"], "toStationId": reassembly["_id"], "quantity": 1})
+    prev = a.req("GET", f"/merge/{reassembly['_id']}").json()
+    assert prev["assembliesPossible"] == 1     # one cable + one cap
+    r = a.req("POST", f"/merge/{reassembly['_id']}")
+    assert r.status_code == 201, r.text
+
+
+def test_output_product_rejected_on_an_unbranched_route():
+    a = Actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    x, y = st("x"), st("y")
+    p = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
+    t = a.req("POST", "/lot-templates/", {"name": "T", "processId": p,
+                                          "startStationId": x["_id"]}).json()
+    r = a.req("POST", "/routes/", {"processId": p, "load": x["_id"], "unload": y["_id"],
+                                   "quantity": 1, "outputTemplateId": t["_id"]})
+    assert r.status_code == 400 and "split" in r.text

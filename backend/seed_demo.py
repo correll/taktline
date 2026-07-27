@@ -23,6 +23,7 @@ Templates
 """
 
 import argparse
+import http.cookiejar
 import json
 import urllib.request
 import urllib.error
@@ -30,22 +31,38 @@ import sys
 
 BASE = "http://localhost:8000"
 
+# Persist the session cookie set by /auth/dev/bootstrap across all calls, and
+# carry the active-company + CSRF headers the authenticated API now requires.
+_cookiejar = http.cookiejar.CookieJar()
+_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_cookiejar))
+_auth: dict = {"companyId": None, "csrf": None}
+
 
 def _call(method: str, path: str, data: dict | None = None) -> bytes:
     body = json.dumps(data).encode() if data is not None else None
-    req = urllib.request.Request(
-        f"{BASE}{path}",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method=method,
-    )
+    headers = {"Content-Type": "application/json"}
+    if _auth["companyId"]:
+        headers["X-Company-Id"] = _auth["companyId"]
+    if _auth["csrf"]:
+        headers["X-CSRF-Token"] = _auth["csrf"]
+    req = urllib.request.Request(f"{BASE}{path}", data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req) as r:
+        with _opener.open(req) as r:
             return r.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode()
         print(f"  ERROR {e.code} on {method} {path}: {detail}", file=sys.stderr)
         raise
+
+
+def bootstrap() -> str:
+    """Create a fresh verified admin + company (dev only) and authenticate.
+    Requires the backend to run with TAKTLINE_DEV=1."""
+    res = json.loads(_call("POST", "/auth/dev/bootstrap", {"companyName": "E-Bike Demo Co"}))
+    _auth["companyId"] = res["companyId"]
+    _auth["csrf"] = res["csrfToken"]
+    print(f"Authenticated as {res['email']} — company {res['companyId']}\n")
+    return res["companyId"]
 
 
 def get(path: str) -> list:
@@ -54,6 +71,42 @@ def get(path: str) -> list:
 
 def post(path: str, data: dict) -> dict:
     return json.loads(_call("POST", path, data))
+
+
+def put(path: str, data: dict) -> dict:
+    return json.loads(_call("PUT", path, data))
+
+
+def _png_size(data: bytes) -> tuple[int, int]:
+    """Width/height straight out of the PNG IHDR chunk."""
+    import struct
+    w, h = struct.unpack(">II", data[16:24])
+    return w, h
+
+
+def upload_floor_plan(png_path: str) -> None:
+    """Multipart upload of the generated floor plan + the matching scale
+    settings (the PNG is drawn at M=36 px/m — see generate_floorplan.py)."""
+    data = open(png_path, "rb").read()
+    boundary = "----taktlineseed"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="factory_floorplan.png"\r\n'
+        f"Content-Type: image/png\r\n\r\n"
+    ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "X-Company-Id": _auth["companyId"],
+        "X-CSRF-Token": _auth["csrf"],
+    }
+    req = urllib.request.Request(f"{BASE}/map-settings/upload-floor-plan",
+                                 data=body, headers=headers, method="POST")
+    with _opener.open(req) as r:
+        r.read()
+    w, h = _png_size(data)
+    put("/map-settings/", {"pixelsPerUnit": 36, "unit": "m",
+                           "mapWidthPx": w, "mapHeightPx": h})
+    print(f"Floor plan uploaded ({w}×{h} px, 36 px/m)\n")
 
 
 def delete(path: str) -> None:
@@ -94,8 +147,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    bootstrap()   # authenticate + create the demo company
+
     if not args.no_clear:
         clear()
+
+    # Upload the generated floor plan and calibrate the map to its scale
+    # (generate_floorplan.py draws at 36 px per meter).
+    import os
+    plan = os.path.join(os.path.dirname(os.path.abspath(__file__)), "factory_floorplan.png")
+    if os.path.exists(plan):
+        upload_floor_plan(plan)
+    else:
+        print("(!) factory_floorplan.png not found — run generate_floorplan.py first\n")
 
     map_cfg = get("/map-settings/")
     M = map_cfg.get("pixelsPerUnit") or 36

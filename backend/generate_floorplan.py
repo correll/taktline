@@ -368,7 +368,7 @@ TX, TY = W-MARG-WALL-20, MARG+WALL+18
 for i, (text, font) in enumerate([
     ("E-BIKE MANUFACTURING FACILITY",  f_zone),
     ("Floor Plan — Production Layout", f_sub),
-    ("Veridion Demo  |  100 m × 28 m", f_tiny),
+    ("Taktline Demo  |  100 m × 28 m", f_tiny),
 ]):
     bb = draw.textbbox((0, 0), text, font=font)
     draw.text((TX-(bb[2]-bb[0]), TY+i*20), text, font=font, fill=C["txt_zone"])

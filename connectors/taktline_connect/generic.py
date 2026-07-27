@@ -39,7 +39,9 @@ def orders_from_generic(items: list[dict], fields: dict | None) -> list[dict]:
         out.append({
             "id": it.get(fid),
             "product_ref": it.get(fp),
-            "qty": int(it.get(fq) or 0),
+            # Decimal quantities are the norm in this long tail ("4.000" from Zoho,
+            # Cin7, Business Central); a bare int() would raise on the string.
+            "qty": int(float(it.get(fq) or 0)),
             "state": it.get(fs),
             "lot_code": it.get(fc),
         })

@@ -41,33 +41,52 @@ class FakeStore:
 
 
 class FakeTaktline:
-    def __init__(self):
+    """Mirrors the server contract: idempotent release that reports whether it
+    created anything, a source-filtered outbox, ack, and a failure counter."""
+
+    def __init__(self, reject: set | None = None):
         self.orders: dict = {}          # (source, ref) -> order
         self.outbox: list[dict] = []
         self.acked: list[str] = []
+        self.failed: list[str] = []
         self.cancelled: list[tuple] = []
+        self.reject = reject or set()   # external refs the server rejects (4xx)
+        self.outbox_queries: list = []
 
     def create_order(self, template_id, quantity, external_ref, source, lot_code=None):
+        if external_ref in self.reject:
+            raise RuntimeError(f"404 Client Error for ref {external_ref}")
         key = (source, external_ref)
         if key in self.orders:          # server-side idempotency on (source, ref)
-            return self.orders[key]
+            return {**self.orders[key], "created": False}
         o = {"id": f"ord-{len(self.orders)}", "externalRef": external_ref,
              "quantity": quantity, "templateId": template_id, "lotCode": lot_code}
         self.orders[key] = o
-        return o
+        return {**o, "created": True}
 
     def cancel_by_ref(self, source, external_ref):
         self.cancelled.append((source, external_ref))
         return (source, external_ref) in self.orders   # False if unknown → benign
 
-    def list_outbox(self, status="pending"):
-        return [e for e in self.outbox if e["status"] == status]
+    def list_outbox(self, status="pending", source=None):
+        self.outbox_queries.append((status, source))
+        return [e for e in self.outbox
+                if e["status"] == status
+                and (source is None or (e["payload"] or {}).get("source") == source)]
 
     def ack_outbox(self, event_id):
         for e in self.outbox:
             if e["id"] == event_id:
                 e["status"] = "delivered"
         self.acked.append(event_id)
+
+    def fail_outbox(self, event_id):
+        self.failed.append(event_id)
+        for e in self.outbox:
+            if e["id"] == event_id:
+                e["attempts"] = e.get("attempts", 0) + 1
+                return e
+        return None
 
 
 def _connector(orders, source="odoo", states=("confirmed",), pmap=None):
@@ -194,3 +213,85 @@ def test_run_once_returns_three_counts():
     v.outbox = [_event("e1", "order.completed", "odoo", "99")]
     # (released, cancelled, delivered) — FakeErp has no list_cancellations → 0
     assert c.run_once() == (1, 0, 1)
+
+
+# --- resilience: one bad order must not wedge the connector -------------
+
+def test_a_rejected_order_does_not_abort_the_cycle():
+    """The failure mode this guards: a template deleted while still listed in
+    PRODUCT_MAPPING makes the server 404 that one order. Unguarded, the raise
+    escapes sync_orders and takes the *whole* cycle with it — the orders behind
+    it never release and completions never drain. The ERP returns the same list
+    next poll, so nothing ever recovers."""
+    v = FakeTaktline(reject={"BAD"})
+    erp = FakeErp([{"id": "BAD", "product_ref": "BIKE-001", "qty": 1, "state": "confirmed"},
+                   {"id": "GOOD", "product_ref": "BIKE-001", "qty": 2, "state": "confirmed"}])
+    c = Connector(erp, v, Mapping({"BIKE-001": "tmpl-1"}), source="odoo",
+                  order_states=("confirmed",))
+    v.outbox = [_event("e1", "order.completed", "odoo", "77")]
+
+    released, _, delivered = c.run_once()
+
+    assert released == 1                                  # GOOD still went out
+    assert [k[1] for k in v.orders] == ["GOOD"]
+    assert delivered == 1 and v.acked == ["e1"]           # completions still drained
+
+
+def test_redelivered_order_is_not_counted_as_a_new_release():
+    # A connector re-posts its whole open backlog every cycle; only a 201 is news.
+    c, _, v = _connector([{"id": 42, "product_ref": "BIKE-001", "qty": 5, "state": "confirmed"}])
+    assert c.sync_orders() == 1
+    assert c.sync_orders() == 0                           # same order, already released
+    assert len(v.orders) == 1
+
+
+def test_numeric_product_ref_matches_a_json_string_key():
+    # PRODUCT_MAPPING is JSON, so its keys are strings; an ERP reporting a numeric
+    # product id would otherwise never map and be skipped forever.
+    c, _, v = _connector([{"id": 1, "product_ref": 4471, "qty": 1, "state": "confirmed"}],
+                         pmap={"4471": "tmpl-9"})
+    assert c.sync_orders() == 1
+    assert next(iter(v.orders.values()))["templateId"] == "tmpl-9"
+
+
+def test_decimal_quantity_is_accepted():
+    c, _, v = _connector([{"id": 1, "product_ref": "BIKE-001", "qty": "4.000",
+                           "state": "confirmed"}])
+    assert c.sync_orders() == 1
+    assert next(iter(v.orders.values()))["quantity"] == 4
+
+
+def test_zero_quantity_is_skipped_loudly(caplog):
+    # A mis-mapped qty field reads as 0 for every order; silence would look healthy.
+    c, _, v = _connector([{"id": 1, "product_ref": "BIKE-001", "qty": 0, "state": "confirmed"}])
+    with caplog.at_level("WARNING"):
+        assert c.sync_orders() == 0
+    assert not v.orders
+    assert any("quantity" in r.getMessage() for r in caplog.records)
+
+
+# --- outbox hygiene ------------------------------------------------------
+
+def test_outbox_is_polled_for_this_connector_only():
+    """Events nobody can ack (manual UI releases, CSV imports) stay pending
+    forever. Sharing one 500-row window with them eventually starves out this
+    connector's own completions, so the query is scoped by source."""
+    c, _, v = _connector([])
+    v.outbox = [_event("mine", "order.completed", "odoo", "1"),
+                _event("theirs", "order.completed", "manual", "2")]
+    assert c.sync_completions() == 1
+    assert v.outbox_queries == [("pending", "odoo")]
+    assert v.acked == ["mine"]
+
+
+def test_failed_delivery_records_an_attempt_server_side():
+    class Boom(FakeErp):
+        def mark_done(self, ref):
+            raise RuntimeError("ERP down")
+
+    v = FakeTaktline()
+    c = Connector(Boom([]), v, Mapping({}), source="odoo", order_states=())
+    v.outbox = [_event("e1", "order.completed", "odoo", "42")]
+    assert c.sync_completions() == 0
+    assert v.acked == []              # not acked — it will be retried
+    assert v.failed == ["e1"]         # but the attempt is counted, so it can park

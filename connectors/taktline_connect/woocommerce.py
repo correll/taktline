@@ -8,13 +8,17 @@ Auth is HTTP Basic with the store's REST consumer key/secret (HTTPS assumed).
 """
 from __future__ import annotations
 
+import logging
+
 import requests
 
 from .config import Config
 from .core import Connector, Mapping
 from .taktline import TaktlineClient
 
+log = logging.getLogger("taktline_connect")
 DEFAULT_STATES = ("processing",)
+MAX_PAGES = 200
 
 
 def _line_ref(order_id, line_id) -> str:
@@ -53,10 +57,24 @@ class WooClient:
         self.timeout = timeout
 
     def _orders(self, status: str) -> list[dict]:
-        r = requests.get(self.base + "/orders", auth=self.auth,
-                         params={"status": status, "per_page": 100}, timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()
+        """Every page, oldest first. Woo defaults to newest-first, so a single
+        page of a >100-order backlog would show only the newest — and because an
+        order leaves ``processing`` only when Taktline completes it, the oldest
+        work would never be released at all."""
+        out, page = [], 1
+        while page <= MAX_PAGES:
+            r = requests.get(self.base + "/orders", auth=self.auth, timeout=self.timeout,
+                             params={"status": status, "per_page": 100, "page": page,
+                                     "orderby": "date", "order": "asc"})
+            r.raise_for_status()
+            rows = r.json()
+            out += rows
+            total = int(r.headers.get("X-WP-TotalPages") or 1)
+            if not rows or page >= total:
+                return out
+            page += 1
+        log.warning("woocommerce: stopped after %d pages (%d orders)", MAX_PAGES, len(out))
+        return out
 
     def list_orders(self, states) -> list[dict]:
         out = []

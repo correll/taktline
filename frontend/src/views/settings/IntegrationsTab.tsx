@@ -73,6 +73,7 @@ export default function IntegrationsTab() {
   }
 
   const pending = events.filter((e) => e.status === 'pending').length
+  const failed = events.filter((e) => e.status === 'failed').length
 
   const btn = (bg: string): React.CSSProperties => ({
     background: 'transparent', border: `1px solid ${color.border}`, color: bg, borderRadius: size.radius,
@@ -183,17 +184,34 @@ export default function IntegrationsTab() {
       </Section>
 
       {/* Outbox */}
-      <Section title="Completion outbox" right={<span style={{ fontSize: 11, color: pending ? color.statusWarning : color.textDim, fontFamily: font.mono }}>{pending} pending</span>}>
+      <Section title="Completion outbox" right={
+        <span style={{ fontSize: 11, fontFamily: font.mono }}>
+          {failed > 0 && <span style={{ color: color.statusFault, marginRight: size.sp2 }}>{failed} failed</span>}
+          <span style={{ color: pending ? color.statusWarning : color.textDim }}>{pending} pending</span>
+        </span>
+      }>
+        {failed > 0 && (
+          <div style={{ color: color.statusFault, fontSize: 12, marginBottom: size.sp3 }}>
+            {failed === 1 ? 'One event' : `${failed} events`} could not be delivered after
+            repeated attempts and stopped retrying. Check that the connector is running and
+            that the order still exists in the ERP.
+          </div>
+        )}
         {events.length === 0 ? <div style={{ color: color.textDim, fontSize: 13 }}>No events yet — they appear when finished lots reach a warehouse.</div> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr style={{ borderBottom: `1px solid ${color.border}` }}>
-              <th style={head}>Event</th><th style={head}>Ext. ref</th><th style={head}>Status</th><th style={head}>When</th>
+              <th style={head}>Event</th><th style={head}>Source</th><th style={head}>Ext. ref</th>
+              <th style={head}>Status</th><th style={head}>When</th>
             </tr></thead>
             <tbody>{events.slice(-12).reverse().map((e) => (
               <tr key={e.id} style={{ borderBottom: `1px solid ${color.border}` }}>
                 <td style={{ ...cell, ...mono }}>{e.eventType}</td>
+                <td style={{ ...cell, ...mono, color: color.textDim }}>{String((e.payload as any).source ?? '—')}</td>
                 <td style={{ ...cell, ...mono, color: color.textSecondary }}>{String((e.payload as any).externalRef ?? '—')}</td>
-                <td style={cell}><StatusPill s={e.status} /></td>
+                <td style={cell}>
+                  <StatusPill s={e.status} />
+                  {e.attempts > 1 && <span style={{ ...mono, color: color.textDim, fontSize: 11, marginLeft: 6 }}>×{e.attempts}</span>}
+                </td>
                 <td style={{ ...cell, color: color.textDim, fontSize: 12 }}>{new Date(e.createdAt).toLocaleString()}</td>
               </tr>
             ))}</tbody>
@@ -244,8 +262,9 @@ export default function IntegrationsTab() {
           <div><span style={{ color: color.statusRunning }}>POST</span> /orders</div>
           <div>{`{ "productTemplateId": "<id>", "quantity": 5, "source": "odoo", "externalRef": "MO-123" }`}</div>
           <div style={{ marginTop: 8 }}><span style={{ color: color.textDim }}># drain completions, then ack</span></div>
-          <div><span style={{ color: color.statusRunning }}>GET</span>  /orders/outbox?status=pending</div>
+          <div><span style={{ color: color.statusRunning }}>GET</span>  /orders/outbox?status=pending&amp;source=odoo</div>
           <div><span style={{ color: color.statusRunning }}>POST</span> /orders/outbox/&#123;id&#125;/ack</div>
+          <div><span style={{ color: color.statusRunning }}>POST</span> /orders/outbox/&#123;id&#125;/fail <span style={{ color: color.textDim }}># retries, then parks</span></div>
         </div>
       </Section>
 

@@ -6,12 +6,14 @@ Taktline order.cancelled  ──────►  Odoo MO cancelled
 """
 from __future__ import annotations
 
+import logging
 import xmlrpc.client
 
 from .config import Config
 from .core import Connector, Mapping
 from .taktline import TaktlineClient
 
+log = logging.getLogger("taktline_connect")
 DEFAULT_STATES = ("confirmed", "progress")
 
 
@@ -27,18 +29,26 @@ class OdooClient:
         self.models = xmlrpc.client.ServerProxy(f"{base}/xmlrpc/2/object")
 
     def _exec(self, model: str, method: str, *args, **kwargs):
+        """``execute_kw(db, uid, pw, model, method, args, kwargs)``.
+
+        Odoo reads ``args[0]`` as the ids (record methods) or the domain
+        (``@api.model`` methods like ``search_read``); options such as ``fields``
+        and ``context`` must go in **kwargs**. Pass them as Python keywords here —
+        an options dict smuggled in positionally is read as ``fields`` and Odoo
+        rejects it with "Invalid field 'fields'".
+        """
         return self.models.execute_kw(self.db, self.uid, self.password, model, method, list(args), kwargs or {})
 
     def list_orders(self, states) -> list[dict]:
         states = tuple(states) or DEFAULT_STATES
         mos = self._exec("mrp.production", "search_read",
                          [["state", "in", list(states)]],
-                         {"fields": ["id", "name", "product_id", "product_qty", "state"]})
+                         fields=["id", "name", "product_id", "product_qty", "state"])
         # Resolve product refs (SKU / default_code) in one batched read.
         pids = list({m["product_id"][0] for m in mos if m.get("product_id")})
         refs: dict[int, str] = {}
         if pids:
-            for p in self._exec("product.product", "read", pids, {"fields": ["default_code", "name"]}):
+            for p in self._exec("product.product", "read", pids, fields=["default_code", "name"]):
                 refs[p["id"]] = p.get("default_code") or p.get("name")
         return [{
             "id": m["id"],
@@ -50,13 +60,19 @@ class OdooClient:
 
     def mark_done(self, external_ref: str) -> None:
         mo_id = int(external_ref)
-        qty = self._exec("mrp.production", "read", [mo_id], {"fields": ["product_qty"]})[0]["product_qty"]
-        self._exec("mrp.production", "write", [[mo_id], {"qty_producing": qty}])
-        self._exec("mrp.production", "button_mark_done", [[mo_id]],
+        rows = self._exec("mrp.production", "read", [mo_id], fields=["product_qty"])
+        if not rows:
+            # The MO was deleted in Odoo. There is nothing left to close, and
+            # raising here would retry this event on every poll forever.
+            log.warning("odoo MO %s no longer exists — nothing to mark done", mo_id)
+            return
+        qty = rows[0]["product_qty"]
+        self._exec("mrp.production", "write", [mo_id], {"qty_producing": qty})
+        self._exec("mrp.production", "button_mark_done", [mo_id],
                    context={"skip_backorder": True, "skip_immediate": True})
 
     def cancel(self, external_ref: str) -> None:
-        self._exec("mrp.production", "action_cancel", [[int(external_ref)]])
+        self._exec("mrp.production", "action_cancel", [int(external_ref)])
 
 
 def build(cfg: Config) -> Connector:

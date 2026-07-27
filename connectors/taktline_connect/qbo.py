@@ -8,14 +8,19 @@ by ItemRef name (put those in PRODUCT_MAPPING).
 """
 from __future__ import annotations
 
+import logging
+
 import requests
 
 from .config import Config
 from .core import Connector, Mapping
-from .oauth import refresh_access_token
+from .oauth import load_refresh_token, refresh_access_token
 from .taktline import TaktlineClient
 
+log = logging.getLogger("taktline_connect")
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+PAGE_SIZE = 1000        # QBO's hard ceiling per query
+MAX_PAGES = 200
 
 
 def orders_from_qbo(docs: list[dict], doc_type: str) -> list[dict]:
@@ -47,12 +52,14 @@ class QboClient:
         self.doc = cfg.qbo_doc
         host = "sandbox-quickbooks" if cfg.qbo_env == "sandbox" else "quickbooks"
         self.base = f"https://{host}.api.intuit.com/v3/company/{self.realm}"
-        self.refresh_token = cfg.qbo_refresh_token
+        # Prefer a previously rotated token over the (now stale) env value.
+        self.refresh_token = load_refresh_token("quickbooks", cfg.qbo_refresh_token)
         self.access = None
 
     def _auth(self):
         self.access, self.refresh_token = refresh_access_token(
-            TOKEN_URL, self.cfg.qbo_client_id, self.cfg.qbo_client_secret, self.refresh_token, self.timeout)
+            TOKEN_URL, self.cfg.qbo_client_id, self.cfg.qbo_client_secret,
+            self.refresh_token, self.timeout, provider="quickbooks")
 
     def _query(self, sql: str) -> dict:
         if self.access is None:
@@ -72,8 +79,19 @@ class QboClient:
         statuses = tuple(states) or ("Accepted",)
         rows = []
         for st in statuses:
-            qr = self._query(f"SELECT * FROM {self.doc} WHERE TxnStatus = '{st}'")
-            rows += orders_from_qbo(qr.get(self.doc, []), self.doc)
+            # QBO returns 100 rows by default and 1000 at most, so a company with
+            # a real backlog needs explicit paging or it only ever sees page one.
+            start = 1
+            while start <= MAX_PAGES * PAGE_SIZE:
+                qr = self._query(f"SELECT * FROM {self.doc} WHERE TxnStatus = '{st}' "
+                                 f"STARTPOSITION {start} MAXRESULTS {PAGE_SIZE}")
+                docs = qr.get(self.doc, [])
+                rows += orders_from_qbo(docs, self.doc)
+                if len(docs) < PAGE_SIZE:
+                    break
+                start += PAGE_SIZE
+            else:
+                log.warning("quickbooks: stopped after %d pages of %s", MAX_PAGES, st)
         return rows
 
 

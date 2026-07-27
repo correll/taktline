@@ -73,24 +73,61 @@ def test_qbo_estimate_line_items():
 
 
 def test_xero_quote_line_items():
-    q = {"QuoteID": "abc", "Status": "ACCEPTED", "LineItems": [
-        {"Item": {"Code": "FRAME-M"}, "Description": "Frame", "Quantity": 2.0},
-        {"Description": "Assembly labour", "Quantity": 1},                      # falls back to Description
+    q = {"QuoteID": "abc", "QuoteNumber": "QU-0007", "Status": "ACCEPTED", "LineItems": [
+        {"LineItemID": "li-1", "Item": {"Code": "FRAME-M"}, "Description": "Frame", "Quantity": 2.0},
+        {"LineItemID": "li-2", "Description": "Assembly labour", "Quantity": 1},   # falls back to Description
     ]}
     rows = orders_from_xero([q])
     assert rows == [
-        {"id": "Quote:abc:0", "product_ref": "FRAME-M", "qty": 2, "state": "ACCEPTED"},
-        {"id": "Quote:abc:1", "product_ref": "Assembly labour", "qty": 1, "state": "ACCEPTED"},
+        {"id": "Quote:abc:li-1", "product_ref": "FRAME-M", "qty": 2, "state": "ACCEPTED",
+         "lot_code": "QU-0007"},
+        {"id": "Quote:abc:li-2", "product_ref": "Assembly labour", "qty": 1, "state": "ACCEPTED",
+         "lot_code": "QU-0007"},
     ]
 
 
 def test_shipstation_order_items():
-    o = {"orderId": 9001, "orderStatus": "awaiting_shipment", "items": [
-        {"sku": "WHEEL-27", "name": "Wheel 27", "quantity": 4},
-        {"sku": None, "orderItemId": 55, "name": "Sticker", "quantity": 1},     # sku falls back to orderItemId
+    o = {"orderId": 9001, "orderNumber": "SS-9001", "orderStatus": "awaiting_shipment", "items": [
+        {"orderItemId": 54, "sku": "WHEEL-27", "name": "Wheel 27", "quantity": 4},
+        {"sku": None, "orderItemId": 55, "name": "Sticker", "quantity": 1},     # no sku → name
     ]}
     rows = orders_from_shipstation([o])
     assert rows == [
-        {"id": "9001:WHEEL-27", "product_ref": "WHEEL-27", "qty": 4, "state": "awaiting_shipment"},
-        {"id": "9001:55", "product_ref": "Sticker", "qty": 1, "state": "awaiting_shipment"},
+        {"id": "9001:54", "product_ref": "WHEEL-27", "qty": 4, "state": "awaiting_shipment",
+         "lot_code": "SS-9001"},
+        {"id": "9001:55", "product_ref": "Sticker", "qty": 1, "state": "awaiting_shipment",
+         "lot_code": "SS-9001"},
     ]
+
+
+# --- stable external refs (idempotency keys) -----------------------------
+
+def test_xero_ref_survives_a_line_inserted_above():
+    """Keyed on the positional index, inserting a line at the top shifts every
+    ref: the new line inherits an already-released ref (so it is never made) and
+    the last line gets a fresh one (so it is made twice). LineItemID is stable."""
+    a = {"LineItemID": "li-a", "Item": {"Code": "A"}, "Quantity": 1}
+    b = {"LineItemID": "li-b", "Item": {"Code": "B"}, "Quantity": 1}
+    new = {"LineItemID": "li-c", "Item": {"Code": "C"}, "Quantity": 1}
+    before = {r["product_ref"]: r["id"] for r in
+              orders_from_xero([{"QuoteID": "q1", "Status": "ACCEPTED", "LineItems": [a, b]}])}
+    after = {r["product_ref"]: r["id"] for r in
+             orders_from_xero([{"QuoteID": "q1", "Status": "ACCEPTED", "LineItems": [new, a, b]}])}
+    assert before["A"] == after["A"] and before["B"] == after["B"]
+    assert after["C"] not in before.values()
+
+
+def test_shipstation_two_lines_of_one_sku_stay_distinct():
+    # Keyed on the SKU, the second line collapses onto the first ref and the
+    # server's idempotency check swallows it — silent under-production.
+    o = {"orderId": 1, "orderStatus": "awaiting_shipment", "items": [
+        {"orderItemId": 11, "sku": "BOLT", "quantity": 2},
+        {"orderItemId": 12, "sku": "BOLT", "quantity": 3},
+    ]}
+    assert len({r["id"] for r in orders_from_shipstation([o])}) == 2
+
+
+def test_generic_accepts_decimal_quantity_strings():
+    # Zoho / Cin7 / Business Central serialize quantities as "4.000".
+    rows = orders_from_generic([{"id": "1", "product_ref": "X", "qty": "4.000"}], None)
+    assert rows[0]["qty"] == 4

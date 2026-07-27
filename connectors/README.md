@@ -7,8 +7,10 @@ so adding an ERP means writing one small client, nothing else.
 
 ```
 ERP order (Odoo MO / NetSuite WO)  ──►  POST /orders            (release a lot)
-Taktline finished-goods leaf reached ─►  GET  /orders/outbox     (drain, then)
-                                         POST /orders/outbox/{id}/ack
+                                         201 = released · 200 = already known
+Taktline finished-goods leaf reached ─►  GET  /orders/outbox?source=<erp>
+                                         POST /orders/outbox/{id}/ack    (delivered)
+                                         POST /orders/outbox/{id}/fail   (retry, then park)
                                          ──►  ERP order marked done / cancelled
 ```
 
@@ -69,7 +71,8 @@ cp .env.example .env         # fill in TAKTLINE_API_KEY, PRODUCT_MAPPING, ERP cr
 
 ```bash
 set -a; source .env; set +a
-python -m taktline_connect odoo        # or: netsuite
+python -m taktline_connect odoo        # or: netsuite, shopify, woocommerce,
+                                       # quickbooks (qbo), xero, shipstation, generic
 ```
 
 ## Test
@@ -109,7 +112,22 @@ document type/status. Their line items map by Item name/code via `PRODUCT_MAPPIN
   `POST /orders/cancel` is a no-op on an already-cancelled order — so restarts
   and overlapping polls never double-release or double-cancel.
 - **At-least-once completions:** an outbox event is only ack'd after the ERP
-  write succeeds; a failed delivery is retried next cycle.
+  write succeeds; a failed delivery is reported (`/fail`) and retried next cycle,
+  and parks as `failed` after ten attempts so an event the ERP can never accept
+  stops consuming a slot in every poll. Because delivery can repeat, `mark_done`
+  must be idempotent — NetSuite checks for an existing assemblyBuild first, or a
+  redelivery would post the finished goods into inventory twice.
+- **Scoped outbox polling:** each connector drains `?source=<its own source>`.
+  Releases nobody acks (a manual UI release, a CSV import) stay pending forever,
+  and a shared window would eventually fill with them.
+- **Pagination:** every client walks all pages (Shopify's `Link` cursor, Woo's
+  `X-WP-TotalPages` oldest-first, ShipStation `pages`, Xero `page`, QBO
+  `STARTPOSITION`, NetSuite `hasMore`). Page one alone silently starves the
+  backlog — an order that never releases never leaves the ERP's open set either.
+- **OAuth token rotation:** QBO and Xero invalidate the refresh token on use, so
+  the rotated value is persisted to `TOKEN_STORE` (default
+  `.taktline-tokens.json`). On an ephemeral filesystem the connector cannot
+  authenticate after a restart — mount it.
 - **Edits/refunds:** Shopify/Woo cancellations and full refunds map to
   `POST /orders/cancel` (scraps in-flight lots). A quantity *edit* is modelled as
   cancel + re-release, not an in-place order mutation.

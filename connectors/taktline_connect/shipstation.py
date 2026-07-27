@@ -9,13 +9,17 @@ Auth is HTTP Basic (API key + secret). Item ``sku`` maps via PRODUCT_MAPPING.
 """
 from __future__ import annotations
 
+import logging
+
 import requests
 
 from .config import Config
 from .core import Connector, Mapping
 from .taktline import TaktlineClient
 
+log = logging.getLogger("taktline_connect")
 BASE = "https://ssapi.shipstation.com"
+MAX_PAGES = 200
 
 
 def orders_from_shipstation(orders: list[dict]) -> list[dict]:
@@ -25,10 +29,14 @@ def orders_from_shipstation(orders: list[dict]) -> list[dict]:
         oid = o.get("orderId")
         for it in o.get("items", []):
             out.append({
-                "id": f"{oid}:{it.get('sku') or it.get('orderItemId')}",
+                # Key on the line id, not the SKU: two lines of the same SKU (a
+                # split bundle) would otherwise collapse to one ref and the second
+                # would be swallowed by the server's idempotency check.
+                "id": f"{oid}:{it.get('orderItemId') or it.get('sku')}",
                 "product_ref": it.get("sku") or it.get("name"),
-                "qty": int(it.get("quantity") or 0),
+                "qty": int(float(it.get("quantity") or 0)),
                 "state": o.get("orderStatus"),
+                "lot_code": o.get("orderNumber"),
             })
     return out
 
@@ -44,10 +52,18 @@ class ShipStationClient:
         statuses = tuple(states) or ("awaiting_shipment",)
         rows = []
         for st in statuses:
-            r = requests.get(f"{BASE}/orders", auth=self.auth, timeout=self.timeout,
-                             params={"orderStatus": st, "pageSize": 250})
-            r.raise_for_status()
-            rows += orders_from_shipstation(r.json().get("orders", []))
+            page = 1
+            while page <= MAX_PAGES:
+                r = requests.get(f"{BASE}/orders", auth=self.auth, timeout=self.timeout,
+                                 params={"orderStatus": st, "pageSize": 500, "page": page})
+                r.raise_for_status()
+                body = r.json()
+                rows += orders_from_shipstation(body.get("orders", []))
+                if page >= int(body.get("pages") or 1):
+                    break
+                page += 1
+            else:
+                log.warning("shipstation: stopped after %d pages of %s", MAX_PAGES, st)
         return rows
 
     def mark_done(self, external_ref: str) -> None:

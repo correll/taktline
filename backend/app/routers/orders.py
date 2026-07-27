@@ -6,7 +6,7 @@ import csv
 import io
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,11 +123,20 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
 
 
 @router.post("/", response_model=OrderPublic, status_code=201)
-async def create_order(body: OrderCreate, ctx: CompanyContext = Depends(require_orders_access),
+async def create_order(body: OrderCreate, response: Response,
+                       ctx: CompanyContext = Depends(require_orders_access),
                        session: AsyncSession = Depends(get_session)):
-    """Create + release a production order. Idempotent on (source, externalRef)."""
+    """Create + release a production order. Idempotent on (source, externalRef).
+
+    **201** when this call released the order, **200** when it returned one that
+    already existed. A polling connector re-posts its whole open backlog every
+    cycle, so without that distinction it cannot tell a real release from a
+    redelivery and logs every order as new, forever.
+    """
     ensure_full_account(ctx)   # sandbox: no order integrations
-    order, _ = await _release_order(session, ctx.company_id, body)
+    order, created = await _release_order(session, ctx.company_id, body)
+    if not created:
+        response.status_code = 200
     return _to_order(order)
 
 
@@ -236,14 +245,27 @@ async def list_orders(ctx: CompanyContext = Depends(get_active_company),
 
 # ── Outbox (declared before /{order_id} so the literal path wins) ───────────────
 
+MAX_DELIVERY_ATTEMPTS = 10
+
+
 @router.get("/outbox", response_model=List[OutboxEvent])
-async def list_outbox(status: Optional[str] = "pending",
+async def list_outbox(status: Optional[str] = "pending", source: Optional[str] = None,
                       ctx: CompanyContext = Depends(require_orders_access),
                       session: AsyncSession = Depends(get_session)):
-    """Poll pending ERP-delivery events. A connector delivers, then acks."""
+    """Poll pending ERP-delivery events. A connector delivers, then acks.
+
+    ``source`` restricts the page to events a given connector owns. Without it
+    the oldest 500 pending rows are returned — and events no connector can ack
+    (a manual UI release, a CSV import) stay pending forever, so once 500 of
+    those accumulate they fill the window and a connector never sees its own
+    completions again. Each connector passes its own source to stay clear of
+    everyone else's backlog.
+    """
     stmt = select(OutboxRow).where(OutboxRow.companyId == ctx.company_id)
     if status:
         stmt = stmt.where(OutboxRow.status == status)
+    if source:
+        stmt = stmt.where(OutboxRow.payload["source"].astext == source)
     rows = (await session.execute(stmt.order_by(OutboxRow.createdAt.asc()).limit(500))).scalars().all()
     return [_to_outbox(o) for o in rows]
 
@@ -257,6 +279,25 @@ async def ack_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders
     row.status = "delivered"
     row.attempts += 1
     row.deliveredAt = utcnow()
+
+
+@router.post("/outbox/{event_id}/fail", status_code=200)
+async def fail_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders_access),
+                      session: AsyncSession = Depends(get_session)):
+    """Record a failed delivery attempt. The event stays ``pending`` (and is
+    retried) until :data:`MAX_DELIVERY_ATTEMPTS`, then parks as ``failed`` so a
+    permanently undeliverable event — an ERP order deleted on their side — stops
+    consuming a slot in every poll forever. Returns the row so a connector can
+    log the give-up."""
+    row = await session.get(OutboxRow, require_uuid(event_id, "Event not found"))
+    if row is None or row.companyId != ctx.company_id:
+        raise HTTPException(404, "Event not found")
+    if row.status == "pending":
+        row.attempts += 1
+        if row.attempts >= MAX_DELIVERY_ATTEMPTS:
+            row.status = "failed"
+    await session.flush()
+    return _to_outbox(row)
 
 
 @router.get("/{order_id}", response_model=OrderPublic)

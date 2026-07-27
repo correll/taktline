@@ -16,6 +16,10 @@ class Config:
     product_mapping: dict = field(default_factory=dict)   # ERP product ref -> template id
     poll_interval: int = 30
     order_states: tuple = ()                               # ERP order states to pull; empty → client default
+    # How far back to look for ERP-side cancellations. These sets only grow, so
+    # rescanning all of history every poll would burn the whole API budget on
+    # already-settled orders; widen it if a connector may be offline for longer.
+    cancel_lookback_days: int = 7
 
     # --- Odoo ---
     odoo_url: str = ""
@@ -75,6 +79,7 @@ def load() -> Config:
         product_mapping=json.loads(os.environ.get("PRODUCT_MAPPING", "{}")),
         poll_interval=int(os.environ.get("POLL_INTERVAL", "30")),
         order_states=tuple(s.strip() for s in os.environ.get("ORDER_STATES", "").split(",") if s.strip()),
+        cancel_lookback_days=int(os.environ.get("CANCEL_LOOKBACK_DAYS", "7")),
         odoo_url=os.environ.get("ODOO_URL", ""),
         odoo_db=os.environ.get("ODOO_DB", ""),
         odoo_username=os.environ.get("ODOO_USERNAME", ""),

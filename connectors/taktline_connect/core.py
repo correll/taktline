@@ -38,7 +38,9 @@ class Mapping:
     def resolve(self, product_ref: str | None) -> str | None:
         if product_ref is None:
             return None
-        return self.product_map.get(product_ref)
+        # PRODUCT_MAPPING comes from JSON, so its keys are always strings; an ERP
+        # that reports a numeric product id would never match without this.
+        return self.product_map.get(str(product_ref))
 
 
 class Connector:
@@ -59,14 +61,27 @@ class Connector:
                 log.warning("no template mapping for product %r (order %s) — skipping",
                             o.get("product_ref"), ref)
                 continue
-            qty = int(o.get("qty") or 0)
+            qty = int(float(o.get("qty") or 0))
             if qty < 1:
+                # Loud: a mis-mapped qty field reads as 0 for *every* order, and a
+                # connector that silently releases nothing looks perfectly healthy.
+                log.warning("order %s has quantity %r — nothing to release, skipping",
+                            ref, o.get("qty"))
                 continue
-            order = self.taktline.create_order(template_id, qty, external_ref=ref,
-                                               source=self.source, lot_code=o.get("lot_code"))
-            log.info("released %s order %s → %s (%s ×%d)",
-                     self.source, ref, order.get("id"), o.get("product_ref"), qty)
-            released += 1
+            try:
+                order = self.taktline.create_order(template_id, qty, external_ref=ref,
+                                                   source=self.source, lot_code=o.get("lot_code"))
+            except Exception as e:  # noqa: BLE001 — one bad order must not wedge the cycle
+                # Without this the whole cycle dies here: the orders behind this
+                # one never release, and cancellations + completions never run.
+                # The ERP returns the same list next poll, so it would never recover.
+                log.error("release of %s order %s failed: %s — skipping this cycle",
+                          self.source, ref, e)
+                continue
+            if order.get("created", True):
+                log.info("released %s order %s → %s (%s ×%d)",
+                         self.source, ref, order.get("id"), o.get("product_ref"), qty)
+                released += 1
         return released
 
     # --- ERP → Taktline: propagate ERP-initiated cancellations -----------
@@ -90,7 +105,9 @@ class Connector:
     # --- Taktline → ERP: drain completions/cancellations -----------------
     def sync_completions(self) -> int:
         delivered = 0
-        for ev in self.taktline.list_outbox("pending"):
+        # Ask for this connector's events only — a shared window would fill with
+        # manual/CSV releases nobody acks and starve out our own completions.
+        for ev in self.taktline.list_outbox("pending", source=self.source):
             payload = ev.get("payload") or {}
             if payload.get("source") != self.source:
                 continue  # another connector owns this event
@@ -116,6 +133,16 @@ class Connector:
                 delivered += 1
             except Exception as e:  # noqa: BLE001 — leave un-acked so it retries next cycle
                 log.error("delivery failed for event %s (ref %s): %s — will retry", ev["id"], ref, e)
+                # Count the attempt server-side. An event that can never be
+                # delivered (the ERP order was deleted) parks as 'failed' instead
+                # of being retried on every poll for the life of the connector.
+                try:
+                    row = self.taktline.fail_outbox(ev["id"]) or {}
+                    if row.get("status") == "failed":
+                        log.error("event %s (ref %s) gave up after %s attempts — "
+                                  "parked as failed", ev["id"], ref, row.get("attempts"))
+                except Exception as e2:  # noqa: BLE001 — bookkeeping must not mask the real error
+                    log.warning("could not record the failed attempt for %s: %s", ev["id"], e2)
         return delivered
 
     def run_once(self) -> tuple[int, int, int]:

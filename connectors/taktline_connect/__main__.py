@@ -13,6 +13,7 @@ from .config import load
 
 CONNECTORS = ("odoo", "netsuite", "shopify", "woocommerce",
               "quickbooks", "xero", "shipstation", "generic")
+ALIASES = {"qbo": "quickbooks", "woo": "woocommerce"}   # the module names, as documented
 USAGE = f"usage: python -m taktline_connect <{'|'.join(CONNECTORS)}>"
 
 
@@ -46,7 +47,7 @@ def main() -> None:
     if len(sys.argv) < 2:
         print(USAGE, file=sys.stderr)
         raise SystemExit(2)
-    erp = sys.argv[1]
+    erp = ALIASES.get(sys.argv[1], sys.argv[1])
     cfg = load()
     connector = _builder(erp)(cfg)
     log.info("%s connector started · poll=%ss · %d product(s) mapped",

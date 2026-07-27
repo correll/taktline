@@ -59,14 +59,21 @@ class NetSuiteClient:
         states = tuple(states) or DEFAULT_STATES
         in_list = ",".join("'%s'" % s.replace("'", "''") for s in states)
         # Work orders (transaction type 'WorkOrd') with their assembly item + qty.
+        # The assembly lives on the work order's *mainline* transaction line;
+        # `transaction.entity` is the customer, and joining items to it matches
+        # whenever a customer's internal id collides with an item's — ids are only
+        # unique per record type — which silently manufactures the wrong product.
+        # ORDER BY keeps the offset paging below stable across pages.
         rows = self._suiteql(
             "SELECT t.id AS id, t.tranid AS tranid, "
             "       BUILTIN.DF(t.status) AS status, "
             "       i.itemid AS product_ref, "
-            "       t.quantity AS qty "
+            "       ABS(tl.quantity) AS qty "
             "FROM transaction t "
-            "JOIN item i ON i.id = t.custbody_assembly_item OR i.id = t.entity "
-            f"WHERE t.type = 'WorkOrd' AND BUILTIN.DF(t.status) IN ({in_list})"
+            "JOIN transactionLine tl ON tl.transaction = t.id AND tl.mainline = 'T' "
+            "JOIN item i ON i.id = tl.item "
+            f"WHERE t.type = 'WorkOrd' AND BUILTIN.DF(t.status) IN ({in_list}) "
+            "ORDER BY t.id"
         )
         out = []
         for r in rows:
@@ -75,11 +82,17 @@ class NetSuiteClient:
                 "product_ref": r.get("product_ref"),
                 "qty": int(float(r.get("qty") or 0)),
                 "state": r.get("status"),
+                "lot_code": r.get("tranid"),     # e.g. "WO1042"
             })
         return out
 
     def mark_done(self, external_ref: str) -> None:
         # Build the assembly from the work order — transforms WO → assemblyBuild.
+        # Guarded: delivery is at-least-once (a completion is re-sent if the ack
+        # is lost), and a second assemblyBuild would post the finished goods into
+        # inventory twice. Checking for an existing build makes the retry a no-op.
+        if self._already_built(external_ref):
+            return
         r = requests.post(
             f"{self.base}/record/v1/assemblyBuild",
             auth=self.auth, timeout=self.timeout,
@@ -87,6 +100,15 @@ class NetSuiteClient:
             json={"workOrder": {"id": str(external_ref)}},
         )
         r.raise_for_status()
+
+    def _already_built(self, external_ref: str) -> bool:
+        try:
+            wo_id = int(external_ref)
+        except (TypeError, ValueError):
+            return False
+        rows = self._suiteql("SELECT id FROM transaction "
+                             f"WHERE type = 'Build' AND createdfrom = {wo_id}")
+        return bool(rows)
 
     def cancel(self, external_ref: str) -> None:
         r = requests.patch(

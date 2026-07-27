@@ -8,6 +8,8 @@ what keeps them thin.
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import requests
 
 
@@ -26,7 +28,7 @@ class TaktlineClient:
     def _post(self, path: str, body: dict | None = None):
         r = self.s.post(self.base + path, json=body, timeout=self.timeout)
         r.raise_for_status()
-        return r.json() if r.content else None
+        return (r.json() if r.content else None), r.status_code
 
     # --- release ---------------------------------------------------------
     def create_order(self, template_id: str, quantity: int, external_ref: str, source: str,
@@ -36,7 +38,12 @@ class TaktlineClient:
 
         ``lot_code`` is the human reference printed on the released Kanban card(s)
         (e.g. a Shopify order name "#1001"); when omitted the server uses the
-        externalRef, so the lot always traces back to its ERP order."""
+        externalRef, so the lot always traces back to its ERP order.
+
+        The returned dict carries ``created``: True when this call released the
+        order (HTTP 201), False when the server returned one that already existed
+        (200). Connectors re-post their whole open backlog every cycle, so this is
+        what separates a real release from a redelivery."""
         body = {
             "productTemplateId": template_id,
             "quantity": quantity,
@@ -45,7 +52,8 @@ class TaktlineClient:
         }
         if lot_code:
             body["lotCode"] = lot_code
-        return self._post("/orders/", body)
+        order, status = self._post("/orders/", body)
+        return {**(order or {}), "created": status == 201}
 
     def cancel_by_ref(self, source: str, external_ref: str) -> bool:
         """Cancel the order matching (source, externalRef). Returns False if no
@@ -60,8 +68,19 @@ class TaktlineClient:
         return True
 
     # --- completions -----------------------------------------------------
-    def list_outbox(self, status: str = "pending") -> list[dict]:
-        return self._get(f"/orders/outbox?status={status}")
+    def list_outbox(self, status: str = "pending", source: str | None = None) -> list[dict]:
+        """Pending delivery events. Pass ``source`` to see only this connector's
+        own events — the unfiltered window is shared with releases nobody acks
+        (manual, CSV), which would eventually crowd out real completions."""
+        path = f"/orders/outbox?status={status}"
+        if source:
+            path += f"&source={quote(source)}"
+        return self._get(path)
 
     def ack_outbox(self, event_id: str) -> None:
         self._post(f"/orders/outbox/{event_id}/ack")
+
+    def fail_outbox(self, event_id: str) -> dict | None:
+        """Record a failed delivery attempt; the server parks the event as
+        'failed' once it has burned through its retries."""
+        return self._post(f"/orders/outbox/{event_id}/fail")[0]

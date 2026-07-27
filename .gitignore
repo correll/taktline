@@ -20,3 +20,6 @@ dist/
 # Saved-page exports of the integrations map (source: linkedin/src/)
 /Taktline integrations map.html
 /Taktline integrations map_files/
+
+# Connector OAuth token store — holds live refresh tokens
+.taktline-tokens.json

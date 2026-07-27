@@ -43,7 +43,8 @@ def test_order_release_completion_and_outbox(actor):
     # 2) idempotency: same (source, externalRef) returns the same order, no new lots
     r2 = a.req("POST", "/orders/", {"productTemplateId": asm["_id"], "quantity": 5,
                                     "source": "odoo", "externalRef": "MO-1"})
-    assert r2.status_code == 201 and r2.json()["id"] == order["id"] and r2.json()["quantity"] == 2
+    # 200 (not 201) is how a connector tells a redelivery from a real release
+    assert r2.status_code == 200 and r2.json()["id"] == order["id"] and r2.json()["quantity"] == 2
     assert len([c for c in a.req("GET", "/cards/").json() if c["orderId"] == order["id"]]) == 2
 
     # 3) move both precursors to the merge station, then merge
@@ -122,3 +123,58 @@ def test_order_cancel_scraps_lots(actor):
     assert [c for c in a.req("GET", "/cards/").json() if c["orderId"] == order["id"]] == []
     cancelled = [e for e in a.req("GET", "/orders/outbox").json() if e["eventType"] == "order.cancelled"]
     assert len(cancelled) == 1
+
+
+def test_outbox_can_be_scoped_to_one_connector(actor):
+    """Events nobody acks (a manual UI release, a CSV import) stay pending for
+    good. Sharing one 500-row window with them eventually crowds out a real
+    connector's completions, so a connector filters the poll by its own source."""
+    a = actor(); bootstrap_admin(a)
+    st, proc, asm = build_line(a)
+    for source, ref in (("odoo", "MO-9"), ("manual", "UI-1")):
+        r = a.req("POST", "/orders/", {"productTemplateId": asm["_id"], "quantity": 1,
+                                       "source": source, "externalRef": ref})
+        assert r.status_code == 201, r.text
+        a.req("POST", f"/orders/{r.json()['id']}/cancel")      # emits order.cancelled
+
+    everything = a.req("GET", "/orders/outbox").json()
+    assert {e["payload"]["source"] for e in everything} == {"odoo", "manual"}
+
+    mine = a.req("GET", "/orders/outbox?status=pending&source=odoo").json()
+    assert [e["payload"]["externalRef"] for e in mine] == ["MO-9"]
+
+
+def test_undeliverable_event_parks_after_its_retries(actor):
+    """A completion the ERP can never accept (its order was deleted there) must
+    stop being retried, or it occupies a slot in every poll forever."""
+    a = actor(); bootstrap_admin(a)
+    st, proc, asm = build_line(a)
+    r = a.req("POST", "/orders/", {"productTemplateId": asm["_id"], "quantity": 1,
+                                   "source": "odoo", "externalRef": "MO-X"})
+    a.req("POST", f"/orders/{r.json()['id']}/cancel")
+    ev = a.req("GET", "/orders/outbox?source=odoo").json()[0]
+
+    for i in range(1, 10):
+        body = a.req("POST", f"/orders/outbox/{ev['id']}/fail").json()
+        assert body["attempts"] == i
+        assert body["status"] == ("failed" if i >= 10 else "pending")
+    body = a.req("POST", f"/orders/outbox/{ev['id']}/fail").json()
+    assert body["status"] == "failed" and body["attempts"] == 10
+
+    assert [e["id"] for e in a.req("GET", "/orders/outbox?source=odoo").json()] == []
+    # parked, not lost — still visible for an operator to inspect
+    assert [e["id"] for e in a.req("GET", "/orders/outbox?status=failed").json()] == [ev["id"]]
+    # and a late success can still ack it
+    assert a.req("POST", f"/orders/outbox/{ev['id']}/fail").json()["attempts"] == 10
+
+
+def test_fail_is_tenant_scoped(actor):
+    a = actor(); bootstrap_admin(a)
+    st, proc, asm = build_line(a)
+    r = a.req("POST", "/orders/", {"productTemplateId": asm["_id"], "quantity": 1,
+                                   "source": "odoo", "externalRef": "MO-T"})
+    a.req("POST", f"/orders/{r.json()['id']}/cancel")
+    ev = a.req("GET", "/orders/outbox?source=odoo").json()[0]
+
+    other = actor(); bootstrap_admin(other)
+    assert other.req("POST", f"/orders/outbox/{ev['id']}/fail").status_code == 404

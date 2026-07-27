@@ -6,15 +6,20 @@ Like QBO, Xero has no manufacturing order; an accepted Quote is a reasonable
 """
 from __future__ import annotations
 
+import logging
+
 import requests
 
 from .config import Config
 from .core import Connector, Mapping
-from .oauth import refresh_access_token
+from .oauth import load_refresh_token, refresh_access_token
 from .taktline import TaktlineClient
 
+log = logging.getLogger("taktline_connect")
 TOKEN_URL = "https://identity.xero.com/connect/token"
 API_BASE = "https://api.xero.com/api.xro/2.0"
+PAGE_SIZE = 100
+MAX_PAGES = 200
 
 
 def orders_from_xero(quotes: list[dict]) -> list[dict]:
@@ -25,10 +30,15 @@ def orders_from_xero(quotes: list[dict]) -> list[dict]:
         for i, li in enumerate(q.get("LineItems", [])):
             item = li.get("Item") or {}
             out.append({
-                "id": f"Quote:{qid}:{i}",
+                # LineItemID is stable across edits; the positional index is not.
+                # Keyed on the index, inserting a line at the top shifts every
+                # ref: the new line inherits an already-released ref (so it never
+                # produces) and the last line gets a fresh one (so it produces twice).
+                "id": f"Quote:{qid}:{li.get('LineItemID') or i}",
                 "product_ref": item.get("Code") or li.get("Description"),
                 "qty": int(float(li.get("Quantity") or 0)),
                 "state": q.get("Status"),
+                "lot_code": q.get("QuoteNumber"),
             })
     return out
 
@@ -40,12 +50,15 @@ class XeroClient:
         self.cfg = cfg
         self.timeout = timeout
         self.tenant = cfg.xero_tenant_id
-        self.refresh_token = cfg.xero_refresh_token
+        # Xero rotates on every refresh, so the env value is stale after the
+        # first cycle; the persisted one is the only way to survive a restart.
+        self.refresh_token = load_refresh_token("xero", cfg.xero_refresh_token)
         self.access = None
 
     def _auth(self):
         self.access, self.refresh_token = refresh_access_token(
-            TOKEN_URL, self.cfg.xero_client_id, self.cfg.xero_client_secret, self.refresh_token, self.timeout)
+            TOKEN_URL, self.cfg.xero_client_id, self.cfg.xero_client_secret,
+            self.refresh_token, self.timeout, provider="xero")
 
     def _get(self, path: str, **params) -> dict:
         if self.access is None:
@@ -64,7 +77,15 @@ class XeroClient:
     def list_orders(self, states) -> list[dict]:
         rows = []
         for st in (tuple(states) or ("ACCEPTED",)):
-            rows += orders_from_xero(self._get("/Quotes", Status=st).get("Quotes", []))
+            page = 1
+            while page <= MAX_PAGES:
+                quotes = self._get("/Quotes", Status=st, page=page).get("Quotes", [])
+                rows += orders_from_xero(quotes)
+                if len(quotes) < PAGE_SIZE:      # Xero caps /Quotes at 100 per page
+                    break
+                page += 1
+            else:
+                log.warning("xero: stopped after %d pages of %s quotes", MAX_PAGES, st)
         return rows
 
 

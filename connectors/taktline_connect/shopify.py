@@ -11,11 +11,17 @@ the shop floor to fulfil.
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timedelta, timezone
+
 import requests
 
 from .config import Config
 from .core import Connector, Mapping
 from .taktline import TaktlineClient
+
+log = logging.getLogger("taktline_connect")
+MAX_PAGES = 200          # 50k orders per cycle — a runaway-cursor backstop
 
 
 def _line_ref(order_id, line_id) -> str:
@@ -53,20 +59,49 @@ class ShopifyClient:
         self.headers = {"X-Shopify-Access-Token": cfg.shopify_token}
         self.timeout = timeout
         self.fulfill = cfg.shopify_fulfill
+        self.cancel_lookback_days = cfg.cancel_lookback_days
+
+    @staticmethod
+    def _next_link(resp) -> str | None:
+        """Shopify pages with an opaque cursor in the ``Link`` header; the next
+        URL already carries every filter, so it must be fetched bare."""
+        for part in (resp.headers.get("Link") or "").split(","):
+            bits = part.split(";")
+            if len(bits) >= 2 and 'rel="next"' in bits[1]:
+                return bits[0].strip().strip("<>")
+        return None
 
     def _orders(self, **params) -> list[dict]:
-        r = requests.get(self.base + "/orders.json", headers=self.headers,
-                         params={"limit": 250, **params}, timeout=self.timeout)
-        r.raise_for_status()
-        return r.json().get("orders", [])
+        url, query, out = self.base + "/orders.json", {"limit": 250, **params}, []
+        for _ in range(MAX_PAGES):
+            r = requests.get(url, headers=self.headers, params=query, timeout=self.timeout)
+            r.raise_for_status()
+            out += r.json().get("orders", [])
+            url = self._next_link(r)
+            if not url:
+                return out
+            query = None          # the cursor URL is complete on its own
+        log.warning("shopify: stopped after %d pages (%d orders) — some orders were "
+                    "not read this cycle", MAX_PAGES, len(out))
+        return out
 
     def list_orders(self, states) -> list[dict]:
-        # paid + still open (unfulfilled) → releasable
-        return orders_from_shopify(self._orders(status="open", financial_status="paid"))
+        # paid + still open (unfulfilled) → releasable. ORDER_STATES, when set,
+        # overrides the financial statuses considered releasable.
+        out = []
+        for fin in (tuple(states) or ("paid",)):
+            out += orders_from_shopify(self._orders(status="open", financial_status=fin))
+        return out
 
     def list_cancellations(self, states) -> list[str]:
-        refs = cancel_refs_from_shopify(self._orders(status="cancelled"))
-        refs += cancel_refs_from_shopify(self._orders(status="any", financial_status="refunded"))
+        # Bounded by a lookback window: the cancelled/refunded sets only grow, and
+        # re-cancelling the shop's entire history on every poll would spend the
+        # whole API budget re-doing settled work.
+        since = (datetime.now(timezone.utc)
+                 - timedelta(days=self.cancel_lookback_days)).isoformat()
+        refs = cancel_refs_from_shopify(self._orders(status="cancelled", updated_at_min=since))
+        refs += cancel_refs_from_shopify(
+            self._orders(status="any", financial_status="refunded", updated_at_min=since))
         return refs
 
     def mark_done(self, external_ref: str) -> None:

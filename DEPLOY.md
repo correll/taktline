@@ -45,7 +45,7 @@ Render reads `render.yaml` and creates:
 | | |
 |---|---|
 | `taktline` | web service, Docker, `starter` plan (~$7/mo, always on) |
-| `taktline-db` | Postgres, `basic-256mb` (~$6/mo, 1 GB, no expiry) |
+| `taktline-db` | Postgres, `basic-256mb` (~$6/mo, no expiry) — see [storage](#a-note-on-storage) |
 
 It wires `DATABASE_URL` between them and generates `SECRET_KEY` itself, so
 neither ever touches your repo. **This starts billing on apply.**
@@ -72,6 +72,25 @@ and every email would fail.
 `FRONTEND_BASE_URL` is already set to `https://taktline.com` in `render.yaml` —
 change that line if you are deploying anywhere else. It is what the links in
 verification and invite emails are built from.
+
+### A note on storage
+
+`basic-256mb` names the **RAM, not the disk**. It comes with **1 GB of
+storage**, and storage scales independently of the instance type — add it at
+any time, in 5 GB steps, at $0.30/GB-month, with no downtime. You cannot shrink
+it again, so there is no reason to over-provision up front.
+
+1 GB is more than it sounds for this workload. Measured against the real
+schema, the two tables that grow forever are `card_events` (167 B/row, the
+audit log — never pruned) and `sessions` (122 B/row). A busy single shop doing
+200 lot movements and 1,000 work sessions a day accumulates roughly **100 MB a
+year** including index overhead, so the included gigabyte lasts about a decade.
+Floor plans live in Postgres too, but at ~90 KB each a handful of them never
+matters.
+
+Watch it rather than assume it: Render shows database size in the dashboard,
+and the first thing to check if it ever climbs unexpectedly is `card_events`,
+since nothing deletes from it by design.
 
 ## 3. Watch the first deploy
 

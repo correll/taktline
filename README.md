@@ -152,9 +152,9 @@ npm run build          # outputs to frontend/dist/
 ```
 
 Serve `frontend/dist/` as static files, or set `FRONTEND_DIST` so the FastAPI
-service serves the SPA itself (same-origin). See **[DEPLOY.md](DEPLOY.md)** for a
-free-tier deployment guide (Neon + Render/Fly + Vercel + SendGrid), including the
-cross-origin cookie/CORS settings.
+service serves the SPA itself (same-origin). **[DEPLOY.md](DEPLOY.md)** is a
+step-by-step deployment to Render (app + Postgres) with Resend for email, and
+the `Dockerfile` it uses runs anywhere else that takes a container.
 
 ### 4. Tests
 

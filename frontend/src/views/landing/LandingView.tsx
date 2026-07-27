@@ -5,6 +5,7 @@ import { track } from '../../analytics'
 import { authApi } from '../../api/auth.api'
 import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
+import { featuredTips } from '../../help/leanTips'
 import { useAuthStore } from '../../store/auth.store'
 import { useThemeStore } from '../../store/theme.store'
 import { color, font, size, shadow } from '../../theme/tokens'
@@ -73,6 +74,7 @@ export default function LandingView() {
         <Features />
         <Integrations />
         <Founder />
+        <FromTheBook />
         <BusinessModel />
         <Questions />
         <FinalCta />
@@ -401,6 +403,61 @@ function Founder() {
             </p>
           </div>
         </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Three lines from the book ───────────────────────────────────────────────
+
+// Deliberately three fixed tips, not the app's rotating tip of the day: a
+// visitor sees the page once, so the argument has to be the same every time —
+// and half the rotation is Taktline UI advice that reads as jargon to someone
+// who has never seen the product.
+function FromTheBook() {
+  const tips = featuredTips()
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={eyebrowStyle}>From the book</div>
+          <h2 style={h2Style}>The thinking underneath</h2>
+        </div>
+        <div style={{
+          marginTop: size.sp8, display: 'grid', gap: size.sp4,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        }}>
+          {tips.map((tip) => (
+            <blockquote key={tip.category} style={{
+              ...cardStyle, margin: 0, display: 'flex', flexDirection: 'column',
+              gap: size.sp3, textAlign: 'left',
+            }}>
+              <span style={{
+                alignSelf: 'flex-start', fontSize: 10, fontFamily: font.mono,
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+                color: color.blueBright, background: `${color.bluePrimary}18`,
+                border: `1px solid ${color.bluePrimary}40`,
+                borderRadius: size.radiusFull, padding: '2px 10px',
+              }}>
+                {tip.category}
+              </span>
+              <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: color.textSecondary }}>
+                {tip.text}
+              </p>
+            </blockquote>
+          ))}
+        </div>
+        <p style={{
+          marginTop: size.sp5, fontSize: 13.5, lineHeight: 1.7,
+          color: color.textDim, textAlign: 'center',
+        }}>
+          From{' '}
+          <a href="https://www.amazon.com/dp/B09B1PPF91/" target="_blank" rel="noopener noreferrer"
+             style={bookLink}
+             onClick={() => track('outbound_click', { to: 'book-seven-deadly-wastes', where: 'from-the-book' })}>
+            The Seven Deadly Wastes
+          </a>. A new one greets you in the app each morning.
+        </p>
       </div>
     </section>
   )

@@ -353,7 +353,8 @@ function Founder() {
               Notre Dame, and adjoint Professor of Computer Science at the University of
               Colorado at Boulder. Nikolaus founded Robotic Materials Inc., where he
               co-created Optio — a digital value-stream-mapping system for high-mix,
-              low-volume (re)manufacturers. Taktline continues that work.
+              low-volume (re)manufacturers. Taktline is a fresh start on the same idea,
+              rebuilt from scratch.
             </p>
             <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14, lineHeight: 1.7, color: color.textSecondary }}>
               He is the author of{' '}

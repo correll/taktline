@@ -26,9 +26,11 @@ def test_split_route_may_carry_a_weight():
     _line(a)   # the weighted split route is accepted (asserted inside)
 
 
-def test_advancing_through_a_split_multiplies_the_lot():
+def test_advancing_through_a_split_fans_out_to_every_branch():
+    """A split is a disassembly: one bar becomes four tubes AND one offcut, each
+    its own lot pinned to that branch's product."""
     a = Actor(); bootstrap_admin(a)
-    bar, tube, _scrap, proc = _line(a)
+    bar, tube, scrap, proc = _line(a)
     tmpl = a.req("POST", "/lot-templates/", {"name": "Bar", "processId": proc["_id"],
                                              "startStationId": bar["_id"]}).json()
     card = a.req("POST", "/cards/", {
@@ -39,10 +41,16 @@ def test_advancing_through_a_split_multiplies_the_lot():
     r = a.req("POST", f"/cards/{card['_id']}/advance",
               {"fromStationId": bar["_id"], "toStationId": tube["_id"], "quantity": 1})
     assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["bins"][tube["_id"]]["count"] == 4     # one bar → four tubes
-    assert body["bins"][bar["_id"]]["count"] == 1      # the other bar is untouched
-    assert body["totalQuantity"] == 5                  # 1 bar + 4 tubes
+
+    cards = a.req("GET", "/cards/").json()
+    at = lambda sid: [c for c in cards if c["bins"].get(sid, {}).get("count", 0) > 0]
+    assert at(tube["_id"])[0]["bins"][tube["_id"]]["count"] == 4    # four tubes…
+    assert at(scrap["_id"])[0]["bins"][scrap["_id"]]["count"] == 1  # …and one offcut
+    assert at(bar["_id"])[0]["bins"][bar["_id"]]["count"] == 1      # second bar untouched
+    # Each piece is pinned to the product that branch originates.
+    tmpls = {t["_id"]: t for t in a.req("GET", "/lot-templates/").json()}
+    assert tmpls[at(tube["_id"])[0]["lotTemplateId"]]["startStationId"] == tube["_id"]
+    assert tmpls[at(scrap["_id"])[0]["lotTemplateId"]]["startStationId"] == scrap["_id"]
 
 
 def test_pull_through_a_split_creates_one_upstream_lot():
@@ -125,3 +133,68 @@ def test_diamond_with_uneven_split_weights_takes_the_larger_branch():
     assert len(sources) == 1
     # loc2 branch needs ceil(4/2)=2; loc3 branch needs 4 → 4 units cover both.
     assert sources[0]["quantity"] == 4
+
+
+def test_alternative_routing_in_another_process_is_not_a_split():
+    """Choice routing lives in its own process: a second outgoing route in a
+    DIFFERENT process neither unlocks a weight nor causes a fan-out."""
+    a = Actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    qc, paint, rework = st("qc"), st("paint"), st("rework")
+    main = a.req("POST", "/processes/", {"name": "Main"}).json()["_id"]
+    alt  = a.req("POST", "/processes/", {"name": "Rework"}).json()["_id"]
+    assert a.req("POST", "/routes/", {"processId": main, "load": qc["_id"],
+                                      "unload": paint["_id"], "quantity": 1}).status_code == 201
+    assert a.req("POST", "/routes/", {"processId": alt, "load": qc["_id"],
+                                      "unload": rework["_id"], "quantity": 1}).status_code == 201
+
+    # qc branches only across processes, so Main's route stays unbranched: no weight.
+    route = next(r for r in a.req("GET", "/routes/").json()
+                 if r["load"] == qc["_id"] and r["unload"] == paint["_id"])
+    assert a.req("PUT", f"/routes/{route['_id']}", {"quantity": 3}).status_code == 400
+
+    tmpl = a.req("POST", "/lot-templates/", {"name": "Part", "processId": main,
+                                             "startStationId": qc["_id"]}).json()
+    card = a.req("POST", "/cards/", {
+        "lotTemplateId": tmpl["_id"], "processId": main, "totalQuantity": 1,
+        "bins": {qc["_id"]: {"count": 1}}, "fields": {}, "flagged": False,
+        "description": "", "status": "idle"}).json()
+    body = a.req("POST", f"/cards/{card['_id']}/advance",
+                 {"fromStationId": qc["_id"], "toStationId": paint["_id"],
+                  "quantity": 1}).json()
+    # Plain 1:1 hop — the other process's branch is untouched.
+    assert body["bins"][paint["_id"]]["count"] == 1
+    assert rework["_id"] not in body["bins"]
+
+
+def test_diamond_flows_end_to_end():
+    """The point of fan-out: one pulled lot at loc1 becomes a piece on loc2 AND
+    loc3 in a single advance, so the merge at loc4 can complete."""
+    a = Actor(); bootstrap_admin(a)
+    l1, l2, l3, l4, _p = _diamond(a)
+    a.req("POST", f"/merge/{l4['_id']}/pull", {"quantity": 1})
+    card = next(c for c in a.req("GET", "/cards/").json()
+                if c["bins"].get(l1["_id"], {}).get("count", 0) > 0)
+
+    r = a.req("POST", f"/cards/{card['_id']}/advance",
+              {"fromStationId": l1["_id"], "toStationId": l2["_id"], "quantity": 1})
+    assert r.status_code == 200, r.text
+
+    # One piece per branch, each its own lot, both carrying the source lot code.
+    cards = a.req("GET", "/cards/").json()
+    at = lambda sid: [c for c in cards if c["bins"].get(sid, {}).get("count", 0) > 0]
+    assert len(at(l2["_id"])) == 1 and len(at(l3["_id"])) == 1
+    assert not at(l1["_id"])                                   # source consumed
+    assert at(l2["_id"])[0]["lotNum"] == card["lotNum"] == at(l3["_id"])[0]["lotNum"]
+
+    # Both pieces move on to the merge station…
+    for src, piece in ((l2, at(l2["_id"])[0]), (l3, at(l3["_id"])[0])):
+        r = a.req("POST", f"/cards/{piece['_id']}/advance",
+                  {"fromStationId": src["_id"], "toStationId": l4["_id"], "quantity": 1})
+        assert r.status_code == 200, r.text
+    assert a.req("GET", f"/merge/{l4['_id']}").json()["assembliesPossible"] == 1
+
+    # …and the merge completes.
+    r = a.req("POST", f"/merge/{l4['_id']}")
+    assert r.status_code == 201, r.text
+    assert r.json()["assemblies"] == 1

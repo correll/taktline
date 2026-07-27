@@ -19,7 +19,7 @@ from ..models.card import Card, CardCreate, CardUpdate, LotStatus
 from ..models.card_event import CardEvent, EventType
 from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
-from .merge import _leaf_sources, _gen_lot_code
+from .merge import _ensure_origination_template, _leaf_sources, _gen_lot_code
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -207,47 +207,111 @@ async def delete_card(card_id: str, ctx: CompanyContext = Depends(require_super_
 
 # ─── Move / advance / unmerge ──────────────────────────────────────────────────
 
-async def _split_factor(session, company_id, from_id: str, to_id: str) -> int:
-    """How many downstream units one upstream unit becomes on this route.
+async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id: str):
+    """The branches of a split, or None when this is an ordinary 1:1 hop.
 
-    A **split** is a station with two or more outgoing routes: the weight says
-    how many pieces each unit becomes (one steel bar cut into four tubes). A
-    weight on a *merge feed* means the opposite — units consumed per assembly —
-    and is applied when merging, so merge feeds never multiply here.
+    Within one process a station with two or more outgoing routes is a **split**
+    — a disassembly. One unit becomes a piece on *every* branch at once (a bar
+    cut into four tubes plus an offcut), which is the exact mirror of a merge
+    consuming one precursor per incoming branch. Alternative ("either/or")
+    routing is modelled as a *separate process*, so branches are only ever
+    counted within the card's own process.
     """
     from_uuid, to_uuid = parse_uuid(from_id), parse_uuid(to_id)
     if from_uuid is None or to_uuid is None:
-        return 1
-    route = (await session.execute(
+        return None
+    branches = list((await session.execute(
         select(RouteRow).where(
             RouteRow.companyId == company_id,
             RouteRow.load == from_uuid,
-            RouteRow.unload == to_uuid,
+            RouteRow.processId == row.processId,
         )
-    )).scalars().first()
-    if route is None or route.quantity <= 1:
-        return 1
-    incoming = (await session.execute(
+    )).scalars().all())
+    if len(branches) < 2 or not any(b.unload == to_uuid for b in branches):
+        return None
+    return branches
+
+
+async def _branch_units(session, company_id, row: CardRow, branch: RouteRow, quantity: int) -> int:
+    """Pieces produced on one branch of a split. On a *merge feed* the weight
+    means units consumed per assembly and is applied at the merge, not here."""
+    merge_feed = (await session.execute(
         select(func.count()).select_from(RouteRow).where(
-            RouteRow.companyId == company_id, RouteRow.unload == to_uuid)
-    )).scalar_one()
-    if incoming >= 2:
-        return 1        # merge feed — the weight is consumed at the merge instead
-    outgoing = (await session.execute(
-        select(func.count()).select_from(RouteRow).where(
-            RouteRow.companyId == company_id, RouteRow.load == from_uuid)
-    )).scalar_one()
-    return route.quantity if outgoing >= 2 else 1
+            RouteRow.companyId == company_id, RouteRow.unload == branch.unload,
+            RouteRow.processId == row.processId)
+    )).scalar_one() >= 2
+    return quantity * (1 if merge_feed else max(1, branch.quantity))
+
+
+async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id: str,
+                         quantity: int, branches) -> Card:
+    """Disassemble `quantity` units into a new lot on every branch.
+
+    Each piece becomes its own card pinned to that branch's originating
+    template — the mirror of a merge, where several precursor cards become one
+    assembly card. Keeping them as separate cards is what lets a downstream
+    merge tell the branches apart. The lot code carries through: the pieces are
+    the same physical material."""
+    old_bins = dict(row.bins or {})
+    from_count = old_bins.get(from_id, {}).get("count", 0)
+    if quantity < 1 or quantity > from_count:
+        raise HTTPException(400, f"Cannot move {quantity}: only {from_count} available at source")
+
+    source_id = str(row.id)
+    inherit_num = row.lotNum or _gen_lot_code()
+    order_id = row.orderId
+    process_id = row.processId
+
+    # Consume at the source; the card disappears once nothing of it is left.
+    new_bins = dict(old_bins)
+    remaining = from_count - quantity
+    if remaining <= 0:
+        new_bins.pop(from_id, None)
+    else:
+        new_bins[from_id] = {"count": remaining}
+    _record_event(session, company_id, source_id, "updated",
+                  fromStation=from_id, quantity=quantity, note="split")
+    if not new_bins:
+        await session.delete(row)
+        _emit_card_delete(session, company_id, source_id)
+    else:
+        row.bins = new_bins
+        row.totalQuantity = max(1, sum(b.get("count", 0) for b in new_bins.values()))
+        row.updatedAt = utcnow()
+        await session.flush()
+        _emit_card_update(session, company_id, row)
+    if remaining <= 0:
+        await plugin_registry.notify_lot_depart(from_id, source_id)
+
+    requested: Card | None = None
+    for branch in branches:
+        units = await _branch_units(session, company_id, row, branch, quantity)
+        tmpl = await _ensure_origination_template(session, company_id, branch.unload, process_id)
+        piece = CardRow(
+            companyId=company_id, lotTemplateId=tmpl.id, processId=process_id,
+            lotNum=inherit_num, totalQuantity=units,
+            bins={str(branch.unload): {"count": units}},
+            fields={}, flagged=False, description="", status="idle", orderId=order_id,
+        )
+        session.add(piece)
+        await session.flush()
+        piece_card = _to_card(piece)
+        _record_event(session, company_id, str(piece.id), "created",
+                      fromStation=from_id, toStation=str(branch.unload),
+                      quantity=units, note="split")
+        _emit_card_update(session, company_id, piece)
+        await plugin_registry.notify_lot_arrive(
+            str(branch.unload), str(piece.id), piece_card.model_dump(mode="json"))
+        await _record_order_progress(session, company_id, piece, str(branch.unload), units)
+        if str(branch.unload) == to_id:
+            requested = piece_card
+    return requested or piece_card
 
 
 async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_id: str,
-                            quantity: int, produced: int | None = None) -> Card:
+                            quantity: int) -> Card:
     """Shift `quantity` units of a card between two of its bins, record the
-    'moved' event, and fire the arrive/depart plugin notifications.
-
-    `produced` (default: `quantity`) is how many units arrive at the target —
-    larger when the route splits one unit into several pieces."""
-    produced = quantity if produced is None else produced
+    'moved' event, and fire the arrive/depart plugin notifications."""
     old_bins = dict(row.bins or {})
     from_count = old_bins.get(from_id, {}).get("count", 0)
     if quantity < 1 or quantity > from_count:
@@ -260,14 +324,9 @@ async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_
     else:
         new_bins[from_id] = {"count": new_from}
     to_count = old_bins.get(to_id, {}).get("count", 0)
-    new_bins[to_id] = {"count": to_count + produced}
+    new_bins[to_id] = {"count": to_count + quantity}
 
     row.bins = new_bins
-    # Splitting creates pieces, so the lot grows; totalQuantity must keep
-    # covering the bins (sum(bins) <= totalQuantity is the card invariant).
-    if produced != quantity:
-        in_bins = sum(b.get("count", 0) for b in new_bins.values())
-        row.totalQuantity = max(row.totalQuantity + (produced - quantity), in_bins)
     row.updatedAt = utcnow()
     await session.flush()
     card = _to_card(row)
@@ -328,11 +387,14 @@ async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(
     """Super-admin lot-board drag: unconstrained move of units between any two
     bins (forward or backward along the graph — backward can trigger unmerge)."""
     row = await _get_owned(session, card_id, ctx, for_update=True)
-    produced = body.quantity * await _split_factor(
-        session, ctx.company_id, body.fromStationId, body.toStationId)
+    branches = await _split_branches(session, ctx.company_id, row, body.fromStationId,
+                                     body.toStationId)
+    if branches is not None:
+        return await _perform_split(session, ctx.company_id, row, body.fromStationId,
+                                    body.toStationId, body.quantity, branches)
     card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId,
-                                   body.toStationId, body.quantity, produced)
-    await _record_order_progress(session, ctx.company_id, row, body.toStationId, produced)
+                                   body.toStationId, body.quantity)
+    await _record_order_progress(session, ctx.company_id, row, body.toStationId, body.quantity)
     return card
 
 
@@ -366,11 +428,14 @@ async def advance_card(card_id: str, body: AdvanceBody,
     )).scalars().first()
     if route is None:
         raise HTTPException(400, "No route from the current station to the target station")
-    produced = body.quantity * await _split_factor(
-        session, ctx.company_id, body.fromStationId, body.toStationId)
+    branches = await _split_branches(session, ctx.company_id, row, body.fromStationId,
+                                     body.toStationId)
+    if branches is not None:
+        return await _perform_split(session, ctx.company_id, row, body.fromStationId,
+                                    body.toStationId, body.quantity, branches)
     card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId,
-                                   body.toStationId, body.quantity, produced)
-    await _record_order_progress(session, ctx.company_id, row, body.toStationId, produced)
+                                   body.toStationId, body.quantity)
+    await _record_order_progress(session, ctx.company_id, row, body.toStationId, body.quantity)
     return card
 
 

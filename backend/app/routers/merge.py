@@ -320,11 +320,14 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
 
 # ─── Pull: create precursor lots at all upstream source stations ──────────────
 
-async def _outgoing_count(session, company_id, load_uuid) -> int:
-    return (await session.execute(
-        select(func.count()).select_from(RouteRow).where(
-            RouteRow.companyId == company_id, RouteRow.load == load_uuid)
-    )).scalar_one()
+async def _outgoing_count(session, company_id, load_uuid, process_id=None) -> int:
+    """Outgoing routes of a station. Scoped to one process when given: an
+    alternative routing lives in its own process and must not read as a split."""
+    stmt = select(func.count()).select_from(RouteRow).where(
+        RouteRow.companyId == company_id, RouteRow.load == load_uuid)
+    if process_id is not None:
+        stmt = stmt.where(RouteRow.processId == process_id)
+    return (await session.execute(stmt)).scalar_one()
 
 
 def _coalesce_sources(sources: list[dict]) -> list[dict]:
@@ -352,7 +355,8 @@ async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, 
     results: list[dict] = []
     for route in incoming:
         route_qty = max(1, route.quantity)
-        if len(incoming) == 1 and await _outgoing_count(session, company_id, route.load) >= 2:
+        if len(incoming) == 1 and await _outgoing_count(
+                session, company_id, route.load, route.processId) >= 2:
             # Split: the upstream unit becomes route_qty pieces, so demand for N
             # pieces needs only ceil(N / route_qty) of it — one bar, four tubes.
             upstream = -(-multiplier // route_qty)

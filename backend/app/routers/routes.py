@@ -93,16 +93,22 @@ async def _other_incoming_count(session, company_id, unload_uuid, exclude_id=Non
     return (await session.execute(stmt)).scalar_one()
 
 
-async def _other_outgoing_count(session, company_id, load_uuid, exclude_id=None) -> int:
-    """How many routes (other than exclude_id) leave this station."""
+async def _other_outgoing_count(session, company_id, load_uuid, exclude_id=None,
+                                process_id=None) -> int:
+    """How many routes (other than exclude_id) leave this station within the
+    same process — alternative routings live in their own process, so they are
+    not siblings of a split."""
     stmt = select(func.count()).select_from(RouteRow).where(
         RouteRow.companyId == company_id, RouteRow.load == load_uuid)
     if exclude_id is not None:
         stmt = stmt.where(RouteRow.id != exclude_id)
+    if process_id is not None:
+        stmt = stmt.where(RouteRow.processId == process_id)
     return (await session.execute(stmt)).scalar_one()
 
 
-async def _weight_allowed(session, company_id, load_uuid, unload_uuid, exclude_id=None) -> bool:
+async def _weight_allowed(session, company_id, load_uuid, unload_uuid, exclude_id=None,
+                          process_id=None) -> bool:
     """A weight is only meaningful where the graph branches:
 
     - **merge feed** — the target has another incoming route, so the weight is
@@ -115,7 +121,8 @@ async def _weight_allowed(session, company_id, load_uuid, unload_uuid, exclude_i
     """
     return (
         await _other_incoming_count(session, company_id, unload_uuid, exclude_id) >= 1
-        or await _other_outgoing_count(session, company_id, load_uuid, exclude_id) >= 1
+        or await _other_outgoing_count(session, company_id, load_uuid, exclude_id,
+                                       process_id) >= 1
     )
 
 
@@ -173,7 +180,8 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
     if _would_create_cycle(edges, body.load, body.unload):
         raise HTTPException(400, "This route would create a cycle in the process graph")
 
-    if body.quantity != 1 and not await _weight_allowed(session, ctx.company_id, load_uuid, unload_uuid):
+    if body.quantity != 1 and not await _weight_allowed(
+            session, ctx.company_id, load_uuid, unload_uuid, process_id=process_uuid):
         raise HTTPException(400, _WEIGHT_ERROR)
 
     row = RouteRow(
@@ -222,11 +230,13 @@ async def update_route(route_id: str, body: RouteUpdate,
     if body.quantity is not None:
         # Weights are only meaningful where the graph branches (merge or split).
         if body.quantity != 1 and not await _weight_allowed(
-                session, ctx.company_id, row.load, row.unload, exclude_id=row.id):
+                session, ctx.company_id, row.load, row.unload, exclude_id=row.id,
+                process_id=row.processId):
             raise HTTPException(400, _WEIGHT_ERROR)
         row.quantity = body.quantity
     elif row.quantity != 1 and not await _weight_allowed(
-            session, ctx.company_id, row.load, row.unload, exclude_id=row.id):
+            session, ctx.company_id, row.load, row.unload, exclude_id=row.id,
+            process_id=row.processId):
         row.quantity = 1   # a re-target that leaves this unbranched drops its weight
     row.updatedAt = utcnow()
     try:

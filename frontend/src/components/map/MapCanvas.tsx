@@ -230,6 +230,67 @@ export default function MapCanvas({
     })
   }, [canvasSize, stations, floorPlanRect, nodeSize])
 
+  // Pinch zoom. The wheel handler below covers mice and trackpads; on a phone
+  // there is no wheel event at all, so without this the map simply cannot be
+  // zoomed — which is most of what you do on a 6-inch screen.
+  //
+  // Registered imperatively for the same reason as wheel: React's touch
+  // listeners are passive, and preventDefault is what stops iOS from
+  // page-zooming the whole app instead of the map. Touch-only, so mouse and
+  // trackpad behaviour is untouched.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    let startDist = 0
+    let startScale = 1
+
+    const dist = (t: TouchList) => Math.hypot(
+      t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    const mid = (t: TouchList) => ({
+      x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 })
+
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      e.preventDefault()
+      startDist = dist(e.touches)
+      startScale = vpRef.current.scale
+      // A second finger ends any pan in progress, so the map does not lurch
+      // when the pinch finishes and one finger is still down.
+      panRef.current = null
+    }
+
+    const onMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !startDist) return
+      e.preventDefault()
+      const m = mid(e.touches)
+      const rect = el.getBoundingClientRect()
+      const mx = m.x - rect.left
+      const my = m.y - rect.top
+      setViewport((v) => {
+        const target = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM,
+          startScale * (dist(e.touches) / startDist)))
+        // Keep the point between the fingers stationary — the same anchoring
+        // the wheel handler does around the cursor.
+        const dx = (mx - v.x) * (target / v.scale - 1)
+        const dy = (my - v.y) * (target / v.scale - 1)
+        return clampVP({ x: v.x - dx, y: v.y - dy, scale: target })
+      })
+    }
+
+    const onEnd = (e: TouchEvent) => { if (e.touches.length < 2) startDist = 0 }
+
+    el.addEventListener('touchstart', onStart, { passive: false })
+    el.addEventListener('touchmove',  onMove,  { passive: false })
+    el.addEventListener('touchend',   onEnd)
+    el.addEventListener('touchcancel', onEnd)
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [])
+
   // Wheel zoom — must be imperative so we can pass { passive: false } and
   // actually call preventDefault (React registers wheel events as passive).
   useEffect(() => {
@@ -306,6 +367,8 @@ export default function MapCanvas({
   }, [])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    // A pinch cancels panRef, so this returns early for the rest of the
+    // gesture instead of dragging the map along with the zoom.
     if (!panRef.current) return
     const dx = e.clientX - panRef.current.startX
     const dy = e.clientY - panRef.current.startY
@@ -420,6 +483,11 @@ export default function MapCanvas({
         overflow: 'hidden',
         cursor:   tool !== 'select' ? 'crosshair' : 'default',
         position: 'relative',
+        // The map owns every touch gesture on this surface. Without it the
+        // browser claims one-finger drags for scrolling and two-finger ones
+        // for page zoom, and neither ever reaches the handlers above. Governs
+        // touch only — mouse and trackpad are unaffected.
+        touchAction: 'none',
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

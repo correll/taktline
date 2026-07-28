@@ -34,7 +34,27 @@ const CreateCompanyView  = React.lazy(() => import('./views/company/CreateCompan
 const LandingView        = React.lazy(() => import('./views/landing/LandingView'))
 const ManualView         = React.lazy(() => import('./views/landing/ManualView'))
 
+/** Publish the *visual* viewport height as --tk-vvh.
+ *
+ *  iOS does not resize the layout viewport when the keyboard opens, so vh and
+ *  dvh both keep reporting the full screen and a dialog sized in them hides its
+ *  own submit button behind the keyboard. visualViewport is the only thing that
+ *  reports the truth. On desktop it equals the window height, so the variable
+ *  changes nothing there. */
+function useVisualViewportHeight() {
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const sync = () => document.documentElement.style.setProperty('--tk-vvh', `${vv.height}px`)
+    sync()
+    vv.addEventListener('resize', sync)
+    vv.addEventListener('scroll', sync)
+    return () => { vv.removeEventListener('resize', sync); vv.removeEventListener('scroll', sync) }
+  }, [])
+}
+
 export default function App() {
+  useVisualViewportHeight()
   return (
     <ToastProvider>
       <React.Suspense fallback={<LoadingPane />}>
@@ -155,7 +175,7 @@ function Topbar({ connection }: { connection: 'live' | 'reconnecting' | 'off' })
   })
 
   return (
-    <header style={{
+    <header className="tk-topbar" style={{
       height: size.topbarHeight, background: color.bgPanel,
       borderBottom: `1px solid ${color.border}`, display: 'flex', alignItems: 'center',
       padding: `0 ${size.sp6}`, gap: size.sp4, flexShrink: 0, zIndex: 100, boxShadow: shadow.sm,

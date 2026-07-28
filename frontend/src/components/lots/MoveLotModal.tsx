@@ -71,7 +71,7 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div style={{
+      <div className="tk-modal-card" style={{
         background: color.bgPanel, border: `1px solid ${color.border}`,
         borderRadius: size.radiusMd, padding: size.sp6,
         width: 320, boxShadow: shadow.lg,

@@ -85,7 +85,7 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div style={{
+      <div className="tk-modal-card" style={{
         background: color.bgPanel, border: `1px solid ${color.border}`,
         borderRadius: size.radiusMd, padding: size.sp6, width: 420,
         maxHeight: '80vh', overflowY: 'auto',

@@ -79,7 +79,7 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div style={{
+      <div className="tk-modal-card" style={{
         background:    color.bgPanel,
         border:        `1px solid ${color.border}`,
         borderRadius:  size.radiusMd,

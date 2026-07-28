@@ -11,7 +11,7 @@ export function AuthCard({ title, subtitle, children }: {
       minHeight: '100%', width: '100%', display: 'flex', alignItems: 'center',
       justifyContent: 'center', background: color.bgDeep, padding: size.sp6, boxSizing: 'border-box',
     }}>
-      <div style={{
+      <div className="tk-modal-card" style={{
         width: 400, maxWidth: '100%', background: color.bgPanel,
         border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
         boxShadow: shadow.lg, padding: size.sp8, boxSizing: 'border-box',

@@ -256,3 +256,37 @@ html, body {
 @media (display-mode: standalone) {
   html, body { overscroll-behavior: none; }
 }
+
+/* ── Phone: status bar, notch, and the keyboard ───────────────────────────── */
+/* Everything here is inert on a desktop browser: env(safe-area-inset-*) is 0,
+   --tk-vvh falls back to 100dvh, and the media query never matches. */
+
+/* The topbar sits at the very top of the window. Once there is no browser
+   chrome above it — installed to the home screen, or inside the Capacitor
+   shell, where contentInset is deliberately 'never' — that is underneath the
+   clock, the signal bars and the Dynamic Island. */
+.tk-topbar {
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(48px + env(safe-area-inset-top, 0px)) !important;
+  padding-left:  max(env(safe-area-inset-left, 0px), 0px);
+  padding-right: max(env(safe-area-inset-right, 0px), 0px);
+}
+
+@media (max-width: 640px) {
+  /* Dialogs are sized for a desktop viewport. On a phone a fixed 360–460px
+     card overflows, and when the keyboard opens it covers the submit button —
+     iOS shrinks only the *visual* viewport, so vh/dvh both keep reporting the
+     full screen and a dialog sized in them stays underneath the keyboard.
+     --tk-vvh is the real visible height, published by App.tsx. */
+  .tk-modal-card {
+    /* Cap the width rather than replacing it: each dialog keeps the width it
+       was designed at (320–460px) and only the ones wider than the screen get
+       reined in. Setting width:auto instead would collapse them to their
+       content and look accidental. */
+    max-width: calc(100vw - 24px) !important;
+    max-height: calc(var(--tk-vvh, 100dvh) - 24px) !important;
+    overflow-y: auto !important;
+  }
+  /* Keep the dialog off the home indicator when it is tall enough to reach it. */
+  .tk-modal-card { padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px); }
+}

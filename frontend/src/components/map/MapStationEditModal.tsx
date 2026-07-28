@@ -25,7 +25,7 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
   return (
     <div onPointerDown={onClose} style={{ position: 'absolute', inset: 0, zIndex: 80,
       background: color.backdrop, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onPointerDown={(e) => e.stopPropagation()} style={{ background: color.bgPanel,
+      <div className="tk-modal-card" onPointerDown={(e) => e.stopPropagation()} style={{ background: color.bgPanel,
         border: `1px solid ${color.border}`, borderRadius: 8, padding: 20, width: 360,
         display: 'flex', flexDirection: 'column', gap: 14, boxShadow: 'var(--tk-shadow-lg)' }}>
         <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>Edit location</div>

@@ -22,6 +22,10 @@ export interface Station {
   description: string
   color: string | null
   icon:  string | null
+  /** Bound integration partner — set when this location is where work enters
+   *  or leaves the business rather than a place manufacturing happens. */
+  integrationProvider: string | null
+  integrationRole: 'source' | 'sink' | 'both' | null
   createdAt: string
   updatedAt: string
 }

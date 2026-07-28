@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.ws_events import queue_event
+from ..core.integrations import can_sink
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
 from ..db.tables import (
     Card as CardRow, CardEvent as CardEventRow,
@@ -450,16 +451,40 @@ async def _record_order_progress(session, company_id, card_row: CardRow, to_stat
     order.updatedAt = utcnow()
     completed = order.quantityDone >= order.quantity
     order.status = "completed" if completed else "in_progress"
-    session.add(OutboxRow(
-        companyId=company_id, orderId=order.id,
-        eventType="order.completed" if completed else "order.progress",
-        payload={
-            "orderId": str(order.id), "source": order.source, "externalRef": order.externalRef,
-            "productTemplateId": str(order.productTemplateId) if order.productTemplateId else None,
-            "quantity": order.quantity, "quantityDone": order.quantityDone,
-            "completed": completed, "stationId": to_station_id,
-        },
-    ))
+
+    # Who needs to hear about this?
+    #
+    # The connector that released the order always does — that is the existing
+    # behaviour and every line built before integration locations keeps working
+    # unchanged. But the place the goods actually left through may belong to a
+    # *different* partner (released from Shopify, shipped via ShipStation), and
+    # that partner needs telling too. So the event fans out to both.
+    #
+    # This is also what rescues a manual or CSV release that lands on a bound
+    # dock: its own event carries source='manual' and no connector can ever ack
+    # it, but the dock's copy is addressed to a connector that can.
+    station = await session.get(StationRow, to_uuid)
+    sink = (station.integrationProvider
+            if station is not None and can_sink(station.integrationProvider,
+                                                station.integrationRole)
+            else None)
+    base = {
+        "orderId": str(order.id), "externalRef": order.externalRef,
+        "productTemplateId": str(order.productTemplateId) if order.productTemplateId else None,
+        "quantity": order.quantity, "quantityDone": order.quantityDone,
+        "completed": completed, "stationId": to_station_id,
+    }
+    event_type = "order.completed" if completed else "order.progress"
+    # dict.fromkeys keeps insertion order and drops the duplicate when the
+    # releasing connector *is* the one that owns the dock.
+    for audience in dict.fromkeys(a for a in (order.source, sink) if a):
+        session.add(OutboxRow(
+            companyId=company_id, orderId=order.id, eventType=event_type,
+            payload={**base, "source": audience,
+                     # Which partner's location it physically left through —
+                     # null when it was an ordinary unbound finished-goods leaf.
+                     "sinkProvider": sink},
+        ))
 
 
 class MoveBody(BaseModel):

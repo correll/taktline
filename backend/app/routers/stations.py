@@ -9,6 +9,7 @@ from ..deps.auth import CompanyContext, ensure_sandbox_quota, get_active_company
 from ..models.station import Station, StationCreate, StationUpdate
 from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
+from ..core.integrations import ROLES, is_provider
 
 router = APIRouter(prefix="/stations", tags=["stations"])
 
@@ -23,9 +24,25 @@ def _to_station(r: StationRow) -> Station:
         description=r.description,
         color=r.color,
         icon=r.icon,
+        integrationProvider=r.integrationProvider,
+        integrationRole=r.integrationRole,
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
     )
+
+
+def _validate_integration(provider, role) -> None:
+    """A bound location must name a partner Taktline ships a connector for, and
+    a role it can actually play. Rejecting here rather than at the DB keeps the
+    error a 400 with a readable message."""
+    if provider is None and role is None:
+        return
+    if provider is not None and not is_provider(provider):
+        raise HTTPException(400, f"Unknown integration provider '{provider}'")
+    if role is not None and role not in ROLES:
+        raise HTTPException(400, f"Integration role must be one of {sorted(ROLES)}")
+    if provider is None:
+        raise HTTPException(400, "An integration role needs a provider")
 
 
 async def _get_owned(session: AsyncSession, station_id: str, ctx: CompanyContext) -> StationRow:
@@ -48,6 +65,7 @@ async def list_stations(ctx: CompanyContext = Depends(get_active_company),
 async def create_station(body: StationCreate, ctx: CompanyContext = Depends(require_super_admin),
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     await ensure_sandbox_quota(session, ctx, StationRow)
+    _validate_integration(body.integrationProvider, body.integrationRole)
     row = StationRow(**body.model_dump(), companyId=ctx.company_id)
     session.add(row)
     await session.flush()
@@ -113,6 +131,8 @@ async def update_station(station_id: str, body: StationUpdate,
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, station_id, ctx)
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    _validate_integration(patch.get("integrationProvider", row.integrationProvider),
+                          patch.get("integrationRole", row.integrationRole))
     for k, v in patch.items():
         setattr(row, k, v)
     row.updatedAt = utcnow()

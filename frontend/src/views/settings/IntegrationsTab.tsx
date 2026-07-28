@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { apiKeysApi, ordersApi, templatesApi, type ApiKey, type ProductionOrder, type OutboxEvent, type TemplateRef, type ScopeInfo, type ImportResult } from '../../api/integrations.api'
 import { color, font, size } from '../../theme/tokens'
+import IntegrationLocations from './IntegrationLocations'
 
 const cell: React.CSSProperties = { padding: `${size.sp2} ${size.sp3}`, fontSize: 13, color: color.textPrimary, textAlign: 'left' }
 const head: React.CSSProperties = { ...cell, color: color.textSecondary, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }
@@ -251,6 +252,11 @@ export default function IntegrationsTab() {
             ))}</tbody>
           </table>
         )}
+      </Section>
+
+      {/* Where work enters and leaves — the boundary made explicit. */}
+      <Section title="Integration locations">
+        <IntegrationLocations />
       </Section>
 
       {/* Contract reference */}

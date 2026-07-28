@@ -211,8 +211,21 @@ class Station(Base):
     description: Mapped[str] = mapped_column(String, nullable=False, default="")
     color: Mapped[str | None] = mapped_column(String, nullable=True)
     icon: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Bound integration partner, if this location is where work enters or leaves
+    # the business rather than a place manufacturing happens. See
+    # core/integrations.py for why the binding is explicit rather than inferred
+    # from the graph shape.
+    integrationProvider: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    integrationRole: Mapped[str | None] = mapped_column(String, nullable=True)
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
+
+    __table_args__ = (
+        CheckConstraint(
+            "\"integrationRole\" IS NULL OR \"integrationRole\" IN ('source','sink','both')",
+            name="ck_station_integration_role",
+        ),
+    )
 
 
 class StationFavorite(Base):

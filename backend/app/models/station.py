@@ -19,6 +19,9 @@ class Station(TimestampedModel):
     description: str = ""
     color: Optional[str] = None
     icon: Optional[str] = None             # lucide icon id, e.g. "Warehouse"
+    # Where work enters/leaves the business. None on an ordinary work location.
+    integrationProvider: Optional[str] = None   # 'odoo' | 'shopify' | 'shipstation' | …
+    integrationRole: Optional[str] = None       # 'source' | 'sink' | 'both'
 
 
 class StationCreate(BaseModel):
@@ -29,6 +32,8 @@ class StationCreate(BaseModel):
     description: str = ""
     color: Optional[str] = None
     icon: Optional[str] = None
+    integrationProvider: Optional[str] = None
+    integrationRole: Optional[str] = None
 
 
 class StationUpdate(BaseModel):
@@ -39,3 +44,5 @@ class StationUpdate(BaseModel):
     description: Optional[str] = None
     color: Optional[str] = None
     icon: Optional[str] = None
+    integrationProvider: Optional[str] = None
+    integrationRole: Optional[str] = None

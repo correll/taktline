@@ -10,6 +10,7 @@ import type { Viewport } from './MapCanvas'
 import { useStationsStore } from '../../store'
 import { useRole } from '../../auth/useRole'
 import { pulseDelaySeconds } from '../../motion/takt'
+import { integrationProvider, roleLabel } from '../../domain/integrations'
 
 // ─── Icon registry ────────────────────────────────────────────────────────────
 
@@ -131,7 +132,11 @@ export default function StationNode({
 
   if (screenSize < 6) return null
 
-  const stationColor = station.color ?? '#2D5B8E'
+  // A bound location wears its partner's colour unless someone has picked one
+  // deliberately: on a map of the shop floor it should read as a foreign
+  // object, because that is exactly what it is.
+  const integration  = integrationProvider(station.integrationProvider)
+  const stationColor = station.color ?? integration?.color ?? '#2D5B8E'
   const Icon = getIcon(station.icon)
   const iconSize = Math.max(12, screenSize * 0.44)
   const showLabel = screenSize >= 36
@@ -209,13 +214,37 @@ export default function StationNode({
         borderRadius: `${Math.max(3, screenSize * 0.08)}px ${Math.max(3, screenSize * 0.08)}px 0 0`,
       }} />
 
-      {/* Icon */}
-      <Icon
-        size={iconSize}
-        color={stationColor}
-        strokeWidth={1.5}
-        style={{ flexShrink: 0 }}
-      />
+      {/* Icon — or the partner's mark for an integration location. Letters
+          rather than logos: partner artwork is trademarked, unreadable at this
+          size, and would need re-licensing at every rebrand. */}
+      {integration ? (
+        <div
+          title={`${integration.label} — ${roleLabel(station.integrationRole)}`}
+          style={{
+            flexShrink: 0,
+            width: iconSize * 1.18, height: iconSize * 1.18,
+            borderRadius: Math.max(3, iconSize * 0.22),
+            background: integration.color,
+            color: integration.ink,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            fontWeight: 700,
+            // Two-letter marks need to step down or they overflow the tile.
+            fontSize: iconSize * (integration.mark.length > 1 ? 0.46 : 0.62),
+            letterSpacing: integration.mark.length > 1 ? '-0.02em' : '0.01em',
+            lineHeight: 1,
+          }}
+        >
+          {integration.mark}
+        </div>
+      ) : (
+        <Icon
+          size={iconSize}
+          color={stationColor}
+          strokeWidth={1.5}
+          style={{ flexShrink: 0 }}
+        />
+      )}
 
       {/* Label */}
       {showLabel && (

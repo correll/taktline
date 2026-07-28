@@ -52,6 +52,49 @@ The backend uses **PostgreSQL** via **SQLAlchemy 2.0 async ORM + asyncpg**, with
 - **Completion**: `cards._record_order_progress` (called from `move_card` and `advance_card`) fires when order-tagged units arrive at a **finished-goods leaf** (a station with no outgoing routes). It credits `quantityDone`, flips status to `completed`, and writes an **`IntegrationOutbox`** row — in the *same transaction* as the move (transactional outbox = no lost/duplicate "done" events, which in an ERP means double inventory posting).
 - **Delivery**: a connector polls `GET /orders/outbox?status=pending&source=<its own source>`, delivers to the ERP, then `POST /orders/outbox/{id}/ack` — or `POST /orders/outbox/{id}/fail`, which counts the attempt and parks the event as `failed` after `MAX_DELIVERY_ATTEMPTS` (10). Both the **source filter** and the **fail counter** exist to protect the drain: events no connector can ack (a manual UI release, a CSV import) stay pending forever, and the window is `LIMIT 500`, so without them a backlog of un-ackable or undeliverable rows eventually hides a connector's own completions. `/orders/{id}/cancel` (or `/orders/cancel` by ref) scraps in-flight lots and emits `order.cancelled`; ack is idempotent and re-cancelling is a no-op, so redelivered webhooks are safe. `POST /orders` answers **201** when it released the order and **200** when it returned an existing one, which is how a polling connector tells a real release from its own re-post.
 
+### Integration locations — where work enters and leaves
+
+The integration boundary used to be **implicit in the graph's shape**: any leaf
+with no incoming routes could originate lots, and *any* leaf with no outgoing
+routes completed orders. Nothing knew a dock belonged to Shopify, so a
+completion could only be addressed to whichever connector released the order —
+which is why a manual/CSV release produced an event (`source='manual'`) that no
+connector could ever ack, and why the outbox needs a source filter and a fail
+counter to stop those orphans burying real completions.
+
+A **station may now be bound to a partner** (`stations.integrationProvider` +
+`integrationRole` ∈ `source|sink|both`; catalog in `core/integrations.py`,
+frontend registry with brand colours and letter marks in
+`domain/integrations.ts`). It is an ordinary station otherwise — positioned,
+dragged and routed like any other — and it is created from Settings →
+Integrations → *Integration locations*, appearing on the map immediately.
+
+- **Source**: no release-path change was needed. Putting a bound dock upstream
+  of a product's origin means the origin now has incoming routes, so the
+  existing pull (`len(incoming) >= 1` → `_leaf_sources`) seeds the dock instead
+  of the origin. Ordering 3 widgets puts 3 at *Odoo Goods In*, which then travel
+  into the line.
+- **Sink**: `cards._record_order_progress` fans the completion out to
+  `dict.fromkeys(order.source, sinkProvider)` — the releasing connector always
+  hears (nothing built before this changes), and the partner whose dock the
+  goods left through hears too, deduped when they are the same. The payload
+  gains `sinkProvider`. Connectors need **no change**: they already filter on
+  `payload.source`, so a ShipStation sink makes a manually released order
+  drainable by ShipStation.
+- **An unbound leaf still completes orders** — the deliberate migration rule, so
+  binding a sink is purely additive.
+- Bound locations are excluded from the heatmap, accumulation warnings, OEE and
+  the takt pulse (`_warehouse_ids` unions them in): nobody stands at an ERP, and
+  letting a dock full of finished goods into the heat ramp flattens the scale
+  for every station that matters. Related fix: `/sessions/stats/{id}` used to
+  report `isWarehouse: false` for any station with no sessions yet.
+- Marks are one or two letters, not logos — partner artwork is trademarked,
+  illegible at 14px, and re-licensed at every rebrand. Two letters where the
+  initial collides (Shopify `S` vs ShipStation `SS`).
+
+Product → template mapping still lives in the **connector's** config, not here:
+the ERP owns the BoM, Taktline owns the flow graph.
+
 ### Scoped API keys & the auth model for integrations
 
 `ApiKey` rows (`tk_…`, SHA-256 hashed at rest, prefix shown for display, revocable, company-scoped) authenticate integrations — no admin login. `deps/auth.require_scope(scope, session_role=…)` is the dependency factory: it accepts a Bearer/`X-Api-Key` key carrying `scope`, **or** a session (a key resolves its own company, so `X-Company-Id` is ignored and tenant isolation is automatic). A key with no cookie skips CSRF. Scope catalog (`models/apikey.AVAILABLE_SCOPES`, surfaced at `GET /api-keys/scopes`):

@@ -152,9 +152,11 @@ async def delete_session(session_id: str, ctx: CompanyContext = Depends(get_acti
 
 
 async def _warehouse_ids(session, company_id) -> set:
-    """Stations that receive routes but send none: finished goods land there on
-    purpose. Nobody "works" at a warehouse, so an OEE for it would measure
-    storage time, not utilisation — it is reported as null instead."""
+    """Locations where nothing is *worked on*, so OEE and takt would be
+    meaningless: a warehouse (receives routes but sends none — finished goods
+    land there on purpose, and its OEE would measure storage time), and any
+    location bound to an integration partner, which represents work entering or
+    leaving the business rather than a place someone stands."""
     rows = (await session.execute(
         select(RouteRow.load, RouteRow.unload).where(RouteRow.companyId == company_id)
     )).all()
@@ -162,7 +164,11 @@ async def _warehouse_ids(session, company_id) -> set:
     for load, unload in rows:
         has_out.add(load)
         has_in.add(unload)
-    return has_in - has_out
+    bound = set((await session.execute(
+        select(StationRow.id).where(StationRow.companyId == company_id,
+                                    StationRow.integrationProvider.isnot(None))
+    )).scalars().all())
+    return (has_in - has_out) | bound
 
 
 # ─── All-stations OEE / takt-time summary ────────────────────────────────────
@@ -210,13 +216,15 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
 @router.get("/stats/{station_id}")
 async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(get_active_company),
                                 session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
-    empty = {
-        "stationId": station_id, "sessionCount": 0, "totalUnits": 0,
-        "totalWorkingSec": 0.0, "taktTimeSec": None, "oee": None, "isWarehouse": False,
-    }
+    def empty(is_warehouse: bool = False):
+        return {
+            "stationId": station_id, "sessionCount": 0, "totalUnits": 0,
+            "totalWorkingSec": 0.0, "taktTimeSec": None, "oee": None,
+            "isWarehouse": is_warehouse,
+        }
     sid = parse_uuid(station_id)
     if sid is None:
-        return empty
+        return empty()
     rows = (await session.execute(
         select(SessionRow).where(
             SessionRow.companyId == ctx.company_id,
@@ -225,7 +233,11 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
         )
     )).scalars().all()
     if not rows:
-        return empty
+        # What a location *is* does not depend on whether anyone has worked at
+        # it yet: a warehouse with no sessions is still a warehouse, and an
+        # integration dock is never a work station. Reporting False here made
+        # both look like ordinary stations until their first session.
+        return empty(sid in await _warehouse_ids(session, ctx.company_id))
 
     total_units = sum(r.quantity for r in rows)
     total_working = sum((r.durationSec or 0) for r in rows)

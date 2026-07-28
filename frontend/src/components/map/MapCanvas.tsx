@@ -11,6 +11,7 @@ import MotionLayer from './MotionLayer'
 import { useTaktPulses } from '../../motion/useTaktPulses'
 import type { TaktPulses } from '../../motion/takt'
 import { findAccumulations, warehouseNodes, type Accumulation } from '../../domain/graph'
+import { isIntegrationStation } from '../../domain/integrations'
 
 export const DEFAULT_NODE_SIZE = 100
 // Largest a location may be drawn when the camera auto-fits a floor-plan-less
@@ -436,10 +437,16 @@ export default function MapCanvas({
     setRouteDelete(null)
   }, [routeDelete, deleteRoute])
 
-  // WIP ratios for heatmap
-  const warehouses = React.useMemo(
-    () => warehouseNodes(Object.values(routes).map((r) => ({ load: r.load, unload: r.unload }))),
-    [routes])
+  // WIP ratios for heatmap.
+  // Integration locations count as warehouses here for the same reason real
+  // ones do: work sitting in a goods-in dock or waiting to ship is not work
+  // piling up at a machine, and letting either into the ramp flattens the
+  // scale for every station that matters.
+  const warehouses = React.useMemo(() => {
+    const set = warehouseNodes(Object.values(routes).map((r) => ({ load: r.load, unload: r.unload })))
+    for (const s of Object.values(stations)) if (isIntegrationStation(s)) set.add(s._id)
+    return set
+  }, [routes, stations])
 
   const wipRatios = React.useMemo(() => {
     const wipMap: Record<string, number> = {}
@@ -470,8 +477,13 @@ export default function MapCanvas({
       })),
       Object.keys(stations)),
     [routes, stations])
+  // A bound location is *meant* to fill up — a dock accumulating finished goods
+  // is the system working, not a problem to route around.
   const accumulationIds = React.useMemo(
-    () => new Set(accumulations.map((a) => a.stationId)), [accumulations])
+    () => new Set(accumulations
+      .map((a) => a.stationId)
+      .filter((id) => !(stations[id] && isIntegrationStation(stations[id])))),
+    [accumulations, stations])
   const isolatedNames = isolated.procIds.map((id) => processes[id]?.name).filter(Boolean) as string[]
 
   // Raw pixelsPerUnit is correct when floor plan is rendered at mapWidthPx canvas pixels

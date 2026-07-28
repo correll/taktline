@@ -58,6 +58,10 @@ interface Props {
   /** Measured takt, time-compressed, in ms. Undefined = not enough timing
    *  data, so the node stays still rather than pulsing at an invented rate. */
   taktPeriodMs?: number
+  /** For an integration node: which ways work crosses this boundary, read
+   *  from the drawn links. 'pull' = it raises demand into the line (↓),
+   *  'out' = finished goods leave through it (↑), 'both' = ⇵. */
+  boundaryFlow?: 'pull' | 'out' | 'both'
   onSelect:  () => void
   onRouteAnchor: () => void   // route tool: clicked to become source / target
   onContextMenu: (clientX: number, clientY: number) => void
@@ -65,7 +69,7 @@ interface Props {
 
 export default function StationNode({
   station, lotCount, selected, nodeSize, viewport, tool, routeArmed, flashing, taktPeriodMs,
-  onSelect, onRouteAnchor, onContextMenu,
+  boundaryFlow, onSelect, onRouteAnchor, onContextMenu,
 }: Props) {
   const updateStation = useStationsStore((s) => s.update)
   const nudgePosition = useStationsStore((s) => s.nudgePosition)
@@ -219,7 +223,10 @@ export default function StationNode({
           size, and would need re-licensing at every rebrand. */}
       {integration ? (
         <div
-          title={`${integration.label} — ${roleLabel(station.integrationRole)}`}
+          title={`${integration.label} — ${roleLabel(station.integrationRole)}`
+                 + (boundaryFlow === 'pull' ? ' (raises demand ↓)'
+                  : boundaryFlow === 'out'  ? ' (receives finished goods ↑)'
+                  : boundaryFlow === 'both' ? ' (demand ↓ · finished goods ↑)' : '')}
           style={{
             flexShrink: 0,
             width: iconSize * 1.18, height: iconSize * 1.18,
@@ -236,6 +243,33 @@ export default function StationNode({
           }}
         >
           {integration.mark}
+          {/* Direction of the boundary, read from the drawn links: ↓ the
+              partner pulls work into the line, ↑ goods leave through it.
+              One node can do both — the alternative is two nodes, which also
+              works; the arrows make either wiring readable at a glance. */}
+          {boundaryFlow && (
+            <svg
+              aria-hidden
+              width={iconSize * 0.5} height={iconSize * 0.94}
+              viewBox="0 0 10 20"
+              style={{ marginLeft: iconSize * 0.1, flexShrink: 0 }}
+            >
+              {(boundaryFlow === 'pull' || boundaryFlow === 'both') && (
+                <path d="M5 1 v8 M2 6 l3 3.4 3 -3.4"
+                      stroke={integration.ink} strokeWidth={1.7} fill="none"
+                      strokeLinecap="round" strokeLinejoin="round"
+                      opacity={0.95}
+                      transform={boundaryFlow === 'both' ? '' : 'translate(0,5)'} />
+              )}
+              {(boundaryFlow === 'out' || boundaryFlow === 'both') && (
+                <path d="M5 19 v-8 M2 14 l3 -3.4 3 3.4"
+                      stroke={integration.ink} strokeWidth={1.7} fill="none"
+                      strokeLinecap="round" strokeLinejoin="round"
+                      opacity={0.95}
+                      transform={boundaryFlow === 'both' ? '' : 'translate(0,-5)'} />
+              )}
+            </svg>
+          )}
         </div>
       ) : (
         <Icon

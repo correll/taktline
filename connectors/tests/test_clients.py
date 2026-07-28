@@ -31,6 +31,21 @@ def test_shopify_orders_one_per_line_item():
     ]
 
 
+def test_shopify_ship_to_and_customer_ride_along_as_attributes():
+    """The storefront knows who the goods are for and where they go; the shop
+    floor and the shipper need both. They travel as flat attributes — the
+    server stamps them on the Kanban card and echoes them back at handoff."""
+    o = dict(SHOPIFY_ORDER)
+    o["customer"] = {"first_name": "Ada", "last_name": "Lovelace"}
+    o["shipping_address"] = {"address1": "12 Analytical Way", "city": "London",
+                             "zip": "N1 7EU", "country_code": "GB"}
+    rows = orders_from_shopify([o])
+    assert all(r["attributes"] == {
+        "customer": "Ada Lovelace",
+        "shipTo": "12 Analytical Way, London, N1 7EU, GB",
+    } for r in rows)
+
+
 def test_shopify_cancel_refs():
     assert cancel_refs_from_shopify([SHOPIFY_ORDER]) == ["1001:11", "1001:12"]
 

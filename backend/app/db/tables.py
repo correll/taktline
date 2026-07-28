@@ -551,6 +551,12 @@ class ProductionOrder(Base):
     quantityDone: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     note: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # What the ERP said about this order beyond the release itself — customer,
+    # due date, ship-to, priority. A flat scalar map, stamped onto every lot the
+    # release seeds (card.fields) so the physical Kanban card carries it, and
+    # returned to the sink at handoff so a shipper gets back what the ERP sent.
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict,
+                                             server_default=text("'{}'::jsonb"))
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
 

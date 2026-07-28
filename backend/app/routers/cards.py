@@ -334,7 +334,11 @@ async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id:
             companyId=company_id, lotTemplateId=tmpl.id, processId=process_id,
             lotNum=inherit_num, totalQuantity=units,
             bins={str(branch.unload): {"count": units}},
-            fields={}, flagged=False, description="", status="idle", orderId=order_id,
+            # Pieces of a teardown are the same physical material wearing new
+            # templates: the lot code, the order AND the ERP context all ride
+            # along, or the customer's name falls off the card at the saw.
+            fields=dict(row.fields or {}),
+            flagged=False, description="", status="idle", orderId=order_id,
         )
         session.add(piece)
         await session.flush()
@@ -471,12 +475,20 @@ async def _record_order_progress(session, company_id, card_row: CardRow, to_stat
     order = await session.get(OrderRow, card_row.orderId)
     if order is None or order.companyId != company_id or order.status in ("completed", "cancelled"):
         return
-    await _credit_order(session, company_id, order, to_station_id, quantity, sink=None)
+    await _credit_order(session, company_id, order, to_station_id, quantity,
+                        sink=None, lot_code=card_row.lotNum)
 
 
 async def _credit_order(session, company_id, order: OrderRow, at_station_id: str,
-                        quantity: int, sink: StationRow | None) -> None:
-    """Credit progress and enqueue the delivery event(s)."""
+                        quantity: int, sink: StationRow | None,
+                        lot_code: str | None = None) -> None:
+    """Credit progress and enqueue the delivery event(s).
+
+    The payload must let a sink act without a second round-trip: the ERP's ref
+    and its own attributes come back out (a shipper needs the ship-to the store
+    sent in), the lot code identifies the physical material, and ``units`` says
+    how many crossed the boundary in THIS event — quantityDone is cumulative
+    and useless for building one shipment."""
     order.quantityDone += quantity
     order.updatedAt = utcnow()
     completed = order.quantityDone >= order.quantity
@@ -499,6 +511,9 @@ async def _credit_order(session, company_id, order: OrderRow, at_station_id: str
         "orderId": str(order.id), "externalRef": order.externalRef,
         "productTemplateId": str(order.productTemplateId) if order.productTemplateId else None,
         "quantity": order.quantity, "quantityDone": order.quantityDone,
+        "units": quantity,
+        "lotCode": lot_code,
+        "attributes": dict(order.attributes or {}),
         "completed": completed, "stationId": to_station_id,
     }
     event_type = "order.completed" if completed else "order.progress"
@@ -677,6 +692,10 @@ async def handoff_card(card_id: str, body: HandoffBody,
 
     order = await session.get(OrderRow, row.orderId) if row.orderId else None
     provider = dest.integrationProvider
+    # Captured before the delete below — reading a deleted ORM object's
+    # attributes works today but is an implementation detail, not a contract.
+    handed = {"lotNum": row.lotNum, "templateId": str(row.lotTemplateId),
+              "fields": dict(row.fields or {})}
 
     if not bins:
         await session.delete(row)
@@ -694,7 +713,23 @@ async def handoff_card(card_id: str, body: HandoffBody,
     if order is not None and order.companyId == ctx.company_id \
             and order.status not in ("completed", "cancelled"):
         await _credit_order(session, ctx.company_id, order, body.fromStationId,
-                            body.quantity, sink=dest)
+                            body.quantity, sink=dest, lot_code=handed["lotNum"])
+    else:
+        # No order — a lot someone made by hand, or surplus set aside — but the
+        # partner still received physical goods and still needs telling. A
+        # `lot.handoff` event, addressed to the sink's connector; connectors
+        # that only understand order events drain-and-ack it harmlessly (the
+        # core skips unknown types), so this is additive on the wire.
+        session.add(OutboxRow(
+            companyId=ctx.company_id, orderId=None, eventType="lot.handoff",
+            payload={
+                "source": provider, "sinkProvider": provider,
+                "externalRef": None, "stationId": body.fromStationId,
+                "units": body.quantity, "lotCode": handed["lotNum"],
+                "templateId": handed["templateId"],
+                "attributes": handed["fields"],
+            },
+        ))
 
     return {"sentTo": provider, "quantity": body.quantity,
             "orderId": str(order.id) if order else None,
@@ -769,7 +804,12 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
         pre = CardRow(
             companyId=ctx.company_id, lotTemplateId=template.id, processId=row.processId,
             lotNum=inherit_num, totalQuantity=count, bins={station_id: {"count": count}},
-            fields={}, flagged=False, description="", status="idle",
+            # Same material going backwards: order attribution and ERP context
+            # survive the dissolve, exactly as they survive the merge. Dropping
+            # the orderId here would strand the order at partially-done forever
+            # if the assembly is later rebuilt and shipped.
+            fields=dict(row.fields or {}), orderId=row.orderId,
+            flagged=False, description="", status="idle",
         )
         session.add(pre)
         await session.flush()

@@ -30,7 +30,7 @@ def _to_order(o: OrderRow) -> OrderPublic:
         productTemplateId=str(o.productTemplateId) if o.productTemplateId else None,
         mergeStationId=str(o.mergeStationId) if o.mergeStationId else None,
         quantity=o.quantity, quantityDone=o.quantityDone, status=o.status, note=o.note,
-        createdAt=o.createdAt, updatedAt=o.updatedAt,
+        attributes=o.attributes or {}, createdAt=o.createdAt, updatedAt=o.updatedAt,
     )
 
 
@@ -87,6 +87,7 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
         companyId=company_id, source=body.source, externalRef=body.externalRef,
         productTemplateId=tmpl.id, mergeStationId=target, quantity=body.quantity,
         quantityDone=0, status="pending", note=body.note,
+        attributes=body.attributes or {},
     )
     session.add(order)
     await session.flush()
@@ -114,12 +115,14 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
         for src in sources:
             units = src["quantity"]
             await _spawn_lot(session, company_id, src["template"].id, process_id,
-                             src["station_id"], units, order.id, lot_code)
+                             src["station_id"], units, order.id, lot_code,
+                             fields=order.attributes)
     else:
         # True source product (its origin is a leaf queue) → mint it there.
         if process_id is None:
             raise HTTPException(422, "Cannot determine the process for this product")
-        await _spawn_lot(session, company_id, tmpl.id, process_id, str(target), body.quantity, order.id, lot_code)
+        await _spawn_lot(session, company_id, tmpl.id, process_id, str(target),
+                         body.quantity, order.id, lot_code, fields=order.attributes)
 
     order.status = "released"
     await session.flush()
@@ -199,10 +202,16 @@ async def import_orders(file: UploadFile = File(...),
                 qty = int(float(qty_s))
             except (ValueError, TypeError):
                 raise ValueError(f"invalid quantity {qty_s!r}")
+            known = {"product", "sku", "template", "producttemplateid", "quantity", "qty",
+                     "source", "externalref", "ref", "reference", "note", "notes",
+                     "lotcode", "lot", "lotnum"}
+            extra = {k.strip(): v.strip() for k, v in row.items()
+                     if k and k.strip().lower() not in known and v and v.strip()}
             body = OrderCreate(productTemplateId=str(tmpl.id), quantity=qty,
                                source=_cell(row, "source") or "csv",
                                externalRef=ref, note=_cell(row, "note", "notes"),
-                               lotCode=_cell(row, "lotcode", "lot", "lotnum") or None)
+                               lotCode=_cell(row, "lotcode", "lot", "lotnum") or None,
+                               attributes=extra)
             async with session.begin_nested():
                 order, created = await _release_order(session, ctx.company_id, body)
             if created:
@@ -223,13 +232,17 @@ async def import_orders(file: UploadFile = File(...),
 
 
 async def _spawn_lot(session, company_id, template_id, process_id, station_id: str, count: int,
-                     order_id, lot_code: str | None = None) -> None:
+                     order_id, lot_code: str | None = None,
+                     fields: dict | None = None) -> None:
     from .cards import _emit_card_update   # lazy: avoids an import cycle via merge
 
     card = CardRow(
         companyId=company_id, lotTemplateId=template_id, processId=process_id,
         lotNum=lot_code or _gen_lot_code(),
         totalQuantity=count, bins={station_id: {"count": count}},
+        # The ERP's context travels ON the card — the physical Kanban card is
+        # the one artefact guaranteed to be standing next to the material.
+        fields=dict(fields or {}),
         orderId=order_id, status="idle",
     )
     session.add(card)

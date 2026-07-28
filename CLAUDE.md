@@ -105,6 +105,33 @@ from Settings → Integrations → *Integration locations*.
   artwork, illegible at 14px, re-licensed at every rebrand. Two letters where
   the initial collides (Shopify `S` vs ShipStation `SS`).
 
+**The ERP's data rides on the card** (`order.attributes`): a release may carry a
+flat scalar map — customer, due date, ship-to, priority (≤32 keys, values ≤500
+chars) — which is stored on the `ProductionOrder`, stamped onto **every seeded
+lot's `fields`**, and echoed back to the sink in the outbox payload. The
+invariant, enforced by `tests/test_integration_data.py`: **no transformation
+drops the data.** Merge re-stamps from the order when attribution is
+unambiguous (single source of truth — precursor cards' own fields describe
+parts, not the finished good); split pieces and unmerged precursors inherit
+`fields` *and* `orderId` (unmerge dropping the orderId would strand the order at
+partially-done). Sink payloads carry `lotCode`, `attributes`, and `units` — the
+units in *this* event, because `quantityDone` is cumulative and useless for
+building one shipment. An **orderless handoff** (hand-made lot, surplus) emits
+`lot.handoff` addressed to the sink; the connector core acks unknown event
+types without delivering, so this is additive on the wire. CSV import maps any
+unrecognised column into attributes — the spreadsheet's extra columns end up
+printed on the card. Shopify's connector maps `customer` and `shipTo`; other
+clients pass an `attributes` dict on their order rows and the core forwards it
+(only when present — the strict mocks refuse unknown kwargs). The lot detail
+modal shows non-template keys as a read-only ORDER DATA block.
+
+**One node or two:** a partner that both raises demand and takes goods back can
+be one node with two links or two separate nodes — both wirings work. The node
+wears direction arrows read from the drawn links (↓ = raises demand into the
+line, ↑ = receives finished goods), so either wiring is readable at a glance.
+Boundary nodes are also excluded from the Lots board's columns (cards never sit
+on them, so the column would be permanently empty).
+
 Product → template mapping still lives in the **connector's** config: the ERP
 owns the BoM, Taktline owns the flow graph.
 

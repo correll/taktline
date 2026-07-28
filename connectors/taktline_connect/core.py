@@ -69,8 +69,10 @@ class Connector:
                             ref, o.get("qty"))
                 continue
             try:
+                extra = {"attributes": o["attributes"]} if o.get("attributes") else {}
                 order = self.taktline.create_order(template_id, qty, external_ref=ref,
-                                                   source=self.source, lot_code=o.get("lot_code"))
+                                                   source=self.source, lot_code=o.get("lot_code"),
+                                                   **extra)
             except Exception as e:  # noqa: BLE001 — one bad order must not wedge the cycle
                 # Without this the whole cycle dies here: the orders behind this
                 # one never release, and cancellations + completions never run.

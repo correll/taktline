@@ -205,6 +205,35 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
                 </Section>
               )}
 
+              {/* What the ERP sent with the order — keys no template declares.
+                  Stamped at release, carried through merge/split/unmerge, and
+                  echoed back to the sink at handoff. Read-only on purpose:
+                  this is the ERP's context, not the operator's. */}
+              {(() => {
+                const declared = new Set((template?.fields ?? []).map((fd) => fd.key))
+                const extra = Object.entries(card.fields ?? {})
+                  .filter(([k, v]) => !declared.has(k) && v != null && v !== '')
+                return extra.length === 0 ? null : (
+                  <Section label="ORDER DATA">
+                    {extra.map(([k, v]) => (
+                      <div key={k} style={{
+                        display:        'flex',
+                        justifyContent: 'space-between',
+                        gap:            size.sp3,
+                        padding:        `${size.sp2} 0`,
+                        borderBottom:   `1px solid ${color.border}`,
+                        fontSize:       12,
+                      }}>
+                        <span style={{ color: color.textSecondary, flexShrink: 0 }}>{k}</span>
+                        <span style={{ color: color.textPrimary, textAlign: 'right', overflowWrap: 'anywhere' }}>
+                          {String(v)}
+                        </span>
+                      </div>
+                    ))}
+                  </Section>
+                )
+              })()}
+
               {/* Description */}
               <Section label="DESCRIPTION">
                 <textarea

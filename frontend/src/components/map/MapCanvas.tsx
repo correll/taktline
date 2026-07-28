@@ -496,6 +496,20 @@ export default function MapCanvas({
   // (which equals the settings-preview CSS display width, the frame ppu was calibrated in).
   const ppu = mapConfig?.pixelsPerUnit ?? DEFAULT_NODE_SIZE
 
+  // Which way work crosses each integration boundary, read from the drawn
+  // links: an outgoing route raises demand into the line (↓), an incoming one
+  // receives finished goods (↑). Drives the arrows on the partner's mark.
+  const boundaryFlows = React.useMemo(() => {
+    const flows: Record<string, 'pull' | 'out' | 'both'> = {}
+    for (const s of Object.values(stations)) {
+      if (!isIntegrationStation(s)) continue
+      const pull = Object.values(routes).some((r) => r.load === s._id)
+      const out  = Object.values(routes).some((r) => r.unload === s._id)
+      if (pull || out) flows[s._id] = pull && out ? 'both' : pull ? 'pull' : 'out'
+    }
+    return flows
+  }, [stations, routes])
+
   // Each station's measured takt, compressed by one shared factor so the
   // ratios between them survive — that is what makes a bottleneck visible as
   // a slow heartbeat instead of a number in a table.
@@ -600,6 +614,7 @@ export default function MapCanvas({
             flashing={(warnHover && isolated.flash.has(station._id))
                       || (accHover && accumulationIds.has(station._id))}
             taktPeriodMs={taktPulses.periodMs[station._id]}
+            boundaryFlow={boundaryFlows[station._id]}
             onSelect={() => onSelectStation(station._id)}
             onRouteAnchor={() => handleRouteAnchor(station._id)}
             onContextMenu={(cx, cy) => setCtxMenu({ stationId: station._id, x: cx, y: cy })}

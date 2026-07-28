@@ -11,6 +11,7 @@ import { mergeNodes, computeColumnGroups, computeLanes, type BarSpan } from '../
 import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { useRole } from '../../auth/useRole'
 import { useLotFlip } from '../../motion/useLotFlip'
+import { isIntegrationStation } from '../../domain/integrations'
 import { cardsApi } from '../../api/cards.api'
 import type { Card, Route } from '../../models'
 
@@ -201,8 +202,16 @@ export default function LotsView() {
   )
 
   const { order: topoOrder, solidBars, dashedBars } = useMemo(() => {
-    const edgeList = Object.values(routes).map((r) => ({ load: r.load, unload: r.unload }))
-    return computeColumnGroups(edgeList, Object.keys(stations))
+    // Boundary nodes (ERP/shipper) are not columns: cards never sit on them —
+    // demand comes *from* them and handoffs consume *into* them — so a column
+    // would be permanently empty. Their edges go too, or the flattening would
+    // still order the board around links that carry no material.
+    const bound = new Set(Object.values(stations)
+      .filter(isIntegrationStation).map((s) => s._id))
+    const edgeList = Object.values(routes)
+      .filter((r) => !bound.has(r.load) && !bound.has(r.unload))
+      .map((r) => ({ load: r.load, unload: r.unload }))
+    return computeColumnGroups(edgeList, Object.keys(stations).filter((id) => !bound.has(id)))
   }, [stations, routes])
 
   const columns = useMemo(() => {

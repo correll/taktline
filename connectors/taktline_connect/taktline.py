@@ -32,7 +32,7 @@ class TaktlineClient:
 
     # --- release ---------------------------------------------------------
     def create_order(self, template_id: str, quantity: int, external_ref: str, source: str,
-                     lot_code: str | None = None) -> dict:
+                     lot_code: str | None = None, attributes: dict | None = None) -> dict:
         """Release a pull order. Idempotent server-side on (source, externalRef):
         re-posting the same ref returns the existing order instead of duplicating.
 
@@ -52,6 +52,10 @@ class TaktlineClient:
         }
         if lot_code:
             body["lotCode"] = lot_code
+        if attributes:
+            # Flat scalar map (customer, due date, ship-to…) — the server stamps
+            # it onto every seeded Kanban card and echoes it back at handoff.
+            body["attributes"] = attributes
         order, status = self._post("/orders/", body)
         return {**(order or {}), "created": status == 201}
 

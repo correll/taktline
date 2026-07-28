@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (
+    ProductionOrder as OrderRow,
     Route as RouteRow, LotTemplate as LotTemplateRow,
     Card as CardRow, Station as StationRow,
 )
@@ -361,6 +362,18 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
             # move). Abort — the transaction rolls back all partial consumption.
             raise HTTPException(409, "Precursor units changed during merge — try again")
 
+    # The order's ERP context follows the same rule as its id: when every
+    # consumed precursor agrees on one order, the assembly keeps carrying what
+    # the ERP sent (re-read from the order — the single source of truth — not
+    # unioned from precursor cards, whose own template fields describe parts,
+    # not the finished good).
+    order_id = next(iter(consumed_order_ids)) if len(consumed_order_ids) == 1 else None
+    inherited_fields: dict = {}
+    if order_id is not None:
+        src_order = await session.get(OrderRow, order_id)
+        if src_order is not None and src_order.attributes:
+            inherited_fields = dict(src_order.attributes)
+
     new_card = CardRow(
         companyId=ctx.company_id,
         lotTemplateId=assembly_tmpl.id,
@@ -371,12 +384,12 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
         lotNum=(next(iter(consumed_codes)) if len(consumed_codes) == 1 else _gen_lot_code()),
         totalQuantity=assemblies,
         bins={station_id: {"count": assemblies}},
-        fields={},
+        fields=inherited_fields,
         flagged=False,
         description="",
         status="idle",
         # Attribute the assembly to its order if all precursors agreed on one.
-        orderId=(next(iter(consumed_order_ids)) if len(consumed_order_ids) == 1 else None),
+        orderId=order_id,
     )
     session.add(new_card)
     await session.flush()

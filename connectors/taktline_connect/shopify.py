@@ -35,14 +35,27 @@ def orders_from_shopify(orders: list[dict]) -> list[dict]:
         # Friendly order reference for the shop floor: "#1001" (name) or the order
         # number; falls back server-side to the composite id if absent.
         code = o.get("name") or (f"#{o['order_number']}" if o.get("order_number") else None)
+        # What the shop floor and the shipper need from the storefront: who it
+        # is for and where it goes. Flat scalars — the server prints them on the
+        # Kanban card and returns them to the sink at handoff.
+        ship = o.get("shipping_address") or {}
+        attrs = {k: v for k, v in {
+            "customer": " ".join(filter(None, [(o.get("customer") or {}).get("first_name"),
+                                               (o.get("customer") or {}).get("last_name")])) or None,
+            "shipTo": ", ".join(filter(None, [ship.get("address1"), ship.get("city"),
+                                              ship.get("zip"), ship.get("country_code")])) or None,
+        }.items() if v}
         for li in o.get("line_items", []):
-            out.append({
+            row = {
                 "id": _line_ref(o.get("id"), li.get("id")),
                 "product_ref": li.get("sku") or li.get("title"),
                 "qty": int(li.get("quantity") or 0),
                 "state": o.get("financial_status"),
                 "lot_code": code,
-            })
+            }
+            if attrs:
+                row["attributes"] = attrs
+            out.append(row)
     return out
 
 

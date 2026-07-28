@@ -10,6 +10,8 @@ import { mergeNodes } from '../../domain/graph'
 import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { cardsApi } from '../../api/cards.api'
 import LotCard, { lotLabel } from '../../components/lots/LotCard'
+import TaktArc from '../../components/operator/TaktArc'
+import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 const ScanSheet = React.lazy(() => import('../../components/scan/ScanSheet'))
 
 // Returns the total seconds from the most recent closed session for a card at a station.
@@ -892,6 +894,19 @@ function WorkingPanel({
   const tmpl     = card ? templates[card.lotTemplateId] : null
   const timeStr  = formatElapsed(elapsed)
 
+  // Pace feedback against the *station's* measured takt — opt-in per company,
+  // and absent entirely when the station has no measured takt to compare to.
+  const showTaktArc = useGlobalSettingsStore((g) => g.settings.showTaktArc)
+  const [stationTakt, setStationTakt] = useState<number | null>(null)
+  useEffect(() => {
+    if (!showTaktArc) { setStationTakt(null); return }
+    let alive = true
+    sessionsApi.stationStats(stationId)
+      .then((st) => { if (alive) setStationTakt(st.taktTimeSec) })
+      .catch(() => { if (alive) setStationTakt(null) })
+    return () => { alive = false }
+  }, [showTaktArc, stationId])
+
   const doStop = async () => { setStopping(true); try { await onStop() } finally { setStopping(false) } }
 
   return (
@@ -922,6 +937,11 @@ function WorkingPanel({
         <div style={{ fontSize: 10, color: color.textDim, marginTop: 8, fontFamily: font.mono, letterSpacing: '0.12em' }}>
           ELAPSED TIME
         </div>
+        {showTaktArc && stationTakt != null && stationTakt > 0 && (
+          <div style={{ marginTop: size.sp4 }}>
+            <TaktArc elapsedSec={elapsed} expectedSec={stationTakt * Math.max(1, quantity)} />
+          </div>
+        )}
       </div>
 
       {/* Quantity */}

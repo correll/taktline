@@ -9,7 +9,7 @@ interface GlobalSettingsState {
 }
 
 export const useGlobalSettingsStore = create<GlobalSettingsState>((set) => ({
-  settings: { timezone: 'UTC', workHours: defaultWorkHours() },
+  settings: { timezone: 'UTC', workHours: defaultWorkHours(), showTaktArc: false },
   loading:  false,
 
   fetch: async () => {

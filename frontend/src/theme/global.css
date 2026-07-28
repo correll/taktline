@@ -291,6 +291,31 @@ html, body {
   .tk-modal-card { padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px); }
 }
 
+/* ── Takt pulse ────────────────────────────────────────────────────────────
+   A station's measured beat, time-compressed. The opacity range is the whole
+   design: 0.14 is barely there, 0.75 is a soft ring, and the ease-in-out
+   between them is a heartbeat rather than a blink. This runs on a wall display
+   for an entire shift — if it is still catching your eye after three minutes
+   it is too strong. Period and phase are set inline per station (see
+   StationNode); phase comes from the wall clock so every node shares one beat
+   and "is this line in step?" becomes a question you can answer by looking. */
+@keyframes tk-takt-pulse {
+  0%, 100% { opacity: 0.14; }
+  50%      { opacity: 0.75; }
+}
+.tk-takt-pulse {
+  animation-name: tk-takt-pulse;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* Motion here reports real state, so the reduced-motion answer is to show the
+   state without the movement — the ring settles at its own midpoint rather
+   than vanishing, and lots still change column, just without travelling. */
+@media (prefers-reduced-motion: reduce) {
+  .tk-takt-pulse { animation: none; opacity: 0.28; }
+}
+
 /* ── The topbar between the phone bar and full width ───────────────────────
    Below ~1210px the desktop row stops fitting (its min-content width is about
    1160px plus padding) and props the document open exactly as it did on the

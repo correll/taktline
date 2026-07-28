@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'reac
 import { connectWS, disconnectWS } from './api/ws'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore, useMapSettingsStore } from './store'
 import { useAuthStore } from './store/auth.store'
+import { useGlobalSettingsStore } from './store/globalSettings.store'
 import { useRole } from './auth/useRole'
 import { RequireAuth, RequireAdmin } from './auth/RequireAuth'
 import { CompanySwitcher } from './components/CompanySwitcher'
@@ -17,6 +18,7 @@ import { color, font, size, shadow } from './theme/tokens'
 import { ToastProvider } from './components/Toast'
 import { RouteErrorBoundary } from './components/ErrorBoundary'
 import { lazyView } from './lazyView'
+import { startMotionObserver } from './motion/motion.store'
 import { platformApi } from './api/platform.api'
 
 const MapView        = lazyView(() => import('./views/map/MapView'))
@@ -86,6 +88,7 @@ function Shell() {
   const fetchProcesses = useProcessesStore((s) => s.fetchAll)
   const fetchCards     = useCardsStore((s) => s.fetchAll)
   const fetchMapConfig = useMapSettingsStore((s) => s.fetch)
+  const fetchGlobalSettings = useGlobalSettingsStore((s) => s.fetch)
   const connection     = useMachinesStore((s) => s.connection)
   const activeCompanyId = useAuthStore((s) => s.activeCompanyId)
 
@@ -98,8 +101,13 @@ function Shell() {
     fetchProcesses()
     fetchCards()
     fetchMapConfig()
+    fetchGlobalSettings()
     connectWS()
-    return () => disconnectWS()
+    // Watches the card store and names each change — moved, appeared, merged —
+    // so the board and the map can show the transition rather than just the
+    // new state. Nothing is invented: an unknown origin stays unknown.
+    const stopMotion = startMotionObserver()
+    return () => { stopMotion(); disconnectWS() }
   }, [activeCompanyId])
 
   // Server-side pulls/merges/orders auto-provision lot templates; whenever a

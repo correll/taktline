@@ -131,6 +131,48 @@ Instance-level tier for support, entirely separate from company roles: **owner**
 - **Metrics**: `GET /platform/status` (uptime, req/min ring buffer from `core/traffic.py`, live WS connections, session/work/event counts); `GET /platform/companies` adds per-company activeUsers, devices (live sockets), and monthly `usage_counters` (API requests + WS messages, accumulated in-memory in `core/usage.py`, flushed every 30 s).
 - Frontend: `/platform` route (`RequirePlatformStaff`, UX-only), nav entry appears when `user.platformRole` is set.
 
+## Motion (`src/motion/`)
+
+Every animation reports something the data actually says. The rule that shapes
+all of them: **never fake a path or a period.**
+
+- **`motion.store.ts`** derives *what happened* from what changed. The wire
+  protocol only carries `card_update` / `card_delete` with the whole card, so
+  the observer diffs each card's bins against its previous copy and names the
+  transition: lost at A + gained at B → a **transit**; gained with no previous
+  copy → an **appearance** (origin genuinely unknown); several consumed at X +
+  one new card at X → a **merge**; one consumed at X + several new elsewhere →
+  an **unmerge**. Changes are batched (`BATCH_MS`) because one merge arrives as
+  several messages, and a bulk resync (`BULK_THRESHOLD`) is skipped — a
+  reconnect refetch is not movement. The "have we loaded yet" guard is a
+  `primed` flag, **not** "is the previous map empty": unmerging the last
+  assembly on a line empties the store for one tick, and the emptiness test
+  swallowed the first precursor recreated after it.
+- **Board** (`useLotFlip`): 180ms FLIP between columns, flown as a **clone** in
+  a fixed overlay — each column is its own `overflow-y: auto` scroller, so a
+  plain transform is clipped at the column edge and the travel is lost. A card
+  with no known previous position fades in over 150ms where it is. New cards
+  are held invisible for `SETTLE_MS` first, because at layout time "a new card"
+  is ambiguous until the observer has classified the batch it arrived in.
+- **Map** (`MotionLayer`): a token runs the real edge geometry, in the **lot's**
+  colour (never brand coral, which everywhere else means "the app is doing
+  something"). Duration is `clamp(400, 120·log2(1+metres), 900)` from the floor
+  plan's own scale, which is what makes transport distance legible and the
+  transport-metres metric believable.
+- **Takt pulse**: each station pulses at its measured takt, opacity 0.14→0.75,
+  ease-in-out. Periods come from **one shared compression factor**, never a
+  per-station clamp — clamping each station independently maps every real takt
+  to the same period and destroys the only thing the display is for, which is
+  whether the line is *in step*. Ratios survive; the factor and the verdict are
+  shown in the legend. Phase is anchored to the wall clock so every station and
+  every tablet share one beat. A station without enough sessions does not pulse.
+- **Operator takt arc** (`showTaktArc`, **default off**, per company): pace
+  against the **station's** takt, never the operator's, and nothing extra is
+  recorded. Over 100% it shifts to the starved colour and says "often the sign
+  of a constraint here" — information about the line, not an accusation.
+- `prefers-reduced-motion: reduce` disables all of it; state still updates and
+  the pulse ring settles at its own midpoint.
+
 ## Map scale calibration
 
 The map view renders the floor plan sprite at its **raw image pixel dimensions** (`naturalWidth × naturalHeight`). Station positions are stored in real-world units (meters or feet). The `pixelsPerUnit` setting tells the map how many raw image pixels equal one real-world unit.

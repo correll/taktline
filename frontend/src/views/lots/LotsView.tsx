@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCardsStore, useStationsStore, useProcessesStore } from '../../store'
 import { color, font, size } from '../../theme/tokens'
@@ -10,6 +10,7 @@ import LotDetailModal from '../../components/lots/LotDetailModal'
 import { mergeNodes, computeColumnGroups, computeLanes, type BarSpan } from '../../domain/graph'
 import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { useRole } from '../../auth/useRole'
+import { useLotFlip } from '../../motion/useLotFlip'
 import { cardsApi } from '../../api/cards.api'
 import type { Card, Route } from '../../models'
 
@@ -320,8 +321,14 @@ export default function LotsView() {
   const totalCards = Object.values(cards).length
   const isDragging = dragging !== null
 
+  // Cards travel between columns instead of teleporting; a lot the client has
+  // never seen fades in where it is rather than sliding from a column it was
+  // never in. See useLotFlip for why a cross-column move needs a clone.
+  const boardRef = useRef<HTMLDivElement>(null)
+  useLotFlip(boardRef)
+
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div ref={boardRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Toolbar */}
       <div style={{
         padding:      `${size.sp3} ${size.sp6}`,
@@ -758,10 +765,14 @@ function KanbanColumn({
       </div>
 
       {/* Lot cards */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: size.sp2, display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+      <div
+        data-lot-column={stationId}
+        style={{ flex: 1, overflowY: 'auto', padding: size.sp2, display: 'flex', flexDirection: 'column', gap: size.sp2 }}
+      >
         {displayLots.map((card) => (
           <div
             key={card._id}
+            data-lot-id={card._id}
             draggable={canEdit}
             onDragStart={(e) => {
               if (!unlocked) { e.preventDefault(); onLockedDrag(); return }
@@ -1070,10 +1081,14 @@ function MergeColumn({
       )}
 
       {/* Lot cards */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: size.sp2, display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+      <div
+        data-lot-column={stationId}
+        style={{ flex: 1, overflowY: 'auto', padding: size.sp2, display: 'flex', flexDirection: 'column', gap: size.sp2 }}
+      >
         {displayLots.map((card) => (
           <div
             key={card._id}
+            data-lot-id={card._id}
             draggable={canEdit}
             onDragStart={(e) => {
               if (!unlocked) { e.preventDefault(); onLockedDrag(); return }

@@ -7,6 +7,9 @@ import { useCardsStore, useMapSettingsStore, useStationsStore, useProcessesStore
 import StationNode, { type MapTool } from './StationNode'
 import MapStationEditModal from './MapStationEditModal'
 import RouteEdge from './RouteEdge'
+import MotionLayer from './MotionLayer'
+import { useTaktPulses } from '../../motion/useTaktPulses'
+import type { TaktPulses } from '../../motion/takt'
 import { findAccumulations, warehouseNodes, type Accumulation } from '../../domain/graph'
 
 export const DEFAULT_NODE_SIZE = 100
@@ -475,6 +478,11 @@ export default function MapCanvas({
   // (which equals the settings-preview CSS display width, the frame ppu was calibrated in).
   const ppu = mapConfig?.pixelsPerUnit ?? DEFAULT_NODE_SIZE
 
+  // Each station's measured takt, compressed by one shared factor so the
+  // ratios between them survive — that is what makes a bottleneck visible as
+  // a slow heartbeat instead of a number in a table.
+  const taktPulses = useTaktPulses(!isEmpty)
+
   return (
     <div
       ref={containerRef}
@@ -536,6 +544,16 @@ export default function MapCanvas({
                 nodeSize={nodeSize}
               />
             ))}
+
+            {/* Lots in transit — drawn over the edges they run along, and
+                inside this Container so they pan and zoom with the floor plan. */}
+            <MotionLayer
+              stations={stations}
+              routes={routes}
+              nodeSize={nodeSize}
+              pixelsPerUnit={ppu}
+              unit={mapConfig?.unit ?? 'm'}
+            />
           </Container>
         </Stage>
       )}
@@ -554,6 +572,7 @@ export default function MapCanvas({
             routeArmed={routeFrom === station._id}
             flashing={(warnHover && isolated.flash.has(station._id))
                       || (accHover && accumulationIds.has(station._id))}
+            taktPeriodMs={taktPulses.periodMs[station._id]}
             onSelect={() => onSelectStation(station._id)}
             onRouteAnchor={() => handleRouteAnchor(station._id)}
             onContextMenu={(cx, cy) => setCtxMenu({ stationId: station._id, x: cx, y: cy })}
@@ -569,6 +588,10 @@ export default function MapCanvas({
           unit={mapConfig.unit}
         />
       )}
+
+      {/* Takt legend — without the factor, "3 seconds" is meaningless, and
+          without the in-step verdict the rhythm is decoration. */}
+      {taktPulses.measured > 0 && <TaktLegend pulses={taktPulses} />}
 
       {/* Fit / reset view button */}
       {!isEmpty && (
@@ -829,6 +852,34 @@ function HeatBlob({
 }
 
 // ─── Scale bar ────────────────────────────────────────────────────────────────
+
+/** What the pulsing means, in two lines.
+ *
+ *  The compression factor is not decoration: a station pulsing every 3 s is
+ *  really running a 300 s takt, and without the ×100 on screen someone will
+ *  eventually read the rhythm as the literal cycle time. The in-step verdict
+ *  is judged on the true takts, never the clamped display periods. */
+function TaktLegend({ pulses }: { pulses: TaktPulses }) {
+  const slowest = pulses.slowestSec
+  const human = slowest == null ? null
+    : slowest >= 60 ? `${(slowest / 60).toFixed(1)} min` : `${slowest.toFixed(0)} s`
+  return (
+    <div style={{
+      // Clear of the fit-view button, which owns the bottom-right corner.
+      position: 'absolute', bottom: 16, right: 56,
+      background: color.glass, border: `1px solid ${color.glassBorder}`,
+      borderRadius: 4, padding: '5px 9px 6px', pointerEvents: 'none', userSelect: 'none',
+      fontFamily: '"JetBrains Mono", monospace', fontSize: 10,
+      color: color.glassText, letterSpacing: '0.05em', lineHeight: 1.7, textAlign: 'right',
+    }}>
+      <div>TAKT PULSE ×{pulses.compression}</div>
+      <div style={{ opacity: 0.85 }}>
+        {pulses.measured} measured · {pulses.synchronous ? 'IN STEP' : 'OUT OF STEP'}
+        {human ? ` · slowest ${human}` : ''}
+      </div>
+    </div>
+  )
+}
 
 function ScaleBar({
   viewportScale, pixelsPerUnit, unit,

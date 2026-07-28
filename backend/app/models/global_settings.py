@@ -16,6 +16,8 @@ class GlobalSettings(BaseModel):
     id:        Optional[PyObjectId] = Field(default=None, alias="_id")
     timezone:  str = "UTC"
     workHours: List[List[int]] = Field(default_factory=default_work_hours)
+    # Station-level pace feedback in the Operator view. Never per-operator.
+    showTaktArc: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -23,6 +25,7 @@ class GlobalSettings(BaseModel):
 class GlobalSettingsUpdate(BaseModel):
     timezone:  Optional[str] = None
     workHours: Optional[List[List[int]]] = None
+    showTaktArc: Optional[bool] = None
 
     @field_validator("workHours")
     @classmethod

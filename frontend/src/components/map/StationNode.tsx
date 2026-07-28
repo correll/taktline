@@ -9,6 +9,7 @@ import type { Station } from '../../models'
 import type { Viewport } from './MapCanvas'
 import { useStationsStore } from '../../store'
 import { useRole } from '../../auth/useRole'
+import { pulseDelaySeconds } from '../../motion/takt'
 
 // ─── Icon registry ────────────────────────────────────────────────────────────
 
@@ -53,13 +54,16 @@ interface Props {
   tool:      MapTool
   routeArmed: boolean         // this node is the locked source of an in-progress route
   flashing?: boolean          // pulse to highlight an isolated-subgraph member
+  /** Measured takt, time-compressed, in ms. Undefined = not enough timing
+   *  data, so the node stays still rather than pulsing at an invented rate. */
+  taktPeriodMs?: number
   onSelect:  () => void
   onRouteAnchor: () => void   // route tool: clicked to become source / target
   onContextMenu: (clientX: number, clientY: number) => void
 }
 
 export default function StationNode({
-  station, lotCount, selected, nodeSize, viewport, tool, routeArmed, flashing,
+  station, lotCount, selected, nodeSize, viewport, tool, routeArmed, flashing, taktPeriodMs,
   onSelect, onRouteAnchor, onContextMenu,
 }: Props) {
   const updateStation = useStationsStore((s) => s.update)
@@ -170,6 +174,29 @@ export default function StationNode({
         boxSizing:    'border-box',
       }}
     >
+      {/* Takt pulse — the station's measured beat, time-compressed.
+          Deliberately low contrast: this runs on a wall display for a whole
+          shift, so it has to be readable at a glance and invisible to someone
+          working next to it. A node with too little timing data has no period
+          and simply does not pulse. The negative delay comes from the wall
+          clock (see pulseDelaySeconds) so every station — and every tablet —
+          shares one phase; without that, stations mounting milliseconds apart
+          would drift and a balanced line would look ragged. */}
+      {taktPeriodMs != null && (
+        <div
+          aria-hidden
+          className="tk-takt-pulse"
+          style={{
+            position: 'absolute', inset: 0,
+            borderRadius: 'inherit',
+            boxShadow: `inset 0 0 0 ${Math.max(1.5, screenSize * 0.028)}px ${stationColor}`,
+            animationDuration: `${taktPeriodMs}ms`,
+            animationDelay: `${pulseDelaySeconds(taktPeriodMs)}s`,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+
       {/* Top color stripe */}
       <div style={{
         position:  'absolute',

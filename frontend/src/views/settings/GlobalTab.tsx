@@ -14,17 +14,19 @@ export default function GlobalTab() {
   const { settings, loading, fetch, update } = useGlobalSettingsStore()
   const [timezone, setTimezone] = useState(settings.timezone)
   const [grid,     setGrid]     = useState<number[][]>(() => validGrid(settings.workHours))
+  const [taktArc,  setTaktArc]  = useState(settings.showTaktArc)
   const [saved,    setSaved]    = useState(false)
   const [error,    setError]    = useState<string | null>(null)
 
   useEffect(() => { fetch() }, [])
   useEffect(() => { setTimezone(settings.timezone) }, [settings.timezone])
   useEffect(() => { setGrid(validGrid(settings.workHours)) }, [settings.workHours])
+  useEffect(() => { setTaktArc(settings.showTaktArc) }, [settings.showTaktArc])
 
   const handleSave = async () => {
     setError(null); setSaved(false)
     try {
-      await update({ timezone, workHours: grid })
+      await update({ timezone, workHours: grid, showTaktArc: taktArc })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
     } catch (e) { setError(String(e)) }
   }
@@ -52,6 +54,30 @@ export default function GlobalTab() {
             Used for timestamps, statistics, and evaluating the work hours below. IANA timezone name.
           </span>
         </label>
+
+        {/* Operator pace feedback — deliberately opt-in. */}
+        <div>
+          <FieldLabel>OPERATOR PACE FEEDBACK</FieldLabel>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: size.sp3,
+                          marginTop: 6, cursor: 'pointer', maxWidth: 620 }}>
+            <input
+              type="checkbox" checked={taktArc} disabled={loading}
+              onChange={(e) => setTaktArc(e.target.checked)}
+              style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.55 }}>
+              Show a progress arc in the Operator view while a work session runs, filling
+              against <b style={{ color: color.textSecondary }}>the station&rsquo;s</b> measured
+              takt time. Past 100% it turns amber.
+              <br />
+              <b style={{ color: color.textSecondary }}>Off by default, and station-level only</b> —
+              never per operator, and nothing extra is recorded. Pace shown to the person doing the
+              work is the line between useful feedback and monitoring, so switching it on is a
+              deliberate local decision (in much of the EU, one for a works council). Stations with
+              no measured takt show no arc.
+            </span>
+          </label>
+        </div>
 
         {/* Work hours */}
         <div>

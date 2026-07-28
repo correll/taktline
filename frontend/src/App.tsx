@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { connectWS, disconnectWS } from './api/ws'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore, useMapSettingsStore } from './store'
 import { useAuthStore } from './store/auth.store'
@@ -156,10 +156,169 @@ function RequirePlatformStaff({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** True on phones and tablets held in portrait — the widths where the desktop
+ *  topbar cannot fit. A media query rather than a user-agent test, so it also
+ *  covers a narrow desktop window and updates live on rotation. */
+const PHONE_CHROME_QUERY = '(max-width: 980px)'
+
+function usePhoneChrome() {
+  const [phone, setPhone] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(PHONE_CHROME_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(PHONE_CHROME_QUERY)
+    const sync = (e: MediaQueryListEvent) => setPhone(e.matches)
+    setPhone(mq.matches)
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+  return phone
+}
+
+/** Phone chrome: a title bar with one menu button.
+ *
+ *  The desktop bar is a single non-wrapping row — logo, five nav links, the
+ *  company switcher, the connection pill, help, the signed-in email and Sign
+ *  out — whose min-content width is ~1160px. Nothing in it can shrink: every
+ *  item is `white-space: nowrap` and flex items default to `min-width: auto`.
+ *  On a 393px phone it therefore propped the *document* open to three screens,
+ *  and every view — the operator dashboard included — scrolled sideways into
+ *  empty space. The overflow was never in the views; it was always up here.
+ *
+ *  Hiding the overflow would have left the controls unreachable, so instead
+ *  everything that does not fit moves into a sheet, which is what a native app
+ *  does with the same problem. */
+function PhoneTopbar({ connection }: { connection: 'live' | 'reconnecting' | 'off' }) {
+  const { isSuperAdmin } = useRole()
+  const user     = useAuthStore((s) => s.user)
+  const logout   = useAuthStore((s) => s.logout)
+  const location = useLocation()
+  const [open, setOpen] = useState(false)
+
+  // A menu that outlives the tap that used it reads as a stuck overlay.
+  useEffect(() => { setOpen(false) }, [location.pathname])
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
+  const links: Array<[string, string]> = [
+    ['/map', 'Map'], ['/lots', 'Lots'], ['/operator', 'Operator'], ['/statistics', 'Statistics'],
+    ...(isSuperAdmin          ? [['/settings', 'Settings'] as [string, string]] : []),
+    ...(user?.platformRole    ? [['/platform', 'Platform'] as [string, string]] : []),
+  ]
+
+  const rowStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
+    display: 'flex', alignItems: 'center', minHeight: 48,   // 48 ≥ the 44pt HIG target
+    padding: `0 ${size.sp5}`, textDecoration: 'none', fontSize: 15,
+    color: isActive ? color.textPrimary : color.textSecondary,
+    background: isActive ? color.bgElevated : 'transparent',
+    fontWeight: isActive ? 600 : 400,
+    borderLeft: `3px solid ${isActive ? color.bluePrimary : 'transparent'}`,
+  })
+
+  return (
+    <>
+      <header className="tk-topbar" style={{
+        height: size.topbarHeight, background: color.bgPanel,
+        borderBottom: `1px solid ${color.border}`, display: 'flex', alignItems: 'center',
+        padding: `0 ${size.sp4}`, gap: size.sp3, flexShrink: 0, zIndex: 100, boxShadow: shadow.sm,
+      }}>
+        <NavLink to="/" title="Taktline home" style={{ display: 'flex', textDecoration: 'none' }}>
+          <TaktlineLogo height={20} color={color.textPrimary} />
+        </NavLink>
+
+        {/* The dot survives the collapse but the word does not: an operator
+            needs to know at a glance whether the board is live, and the dot
+            already carries that. The words return with the room for them. */}
+        <span
+          className={`status-dot ${
+            connection === 'live' ? 'running' : connection === 'reconnecting' ? 'warning' : 'offline'
+          }`}
+          style={{ marginLeft: 'auto' }}
+          title={connection === 'live' ? 'Event stream connected'
+               : connection === 'reconnecting' ? 'Server unreachable — retrying automatically'
+               : 'Event stream off'}
+        />
+
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? 'Close menu' : 'Open menu'}
+          aria-expanded={open}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 44, height: 44, marginRight: -6,          // 44pt target, optically flush
+            background: 'transparent', border: 'none', color: color.textSecondary, cursor: 'pointer',
+          }}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               strokeWidth="2" strokeLinecap="round">
+            {open
+              ? <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>
+              : <><path d="M3 6h18" /><path d="M3 12h18" /><path d="M3 18h18" /></>}
+          </svg>
+        </button>
+      </header>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{
+            position: 'fixed', inset: 0, zIndex: 8000, background: 'rgba(0,0,0,0.35)',
+          }} />
+          <div className="tk-phone-sheet" style={{
+            position: 'fixed', zIndex: 8001, left: 0, right: 0,
+            top: `calc(${size.topbarHeight} + env(safe-area-inset-top, 0px))`,
+            maxHeight: `calc(var(--tk-vvh, 100dvh) - ${size.topbarHeight} - 24px)`,
+            overflowY: 'auto', background: color.bgPanel,
+            borderBottom: `1px solid ${color.border}`, boxShadow: shadow.lg,
+            paddingBottom: `max(env(safe-area-inset-bottom, 0px), ${size.sp2})`,
+          }}>
+            {links.map(([to, label]) => (
+              <NavLink key={to} to={to} style={rowStyle}>{label}</NavLink>
+            ))}
+
+            <div style={{ height: 1, background: color.border, margin: `${size.sp2} 0` }} />
+
+            <div style={{ padding: `${size.sp2} ${size.sp5}`, display: 'flex',
+                          flexDirection: 'column', gap: size.sp3 }}>
+              <ImpersonationChip />
+              <SandboxChip />
+              <CompanySwitcher />
+              {/* ThemeToggle is not here: it already floats bottom-left app-wide. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3 }}>
+                <HelpMenu />
+              </div>
+              <span style={{ fontSize: 12, color: color.textDim, overflow: 'hidden',
+                             textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user?.email}
+              </span>
+              <button
+                onClick={() => logout()}
+                style={{
+                  background: 'transparent', color: color.textSecondary,
+                  border: `1px solid ${color.border}`, borderRadius: size.radius,
+                  padding: `10px ${size.sp3}`, fontSize: 14, cursor: 'pointer',
+                  fontFamily: font.sans, width: '100%',
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
 function Topbar({ connection }: { connection: 'live' | 'reconnecting' | 'off' }) {
   const { isSuperAdmin } = useRole()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const phone = usePhoneChrome()
+
+  if (phone) return <PhoneTopbar connection={connection} />
 
   const navStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
     padding:        `${size.sp1} ${size.sp3}`,
@@ -207,7 +366,7 @@ function Topbar({ connection }: { connection: 'live' | 'reconnecting' | 'off' })
           <span className={`status-dot ${
             connection === 'live' ? 'running' : connection === 'reconnecting' ? 'warning' : 'offline'
           }`} />
-          <span style={{
+          <span className="tk-topbar-conn-label" style={{
             fontSize: 11, fontFamily: font.mono,
             color: connection === 'reconnecting' ? color.warnText : color.textDim,
           }}>
@@ -216,7 +375,7 @@ function Topbar({ connection }: { connection: 'live' | 'reconnecting' | 'off' })
         </div>
         <HelpMenu />
         <div style={{ width: 1, height: 20, background: color.border }} />
-        <span style={{ fontSize: 12, color: color.textSecondary, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span className="tk-topbar-email" style={{ fontSize: 12, color: color.textSecondary, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {user?.email}
         </span>
         <button

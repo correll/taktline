@@ -290,3 +290,54 @@ html, body {
   /* Keep the dialog off the home indicator when it is tall enough to reach it. */
   .tk-modal-card { padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px); }
 }
+
+/* ── The topbar between the phone bar and full width ───────────────────────
+   Below ~1210px the desktop row stops fitting (its min-content width is about
+   1160px plus padding) and props the document open exactly as it did on the
+   phone. Under 980px App.tsx swaps in PhoneTopbar; this covers the band in
+   between — a half-screen window, an iPad in landscape — by dropping the two
+   items that carry the least. The connection *dot* always stays; only the word
+   beside it goes, and the signed-in address is still one tap away in the
+   account menu. Above 1210px nothing here applies. */
+@media (max-width: 1210px) { .tk-topbar-email      { display: none !important; } }
+@media (max-width: 1080px) { .tk-topbar-conn-label { display: none !important; } }
+
+/* ── Phones and tablets: no sideways scroll, ever ──────────────────────────
+   A backstop, not the fix — the topbar overflow that caused this is fixed at
+   source. But one nowrap row anywhere is enough to re-open the document to
+   twice the screen, and the symptom (the whole app slides left into empty
+   space) is far worse than the cause. `clip` rather than `hidden`: hidden
+   would make this a scroll container and break `position: sticky` inside it,
+   and unlike hidden it cannot be scrolled programmatically. Vertical scrolling
+   is untouched. */
+@media (max-width: 980px) {
+  html, body, #root { overflow-x: clip; }
+  /* Stop the rubber-band on the *page* while keeping it inside real scrollers:
+     dragging the whole board down to reveal a blank strip is the clearest tell
+     that something is a web page in a shell. */
+  body { overscroll-behavior-y: none; }
+}
+
+/* ── Touch feel ────────────────────────────────────────────────────────────
+   Scoped to touch devices with no hover, so a desktop mouse never sees any of
+   it. Each line removes a specific browser behaviour that a native control
+   does not have. */
+@media (hover: none) and (pointer: coarse) {
+  /* The grey flash on tap, and the long-press "copy / share" callout. */
+  a, button, [role="button"], .status-dot, label {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+  /* Removes the ~300ms wait for a possible double-tap-to-zoom. Deliberately
+     not on the map: MapCanvas sets touch-action:none inline for pinch, and an
+     inline style wins, but scoping it to controls keeps that unambiguous. */
+  a, button, [role="button"], input, select, textarea { touch-action: manipulation; }
+  /* Long-pressing chrome and getting a text selection handle is a giveaway.
+     Content stays selectable — a lot code is something people copy. */
+  .tk-topbar, .tk-phone-sheet, nav, button, [role="button"] {
+    -webkit-user-select: none; user-select: none;
+  }
+  /* iOS zooms the page when a focused field is under 16px, then leaves it
+     zoomed. Raising the floor is the only thing that prevents it. */
+  input, select, textarea { font-size: max(16px, 1em); }
+}

@@ -3,11 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/taktline-mark.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Taktline — digital kanban &amp; MES for small manufacturers</title>
     <meta name="description" content="See your whole shop floor at a glance: every lot, every station, live on your own floor plan — so you know what is where, what is late, and what a job actually costs. Digital kanban for job shops and assembly lines. Free forever, no credit card." />
     <link rel="canonical" href="https://taktline.com/" />
     <meta name="theme-color" content="#D85A30" />
+
+    <!-- Installable app. `orientation: any` on purpose: the layout already
+         switches to the Operator dashboard in portrait and the map in
+         landscape, so locking it would break one of the two. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Taktline" />
 
     <!-- Link previews (LinkedIn, Slack, WhatsApp, X) -->
     <meta property="og:type" content="website" />

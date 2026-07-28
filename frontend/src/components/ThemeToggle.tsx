@@ -13,7 +13,7 @@ export function ThemeToggle() {
 
   return (
     <button
-      onClick={toggle}
+className="tk-theme-toggle"       onClick={toggle}
       title={label}
       aria-label={label}
       style={{

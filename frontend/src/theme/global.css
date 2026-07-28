@@ -229,3 +229,30 @@ html, body {
   font-weight: 400;
 }
 .landing-faq details[open] summary::after { content: "\2013"; }
+
+/* ── Installed app (Add to Home Screen / Capacitor) ───────────────────────── */
+/* viewport-fit=cover lets content reach the physical screen edges, which is
+   what makes a standalone app look native — but it also means the home
+   indicator and, in landscape, the notch sit on top of whatever is there.
+   These insets are zero in a normal browser tab, so the rules are harmless
+   everywhere else. */
+.tk-safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.tk-safe-top    { padding-top:    env(safe-area-inset-top, 0px); }
+.tk-safe-x {
+  padding-left:  env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* The floating theme toggle sits 16px off the bottom-left corner — directly
+   under the home indicator on a modern iPhone, and behind the notch when the
+   map is held in landscape. */
+.tk-theme-toggle {
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+  left:   calc(16px + env(safe-area-inset-left, 0px)) !important;
+}
+
+/* A standalone app has no browser chrome to absorb an overscroll bounce, so a
+   rubber-banding board looks broken rather than playful. */
+@media (display-mode: standalone) {
+  html, body { overscroll-behavior: none; }
+}

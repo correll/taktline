@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
 
@@ -15,8 +16,14 @@ export function AuthCard({ title, subtitle, children }: {
         border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
         boxShadow: shadow.lg, padding: size.sp8, boxSizing: 'border-box',
       }}>
+        {/* Home, like the logo everywhere else in the app. Someone who lands on
+            sign-in from a link and wants to know what Taktline *is* should not
+            have to guess at the URL — "/" is the marketing page while signed
+            out. Shared by every auth screen, not just login. */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: size.sp6 }}>
-          <TaktlineLogo height={28} color={color.textPrimary} />
+          <Link to="/" title="Taktline home" style={{ display: 'flex', textDecoration: 'none' }}>
+            <TaktlineLogo height={28} color={color.textPrimary} />
+          </Link>
         </div>
         <h1 style={{ fontSize: 19, color: color.textPrimary, margin: 0, fontFamily: font.sans }}>{title}</h1>
         {subtitle && (

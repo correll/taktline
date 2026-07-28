@@ -10,6 +10,10 @@ import RouteEdge from './RouteEdge'
 import { findAccumulations, warehouseNodes, type Accumulation } from '../../domain/graph'
 
 export const DEFAULT_NODE_SIZE = 100
+// Largest a location may be drawn when the camera auto-fits a floor-plan-less
+// map. Only binds on a sparse map (one or two locations); once there are
+// enough to fill the view the ordinary fit is smaller than this anyway.
+const MAX_FIT_NODE_PX = 100
 
 // Pixi needs numeric colors, so the canvas background can't read the CSS
 // variables — mirror --tk-bg-deep for both themes here.
@@ -198,6 +202,14 @@ export default function MapCanvas({
     const rect = floorPlanRect
 
     let minX: number, minY: number, maxX: number, maxY: number
+    // Without a floor plan the content bounds are just the locations, so the
+    // first one placed would fill ~42% of the viewport — the fit zooms until
+    // that single node *is* the content. Note this is not a station-size
+    // problem: nodeSize appears in both the bounds and the divisor and cancels
+    // out, so drawing the station smaller would only make the camera zoom
+    // further in. Cap the zoom instead. With a floor plan the rect governs and
+    // no cap applies.
+    let maxScale = Infinity
     if (rect) {
       minX = rect.x; minY = rect.y; maxX = rect.x + rect.w; maxY = rect.y + rect.h
     } else if (list.length > 0) {
@@ -206,10 +218,11 @@ export default function MapCanvas({
       const ys  = list.map((s) => s.position.y)
       minX = Math.min(...xs) - pad; minY = Math.min(...ys) - pad
       maxX = Math.max(...xs) + nodeSize + pad; maxY = Math.max(...ys) + nodeSize + pad
+      maxScale = MAX_FIT_NODE_PX / nodeSize
     } else {
       return
     }
-    const scale = Math.min(sw / (maxX - minX), sh / (maxY - minY)) * 0.92
+    const scale = Math.min(Math.min(sw / (maxX - minX), sh / (maxY - minY)) * 0.92, maxScale)
     setViewport({
       x: -minX * scale + (sw - (maxX - minX) * scale) / 2,
       y: -minY * scale + (sh - (maxY - minY) * scale) / 2,

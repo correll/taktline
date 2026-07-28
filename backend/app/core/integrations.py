@@ -33,9 +33,14 @@ IntegrationRole = Literal["source", "sink", "both"]
 
 ROLES: set[str] = {"source", "sink", "both"}
 
-# provider id → default role. The id matches the connector module name in
-# connectors/taktline_connect/, which is what makes `payload.source` line up
-# with the connector polling for it.
+# provider id → what the partner is *capable of*, which also serves as the
+# default when binding one. This is not cosmetic: a shipper genuinely cannot
+# raise demand — there is no such thing as a ShipStation order asking the line
+# to make something — so binding one as a source has to be refused rather than
+# quietly accepted and then never firing.
+#
+# The id matches the connector module name in connectors/taktline_connect/,
+# which is what makes `payload.source` line up with the connector polling for it.
 PROVIDERS: dict[str, str] = {
     "odoo":          "both",
     "netsuite":      "both",
@@ -55,6 +60,14 @@ def is_provider(value: str | None) -> bool:
 
 def default_role(provider: str) -> str:
     return PROVIDERS.get(provider, "both")
+
+
+def role_allowed(provider: str, role: str) -> bool:
+    """A partner may only be bound to a role it can actually play."""
+    capability = PROVIDERS.get(provider, "both")
+    if capability == "both":
+        return role in ROLES
+    return role == capability
 
 
 def can_sink(provider: str | None, role: str | None) -> bool:

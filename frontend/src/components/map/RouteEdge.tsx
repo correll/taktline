@@ -27,13 +27,19 @@ interface Props {
   fromStation: Station | undefined
   toStation:   Station | undefined
   nodeSize:    number
+  /** Set when one end is an integration partner. Such an edge carries no
+   *  material — it is demand going out or a handoff going in — so it is drawn
+   *  in the partner's colour with a longer, sparser dash to read as a
+   *  different kind of connection, not another step in the flow. */
+  boundaryTint?: number
 }
 
 function drawDashedLine(
   g: PIXI.Graphics,
   x1: number, y1: number,
   x2: number, y2: number,
-  offset: number
+  offset: number,
+  dashLen: number = DASH,
 ): void {
   const dx  = x2 - x1
   const dy  = y2 - y1
@@ -41,11 +47,11 @@ function drawDashedLine(
   if (len < 1) return
   const ux = dx / len
   const uy = dy / len
-  const period = DASH + GAP
+  const period = dashLen + GAP
   let t = (offset % period) - period
   while (t < len) {
     const s = Math.max(0, t)
-    const e = Math.min(len, t + DASH)
+    const e = Math.min(len, t + dashLen)
     if (e > s) {
       g.moveTo(x1 + ux * s, y1 + uy * s)
       g.lineTo(x1 + ux * e, y1 + uy * e)
@@ -54,7 +60,7 @@ function drawDashedLine(
   }
 }
 
-export default function RouteEdge({ route, fromStation, toStation, nodeSize }: Props) {
+export default function RouteEdge({ route, fromStation, toStation, nodeSize, boundaryTint }: Props) {
   const gRef    = useRef<PIXI.Graphics>(null)
   const offset  = useRef(0)
   const themeMode = useThemeStore((s) => s.mode)
@@ -72,6 +78,7 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize }: P
     const g = gRef.current
     if (!g || !fromStation || !toStation) return
     g.clear()
+    const dash = boundaryTint != null ? DASH * 0.45 : DASH
 
     const x1 = fromStation.position.x + half
     const y1 = fromStation.position.y + half
@@ -79,7 +86,8 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize }: P
     const y2 = toStation.position.y   + half
 
     const angle = Math.atan2(y2 - y1, x2 - x1)
-    const colors = EDGE_COLORS[themeMode]
+    const base = EDGE_COLORS[themeMode]
+    const colors = boundaryTint != null ? { ...base, line: boundaryTint } : base
 
     // Pull the line end back by arrowhead length so it doesn't overlap
     const ax = x2 - Math.cos(angle) * ARROW_LEN
@@ -87,9 +95,9 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize }: P
 
     // Dashed animated line — halo casing first, ink stroke on top
     g.lineStyle(1.5 + HALO_EXTRA, colors.halo, HALO_ALPHA)
-    drawDashedLine(g, x1, y1, ax, ay, offset.current)
+    drawDashedLine(g, x1, y1, ax, ay, offset.current, dash)
     g.lineStyle(1.5, colors.line, LINE_ALPHA)
-    drawDashedLine(g, x1, y1, ax, ay, offset.current)
+    drawDashedLine(g, x1, y1, ax, ay, offset.current, dash)
 
     // Arrowhead — halo outline around the ink fill
     const cos = Math.cos(angle)
@@ -108,7 +116,7 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize }: P
       g.drawCircle((x1 + x2) / 2, (y1 + y2) / 2, badgeR)
       g.endFill()
     }
-  }, [fromStation, toStation, nodeSize, half, showBadge, badgeR, themeMode])
+  }, [fromStation, toStation, nodeSize, half, showBadge, badgeR, themeMode, boundaryTint])
 
   // Initial draw
   useEffect(() => { redraw() }, [redraw])

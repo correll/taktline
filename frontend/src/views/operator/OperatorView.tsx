@@ -11,6 +11,7 @@ import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { cardsApi } from '../../api/cards.api'
 import LotCard, { lotLabel } from '../../components/lots/LotCard'
 import TaktArc from '../../components/operator/TaktArc'
+import { integrationProvider } from '../../domain/integrations'
 import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 const ScanSheet = React.lazy(() => import('../../components/scan/ScanSheet'))
 
@@ -1008,6 +1009,29 @@ function DonePanel({
     return ids.length > 0 ? stations[ids[0]] : null
   }, [stationId, routes, stations, card])
 
+  // Where this location hands finished goods to the outside world. The link is
+  // drawn on the map but carries no material: sending is an act someone
+  // performs when the goods are actually ready to leave, not something that
+  // happens because a card arrived somewhere.
+  const handoffTo = useMemo(() => {
+    const link = Object.values(routes).find((r) => r.load === stationId &&
+      stations[r.unload] && stations[r.unload].integrationRole &&
+      ['sink', 'both'].includes(stations[r.unload].integrationRole as string))
+    return link ? stations[link.unload] : null
+  }, [routes, stations, stationId])
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState<string | null>(null)
+
+  const doHandoff = async () => {
+    if (!handoffTo || !card) return
+    setSending(true)
+    try {
+      const r = await cardsApi.handoff(card._id, stationId, handoffTo._id, quantity)
+      setSent(r.sentTo)
+      onBack()
+    } finally { setSending(false) }
+  }
+
   const doMove = async () => {
     if (!nextStation) return
     setMoving(true)
@@ -1039,6 +1063,31 @@ function DonePanel({
         <div style={{ fontSize: 12, color: color.textSecondary, textAlign: 'center' }}>
           {tmpl?.name ?? 'Lot'}
           <span style={{ fontFamily: font.mono }}> {lotLabel(card)}</span>
+        </div>
+      )}
+
+      {handoffTo && (
+        <button
+          onClick={doHandoff}
+          disabled={sending}
+          style={{
+            width: '100%', maxWidth: 320, padding: `${size.sp5} 0`,
+            background: sending ? `${integrationProvider(handoffTo.integrationProvider)?.color ?? color.bluePrimary}60`
+                                : integrationProvider(handoffTo.integrationProvider)?.color ?? color.bluePrimary,
+            border: 'none', borderRadius: size.radiusMd,
+            color: integrationProvider(handoffTo.integrationProvider)?.ink ?? '#fff',
+            fontFamily: font.mono, fontSize: 17, fontWeight: 700, letterSpacing: '0.08em',
+            cursor: sending ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: size.sp3,
+          }}
+        >
+          {sending ? 'SENDING…' : `SEND TO ${handoffTo.name.toUpperCase()}`}
+        </button>
+      )}
+      {handoffTo && (
+        <div style={{ fontSize: 11, color: color.textDim, marginTop: -size.sp4, textAlign: 'center', maxWidth: 320 }}>
+          This closes the lot out of Taktline and tells{' '}
+          {integrationProvider(handoffTo.integrationProvider)?.label}.
         </div>
       )}
 

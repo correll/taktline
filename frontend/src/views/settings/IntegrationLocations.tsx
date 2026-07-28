@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react'
 import { useStationsStore, useMapSettingsStore } from '../../store'
 import { color, font, size } from '../../theme/tokens'
 import {
-  INTEGRATION_PROVIDERS, integrationProvider, isIntegrationStation, roleLabel,
+  INTEGRATION_PROVIDERS, allowedRoles, integrationProvider, isIntegrationStation, roleLabel,
   type IntegrationRole,
 } from '../../domain/integrations'
 
@@ -53,6 +53,8 @@ export default function IntegrationLocations() {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [err,  setErr]  = useState('')
+
+  const roles = useMemo(() => allowedRoles(providerId), [providerId])
 
   const bound = useMemo(
     () => Object.values(stations).filter(isIntegrationStation)
@@ -105,11 +107,14 @@ export default function IntegrationLocations() {
   return (
     <div>
       <p style={{ fontSize: 12, color: color.textDim, margin: `0 0 ${size.sp4}`, lineHeight: 1.6, maxWidth: 640 }}>
-        A location bound to a partner is where work <b style={{ color: color.textSecondary }}>enters or
-        leaves the business</b>. Add one and it appears on the map — drag it where it belongs, then draw
-        routes to or from it like any other location. Releases seed a source; a completion at a sink is
-        delivered to that partner&rsquo;s connector even when a different one released the order.
-        Bound locations are kept out of the heatmap, OEE and takt: nobody works at an ERP.
+        A location bound to a partner marks where work <b style={{ color: color.textSecondary }}>enters or
+        leaves the business</b>. Add one, drag it where it belongs, then draw a link between it and the
+        location it exchanges with. <b style={{ color: color.textSecondary }}>Cards never sit on a
+        partner&rsquo;s node.</b> A link <i>from</i> an ERP is demand: releasing an order fires the same
+        pull the &ldquo;create precursors&rdquo; button does, and the lots appear at your queue. A link
+        <i> to</i> a partner is a handoff: the finished lot waits at your own location until someone
+        sends it. Because these links carry no material they are ignored by merges, splits, pulls and
+        the cycle check — and bound locations stay out of the heatmap, OEE and takt.
       </p>
 
       {bound.length > 0 && (
@@ -149,10 +154,15 @@ export default function IntegrationLocations() {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, letterSpacing: '0.08em' }}>ROLE</span>
-          <select value={role} onChange={(e) => setRole(e.target.value as IntegrationRole)} style={inputStyle}>
-            <option value="source">Work enters here</option>
-            <option value="sink">Work leaves here</option>
-            <option value="both">Both</option>
+          <select value={role} onChange={(e) => setRole(e.target.value as IntegrationRole)}
+                  style={inputStyle} disabled={roles.length === 1}>
+            {roles.map((r) => (
+              <option key={r} value={r}>
+                {r === 'source' ? 'Raises demand here'
+                 : r === 'sink' ? 'Finished goods leave here'
+                 : 'Both'}
+              </option>
+            ))}
           </select>
         </label>
 

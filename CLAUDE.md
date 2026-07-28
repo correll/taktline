@@ -58,42 +58,55 @@ The integration boundary used to be **implicit in the graph's shape**: any leaf
 with no incoming routes could originate lots, and *any* leaf with no outgoing
 routes completed orders. Nothing knew a dock belonged to Shopify, so a
 completion could only be addressed to whichever connector released the order —
-which is why a manual/CSV release produced an event (`source='manual'`) that no
-connector could ever ack, and why the outbox needs a source filter and a fail
-counter to stop those orphans burying real completions.
+which is why a manual/CSV release produced an event (`source='manual'`) no
+connector could ack, and why the outbox needs a source filter and fail counter
+to stop those orphans burying real completions.
 
-A **station may now be bound to a partner** (`stations.integrationProvider` +
-`integrationRole` ∈ `source|sink|both`; catalog in `core/integrations.py`,
-frontend registry with brand colours and letter marks in
-`domain/integrations.ts`). It is an ordinary station otherwise — positioned,
-dragged and routed like any other — and it is created from Settings →
-Integrations → *Integration locations*, appearing on the map immediately.
+A station may now be **bound to a partner** (`stations.integrationProvider` +
+`integrationRole` ∈ `source|sink|both`; catalog `core/integrations.py`, frontend
+registry with brand colours and letter marks `domain/integrations.ts`), created
+from Settings → Integrations → *Integration locations*.
 
-- **Source**: no release-path change was needed. Putting a bound dock upstream
-  of a product's origin means the origin now has incoming routes, so the
-  existing pull (`len(incoming) >= 1` → `_leaf_sources`) seeds the dock instead
-  of the origin. Ordering 3 widgets puts 3 at *Odoo Goods In*, which then travel
-  into the line.
-- **Sink**: `cards._record_order_progress` fans the completion out to
-  `dict.fromkeys(order.source, sinkProvider)` — the releasing connector always
-  hears (nothing built before this changes), and the partner whose dock the
-  goods left through hears too, deduped when they are the same. The payload
-  gains `sinkProvider`. Connectors need **no change**: they already filter on
-  `payload.source`, so a ShipStation sink makes a manually released order
-  drainable by ShipStation.
-- **An unbound leaf still completes orders** — the deliberate migration rule, so
-  binding a sink is purely additive.
+**Integration nodes never hold cards.** This is the whole model:
+
+- An **edge touching a bound station is a boundary link, not material flow**,
+  and is excluded from every piece of graph reasoning — `_incoming_routes` and
+  `_outgoing_count` in `merge.py` (which covers merge detection, split
+  detection, the pull walk and the release decision) and `_process_edges` in
+  `routes.py` (the cycle check). Without the last one, the commonest ERP wiring
+  there is — Odoo raises demand *and* takes the goods back — is impossible to
+  draw, because it looks like a loop.
+- **Source = demand.** An ERP node wired to a queue makes a release fire the
+  same pull the "create precursors" button does: the lots appear **at the
+  queue**. No release-path change was needed — excluding the demand edge from
+  `_incoming_routes` keeps the queue a leaf, so the existing mint-at-origin
+  branch runs.
+- **Sink = an explicit handoff.** `POST /cards/{id}/handoff` — "Send back to
+  Odoo", "Send to ShipStation" — consumes the units and credits the order.
+  Shipping is a decision, not an arrival: crediting when a card *reached* a
+  location would report work finished while it sat on a bench. A location with
+  a handoff link is therefore skipped by `_record_order_progress`, or every
+  unit would count twice.
+- **Capability is enforced**: `PROVIDERS` maps a partner to what it can *be*.
+  ShipStation is `sink` — a shipper cannot raise demand — so binding one as a
+  source is a 400, not a dead control.
+- **Completion fans out** to the releasing connector *and* the partner whose
+  node the goods left through, deduped when equal, with `sinkProvider` in the
+  payload. Connectors need **no change** (they already filter on
+  `payload.source`), and a manually released order handed to ShipStation
+  becomes drainable by ShipStation.
+- **An unbound leaf still completes on arrival** — the deliberate migration
+  rule, so binding is purely additive.
 - Bound locations are excluded from the heatmap, accumulation warnings, OEE and
-  the takt pulse (`_warehouse_ids` unions them in): nobody stands at an ERP, and
-  letting a dock full of finished goods into the heat ramp flattens the scale
-  for every station that matters. Related fix: `/sessions/stats/{id}` used to
-  report `isWarehouse: false` for any station with no sessions yet.
-- Marks are one or two letters, not logos — partner artwork is trademarked,
-  illegible at 14px, and re-licensed at every rebrand. Two letters where the
-  initial collides (Shopify `S` vs ShipStation `SS`).
+  the takt pulse (`_warehouse_ids` unions them in). Related fix:
+  `/sessions/stats/{id}` used to report `isWarehouse: false` for any station
+  with no sessions yet.
+- Marks are one or two letters in the partner's colour, not logos — trademarked
+  artwork, illegible at 14px, re-licensed at every rebrand. Two letters where
+  the initial collides (Shopify `S` vs ShipStation `SS`).
 
-Product → template mapping still lives in the **connector's** config, not here:
-the ERP owns the BoM, Taktline owns the flow graph.
+Product → template mapping still lives in the **connector's** config: the ERP
+owns the BoM, Taktline owns the flow graph.
 
 ### Scoped API keys & the auth model for integrations
 

@@ -67,6 +67,15 @@ export function isIntegrationStation(s: { integrationProvider?: string | null })
   return !!s.integrationProvider
 }
 
+/** A partner may only be bound to a role it can play. A shipper genuinely
+ *  cannot raise demand — there is no ShipStation order asking a line to make
+ *  something — so offering it as a source would be offering a dead control. */
+export function allowedRoles(providerId: string): IntegrationRole[] {
+  const p = BY_ID.get(providerId)
+  if (!p) return ['both']
+  return p.defaultRole === 'both' ? ['source', 'sink', 'both'] : [p.defaultRole]
+}
+
 export function roleLabel(role: IntegrationRole | null | undefined): string {
   return role === 'source' ? 'Work enters here'
        : role === 'sink'   ? 'Work leaves here'

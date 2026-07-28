@@ -50,13 +50,25 @@ async def _assert_in_company(session, model, ids, company_id, what):
 
 
 async def _process_edges(session, company_id, process_uuid, exclude_id=None) -> list[tuple[str, str]]:
+    """Production edges of a process, for the cycle check.
+
+    Boundary links are left out. An ERP that both raises demand against a queue
+    and takes the finished goods back is a *loop through the outside world*, not
+    a loop in the flow — material goes queue → line → Odoo exactly once and
+    never comes round again. Counting those edges made the commonest ERP wiring
+    there is (Odoo in, Odoo out) impossible to draw."""
     stmt = select(RouteRow).where(
         RouteRow.companyId == company_id, RouteRow.processId == process_uuid
     )
     if exclude_id is not None:
         stmt = stmt.where(RouteRow.id != exclude_id)
     rows = (await session.execute(stmt)).scalars().all()
-    return [(str(r.load), str(r.unload)) for r in rows]
+    bound = set((await session.execute(
+        select(StationRow.id).where(StationRow.companyId == company_id,
+                                    StationRow.integrationProvider.isnot(None))
+    )).scalars().all())
+    return [(str(r.load), str(r.unload)) for r in rows
+            if r.load not in bound and r.unload not in bound]
 
 
 def _would_create_cycle(edges, new_load: str, new_unload: str) -> bool:

@@ -9,7 +9,7 @@ from ..deps.auth import CompanyContext, ensure_sandbox_quota, get_active_company
 from ..models.station import Station, StationCreate, StationUpdate
 from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
-from ..core.integrations import ROLES, is_provider
+from ..core.integrations import ROLES, default_role, is_provider, role_allowed
 
 router = APIRouter(prefix="/stations", tags=["stations"])
 
@@ -43,6 +43,10 @@ def _validate_integration(provider, role) -> None:
         raise HTTPException(400, f"Integration role must be one of {sorted(ROLES)}")
     if provider is None:
         raise HTTPException(400, "An integration role needs a provider")
+    if role is not None and not role_allowed(provider, role):
+        raise HTTPException(
+            400, f"{provider} can only be bound as '{default_role(provider)}' — "
+                 f"a shipper cannot raise demand, only receive finished goods")
 
 
 async def _get_owned(session: AsyncSession, station_id: str, ctx: CompanyContext) -> StationRow:

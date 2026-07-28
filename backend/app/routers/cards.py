@@ -428,15 +428,39 @@ async def _assert_not_unmerged_precursor(session, company_id, row: CardRow, from
                  "into an assembly before moving it on.")
 
 
+async def _sink_link(session, company_id, station_uuid) -> StationRow | None:
+    """The integration location this station hands finished goods to, if any.
+
+    The link is an ordinary route drawn on the map, but it carries no material:
+    a lot is *consumed* across it by an explicit handoff ("Send to ShipStation"),
+    never walked onto the partner's node.
+    """
+    rows = (await session.execute(
+        select(StationRow).join(RouteRow, RouteRow.unload == StationRow.id)
+        .where(RouteRow.companyId == company_id, RouteRow.load == station_uuid,
+               StationRow.integrationProvider.isnot(None))
+    )).scalars().all()
+    for st in rows:
+        if can_sink(st.integrationProvider, st.integrationRole):
+            return st
+    return None
+
+
 async def _record_order_progress(session, company_id, card_row: CardRow, to_station_id: str, quantity: int) -> None:
     """When order-tagged units arrive at a finished-goods leaf (a station with no
     outgoing routes = warehouse), credit the order and enqueue an outbox event
-    in the same transaction."""
+    in the same transaction.
+
+    A location wired to an integration sink is deliberately *not* credited on
+    arrival: there, finishing is an act someone performs ("Send back to Odoo"),
+    and crediting here as well would count every unit twice."""
     if card_row.orderId is None:
         return
     to_uuid = parse_uuid(to_station_id)
     if to_uuid is None:
         return
+    if await _sink_link(session, company_id, to_uuid) is not None:
+        return  # handed over explicitly, not on arrival
     has_outgoing = (await session.execute(
         select(RouteRow.id).where(RouteRow.companyId == company_id,
                                   RouteRow.processId == card_row.processId,
@@ -447,10 +471,17 @@ async def _record_order_progress(session, company_id, card_row: CardRow, to_stat
     order = await session.get(OrderRow, card_row.orderId)
     if order is None or order.companyId != company_id or order.status in ("completed", "cancelled"):
         return
+    await _credit_order(session, company_id, order, to_station_id, quantity, sink=None)
+
+
+async def _credit_order(session, company_id, order: OrderRow, at_station_id: str,
+                        quantity: int, sink: StationRow | None) -> None:
+    """Credit progress and enqueue the delivery event(s)."""
     order.quantityDone += quantity
     order.updatedAt = utcnow()
     completed = order.quantityDone >= order.quantity
     order.status = "completed" if completed else "in_progress"
+    to_station_id = at_station_id
 
     # Who needs to hear about this?
     #
@@ -463,11 +494,7 @@ async def _record_order_progress(session, company_id, card_row: CardRow, to_stat
     # This is also what rescues a manual or CSV release that lands on a bound
     # dock: its own event carries source='manual' and no connector can ever ack
     # it, but the dock's copy is addressed to a connector that can.
-    station = await session.get(StationRow, to_uuid)
-    sink = (station.integrationProvider
-            if station is not None and can_sink(station.integrationProvider,
-                                                station.integrationRole)
-            else None)
+    sink_provider = sink.integrationProvider if sink is not None else None
     base = {
         "orderId": str(order.id), "externalRef": order.externalRef,
         "productTemplateId": str(order.productTemplateId) if order.productTemplateId else None,
@@ -477,13 +504,13 @@ async def _record_order_progress(session, company_id, card_row: CardRow, to_stat
     event_type = "order.completed" if completed else "order.progress"
     # dict.fromkeys keeps insertion order and drops the duplicate when the
     # releasing connector *is* the one that owns the dock.
-    for audience in dict.fromkeys(a for a in (order.source, sink) if a):
+    for audience in dict.fromkeys(a for a in (order.source, sink_provider) if a):
         session.add(OutboxRow(
             companyId=company_id, orderId=order.id, eventType=event_type,
             payload={**base, "source": audience,
                      # Which partner's location it physically left through —
                      # null when it was an ordinary unbound finished-goods leaf.
-                     "sinkProvider": sink},
+                     "sinkProvider": sink_provider},
         ))
 
 
@@ -589,6 +616,89 @@ async def card_label(card_id: str,
         "^XZ"
     )
     return PlainTextResponse(zpl, media_type="application/zpl")
+
+
+class HandoffBody(BaseModel):
+    fromStationId:        str
+    integrationStationId: str
+    quantity:             int = 1
+
+
+@router.post("/{card_id}/handoff", response_model=dict)
+async def handoff_card(card_id: str, body: HandoffBody,
+                       ctx: CompanyContext = Depends(require_scope("cards:advance", session_role="user")),
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Hand finished goods to an integration partner — "Send back to Odoo",
+    "Send to ShipStation".
+
+    This is where a lot **leaves Taktline**, and it is deliberately an act
+    someone performs rather than something that happens because a card arrived
+    somewhere. Shipping is a decision: the goods are packed, the paperwork is
+    right, and only then does the ERP get told. Crediting on arrival instead
+    would report work finished while it was still sitting on a bench.
+
+    The units are consumed here — the partner's node never holds cards, it is
+    the far side of the boundary — and the order is credited with the delivery
+    event addressed to that partner (plus the connector that released the
+    order, when it is a different one).
+    """
+    row = await _get_owned(session, card_id, ctx, for_update=True)
+    from_uuid = require_uuid(body.fromStationId, "Station not found")
+    dest_uuid = require_uuid(body.integrationStationId, "Station not found")
+    if body.quantity < 1:
+        raise HTTPException(400, "Quantity must be at least 1")
+
+    dest = await session.get(StationRow, dest_uuid)
+    if dest is None or dest.companyId != ctx.company_id:
+        raise HTTPException(404, "Station not found")
+    if not can_sink(dest.integrationProvider, dest.integrationRole):
+        raise HTTPException(400, "That location does not accept finished goods")
+
+    # The link has to be drawn: a lot can only leave through a partner this
+    # location actually hands off to.
+    link = (await session.execute(
+        select(RouteRow.id).where(RouteRow.companyId == ctx.company_id,
+                                  RouteRow.load == from_uuid,
+                                  RouteRow.unload == dest_uuid).limit(1)
+    )).first()
+    if link is None:
+        raise HTTPException(400, "No handoff link from this location to that integration")
+
+    bins = dict(row.bins or {})
+    have = bins.get(body.fromStationId, {}).get("count", 0)
+    if body.quantity > have:
+        raise HTTPException(400, f"Cannot send {body.quantity}: only {have} here")
+
+    remaining = have - body.quantity
+    if remaining <= 0:
+        bins.pop(body.fromStationId, None)
+    else:
+        bins[body.fromStationId] = {"count": remaining}
+
+    order = await session.get(OrderRow, row.orderId) if row.orderId else None
+    provider = dest.integrationProvider
+
+    if not bins:
+        await session.delete(row)
+        _emit_card_delete(session, ctx.company_id, card_id)
+    else:
+        row.bins = bins
+        row.totalQuantity = max(1, row.totalQuantity - body.quantity)
+        row.updatedAt = utcnow()
+        _emit_card_update(session, ctx.company_id, row)
+    _record_event(session, ctx.company_id, card_id, "deleted",
+                  fromStation=body.fromStationId, quantity=body.quantity,
+                  note=f"handed off to {provider}")
+    await plugin_registry.notify_lot_depart(body.fromStationId, card_id)
+
+    if order is not None and order.companyId == ctx.company_id \
+            and order.status not in ("completed", "cancelled"):
+        await _credit_order(session, ctx.company_id, order, body.fromStationId,
+                            body.quantity, sink=dest)
+
+    return {"sentTo": provider, "quantity": body.quantity,
+            "orderId": str(order.id) if order else None,
+            "orderStatus": order.status if order else None}
 
 
 class UnmergeBody(BaseModel):

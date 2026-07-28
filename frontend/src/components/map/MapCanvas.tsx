@@ -11,7 +11,13 @@ import MotionLayer from './MotionLayer'
 import { useTaktPulses } from '../../motion/useTaktPulses'
 import type { TaktPulses } from '../../motion/takt'
 import { findAccumulations, warehouseNodes, type Accumulation } from '../../domain/graph'
-import { isIntegrationStation } from '../../domain/integrations'
+import { integrationProvider, isIntegrationStation } from '../../domain/integrations'
+
+/** Pixi needs numeric colours; the partner registry stores CSS hex. */
+function hexToPixi(hex: string | undefined): number | undefined {
+  const m = hex && /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  return m ? parseInt(m[1], 16) : undefined
+}
 
 export const DEFAULT_NODE_SIZE = 100
 // Largest a location may be drawn when the camera auto-fits a floor-plan-less
@@ -547,15 +553,24 @@ export default function MapCanvas({
               )
             })}
 
-            {routeList.map((route) => (
-              <RouteEdge
-                key={route._id}
-                route={route}
-                fromStation={stations[route.load]}
-                toStation={stations[route.unload]}
-                nodeSize={nodeSize}
-              />
-            ))}
+            {routeList.map((route) => {
+              // Either end bound to a partner → a boundary link, not flow.
+              const bound = [stations[route.load], stations[route.unload]]
+                .find((s) => s && isIntegrationStation(s))
+              const tint = bound
+                ? hexToPixi(integrationProvider(bound.integrationProvider)?.color)
+                : undefined
+              return (
+                <RouteEdge
+                  key={route._id}
+                  route={route}
+                  fromStation={stations[route.load]}
+                  toStation={stations[route.unload]}
+                  nodeSize={nodeSize}
+                  boundaryTint={tint}
+                />
+              )
+            })}
 
             {/* Lots in transit — drawn over the edges they run along, and
                 inside this Container so they pan and zoom with the floor plan. */}

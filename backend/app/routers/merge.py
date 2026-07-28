@@ -71,6 +71,29 @@ async def _assert_station(session: AsyncSession, station_uuid: uuid.UUID, compan
         raise HTTPException(404, "Station not found")
 
 
+async def _boundary_station_ids(session, company_id) -> set:
+    """Stations bound to an integration partner.
+
+    An edge touching one of these is a **boundary link, not material flow**: it
+    records which queue an ERP raises demand against, or which location hands
+    finished goods to a shipper. Cards never sit on an integration node, so
+    such an edge must be invisible to every piece of graph reasoning — merge
+    detection, split detection, the pull walk and the release decision — or an
+    Odoo node wired to an intake queue would make that queue look "made here"
+    and the pull would try to seed the ERP itself.
+
+    Memoised on the session: the pull walk is recursive and would otherwise
+    re-query this on every hop.
+    """
+    cache = session.info.setdefault("_boundary_stations", {})
+    if company_id not in cache:
+        cache[company_id] = set((await session.execute(
+            select(StationRow.id).where(StationRow.companyId == company_id,
+                                        StationRow.integrationProvider.isnot(None))
+        )).scalars().all())
+    return cache[company_id]
+
+
 async def _incoming_routes(session, company_id, station_uuid, process_id=None) -> list[RouteRow]:
     """Routes feeding a station — scoped to one process when given. Stations are
     physical and may be shared by several processes (the documented pattern for
@@ -81,7 +104,11 @@ async def _incoming_routes(session, company_id, station_uuid, process_id=None) -
         RouteRow.companyId == company_id, RouteRow.unload == station_uuid)
     if process_id is not None:
         stmt = stmt.where(RouteRow.processId == process_id)
-    return list((await session.execute(stmt)).scalars().all())
+    rows = list((await session.execute(stmt)).scalars().all())
+    # A feed from an integration node is demand, not material: the ERP does not
+    # hand this station parts, it asks it for them.
+    boundary = await _boundary_station_ids(session, company_id)
+    return [r for r in rows if r.load not in boundary]
 
 
 def _merge_process(incoming: list[RouteRow]):
@@ -362,11 +389,15 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
 async def _outgoing_count(session, company_id, load_uuid, process_id=None) -> int:
     """Outgoing routes of a station. Scoped to one process when given: an
     alternative routing lives in its own process and must not read as a split."""
-    stmt = select(func.count()).select_from(RouteRow).where(
+    stmt = select(RouteRow.unload).where(
         RouteRow.companyId == company_id, RouteRow.load == load_uuid)
     if process_id is not None:
         stmt = stmt.where(RouteRow.processId == process_id)
-    return (await session.execute(stmt)).scalar_one()
+    targets = list((await session.execute(stmt)).scalars().all())
+    # Handing finished goods to a shipper is not a second production branch,
+    # so a boundary link must never make a station look like a split.
+    boundary = await _boundary_station_ids(session, company_id)
+    return sum(1 for t in targets if t not in boundary)
 
 
 def _coalesce_sources(sources: list[dict]) -> list[dict]:

@@ -27,6 +27,12 @@ export const cardsApi = {
     client.post(`/cards/${id}/advance`, { fromStationId, toStationId, quantity }),
   unmerge: (id: string, stationId: string, quantity: number): Promise<{ unmerged: number; createdCardIds: string[] }> =>
     client.post(`/cards/${id}/unmerge`, { stationId, quantity }),
+  /** Hand finished goods to an integration partner — "Send back to Odoo".
+   *  This is where the lot leaves Taktline: the units are consumed and the
+   *  partner's connector is told. Deliberately an act, not an arrival. */
+  handoff: (id: string, fromStationId: string, integrationStationId: string, quantity: number):
+    Promise<{ sentTo: string; quantity: number; orderId: string | null; orderStatus: string | null }> =>
+    client.post(`/cards/${id}/handoff`, { fromStationId, integrationStationId, quantity }),
   getEvents: (id: string):                     Promise<CardEvent[]>   => client.get(`/cards/${id}/events`),
 }
 

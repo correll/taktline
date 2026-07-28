@@ -23,3 +23,17 @@ dist/
 
 # Connector OAuth token store — holds live refresh tokens
 .taktline-tokens.json
+
+# ── iOS (Capacitor) ─────────────────────────────────────────────────────────
+# The Xcode project itself IS committed — it carries the bundle id, the camera
+# usage string and the icon, and regenerating it would silently drop them.
+# Only build output and the copied web bundle are ignored.
+frontend/ios/App/App/public/
+frontend/ios/App/build/
+frontend/ios/App/Pods/
+frontend/ios/App/.build/
+frontend/ios/App/DerivedData/
+frontend/ios/App/App.xcworkspace/xcuserdata/
+frontend/ios/App/App.xcodeproj/xcuserdata/
+frontend/ios/App/App.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate

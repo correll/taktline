@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { Heart } from 'lucide-react'
+import { Heart, ScanLine } from 'lucide-react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
 import { sessionsApi, type WorkSession } from '../../api/sessions.api'
 import { color, font, size, shadow } from '../../theme/tokens'
@@ -10,6 +10,7 @@ import { mergeNodes } from '../../domain/graph'
 import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { cardsApi } from '../../api/cards.api'
 import LotCard, { lotLabel } from '../../components/lots/LotCard'
+const ScanSheet = React.lazy(() => import('../../components/scan/ScanSheet'))
 
 // Returns the total seconds from the most recent closed session for a card at a station.
 async function fetchDoneElapsed(stationId: string, cardId: string): Promise<number> {
@@ -63,6 +64,46 @@ export default function OperatorView() {
 
   const [selectedCard, setSelectedCard] = useState<Card | null>(null)
   const [quantity,     setQuantity]     = useState(1)
+
+  // Scan-to-advance. A scan never moves anything on its own: it resolves the
+  // label to a lot and asks. The label is printed once and then lives on a
+  // physical card that can be picked up at the wrong bench, and an advance is
+  // not free to undo — a merge consumes precursors, a split mints new cards.
+  // One tap to confirm is cheap next to that.
+  const [scanning,  setScanning]  = useState(false)
+  const [scanned,   setScanned]   = useState<{ card: Card; from: string; to?: string } | null>(null)
+  const [scanError, setScanError] = useState<string | null>(null)
+
+  const handleScan = useCallback((text: string) => {
+    setScanning(false)
+    const card = cards[text] ?? Object.values(cards).find((c) => c._id === text)
+    if (!card) {
+      setScanError('That label does not match any lot on this line — it may belong to another company, or the lot may already have been consumed by a merge.')
+      return
+    }
+    const from = Object.entries(card.bins).find(([, b]) => (b?.count ?? 0) > 0)?.[0]
+    if (!from) {
+      setScanError('That lot has no units on the floor right now.')
+      return
+    }
+    const [to] = getValidDestinations(from, routes, card.processId)
+    setScanError(null)
+    setScanned({ card, from, to })
+  }, [cards, routes])
+
+  const confirmScan = useCallback(async () => {
+    if (!scanned?.to) return
+    const { card, from, to } = scanned
+    const qty = card.bins[from]?.count ?? 1
+    try {
+      const moved = await cardsApi.advance(card._id, from, to, qty)
+      upsertCard(moved)
+      setScanned(null)
+    } catch (e) {
+      setScanError(String((e as { message?: string })?.message ?? e))
+      setScanned(null)
+    }
+  }, [scanned, upsertCard])
 
   const reset = useCallback(() => {
     setPhase('pick-location')
@@ -208,9 +249,20 @@ export default function OperatorView() {
         <span style={{ fontSize: 12, fontFamily: font.mono, color: color.textSecondary, letterSpacing: '0.1em' }}>
           OPERATOR
         </span>
+        <button
+          onClick={() => { setScanError(null); setScanning(true) }}
+          title="Scan a printed lot label to advance it"
+          style={{
+            marginLeft: 'auto', background: 'none',
+            border: `1px solid ${color.border}`, borderRadius: size.radius,
+            color: color.textSecondary, cursor: 'pointer', fontSize: 11,
+            padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 5,
+          }}>
+          <ScanLine size={13} /> Scan
+        </button>
         {phase !== 'pick-location' && (
           <button onClick={reset} style={{
-            marginLeft: 'auto', background: 'none',
+            background: 'none',
             border: `1px solid ${color.border}`, borderRadius: size.radius,
             color: color.textSecondary, cursor: 'pointer', fontSize: 11, padding: '3px 10px',
           }}>
@@ -219,7 +271,28 @@ export default function OperatorView() {
         )}
       </div>
 
+      {scanError && (
+        <div style={{
+          padding: `${size.sp3} ${size.sp6}`, background: `${color.statusFault}18`,
+          color: color.statusFault, fontSize: 12.5, lineHeight: 1.5,
+          display: 'flex', alignItems: 'flex-start', gap: size.sp3,
+        }}>
+          <span style={{ flex: 1 }}>{scanError}</span>
+          <button onClick={() => setScanError(null)} style={{
+            background: 'none', border: 'none', color: color.statusFault,
+            cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+          }}>×</button>
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: 'auto', padding: size.sp4 }}>
+        {scanning && (
+          <React.Suspense fallback={null}>
+            <ScanSheet onScan={handleScan} onClose={() => setScanning(false)} />
+          </React.Suspense>
+        )}
+        {scanned && <ScanConfirm scanned={scanned} onConfirm={confirmScan}
+                                 onCancel={() => setScanned(null)} />}
         {phase === 'pick-location' && (
           <LocationPicker onSelect={selectLocation} mergeNodeSet={mergeNodeSet} />
         )}
@@ -993,6 +1066,64 @@ function DonePanel({
       }}>
         Back to lot view
       </button>
+    </div>
+  )
+}
+
+
+/** What a scan resolved to, and what advancing it would do. Shown before any
+ *  move, because a printed label can be picked up anywhere on the floor and an
+ *  advance is not trivially reversible. */
+function ScanConfirm({ scanned, onConfirm, onCancel }: {
+  scanned: { card: Card; from: string; to?: string }
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const stations = useStationsStore((s) => s.stations)
+  const templates = useProcessesStore((s) => s.lotTemplates)
+  const { card, from, to } = scanned
+  const units = card.bins[from]?.count ?? 0
+  const tmpl  = templates[card.lotTemplateId]
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9400, background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: size.sp5,
+    }}>
+      <div style={{
+        width: 380, maxWidth: '100%', background: color.bgPanel,
+        border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
+        boxShadow: shadow.lg, padding: size.sp6,
+      }}>
+        <div style={{ fontSize: 11, fontFamily: font.mono, color: color.textDim,
+                      letterSpacing: '0.1em', marginBottom: size.sp3 }}>
+          SCANNED
+        </div>
+        <div style={{ fontSize: 17, color: color.textPrimary, fontWeight: 500 }}>
+          {tmpl?.name ?? 'Lot'} <span style={{ fontFamily: font.mono, fontSize: 13,
+            color: color.textSecondary }}>{card.lotNum}</span>
+        </div>
+        <div style={{ marginTop: size.sp4, fontSize: 14, color: color.textSecondary, lineHeight: 1.7 }}>
+          {units} unit{units === 1 ? '' : 's'} at <b style={{ color: color.textPrimary }}>
+            {stations[from]?.name ?? 'here'}</b>
+          {to
+            ? <> → advance to <b style={{ color: color.textPrimary }}>{stations[to]?.name}</b></>
+            : <> — no route onward from here, so there is nothing to advance to.</>}
+        </div>
+        <div style={{ display: 'flex', gap: size.sp3, marginTop: size.sp6 }}>
+          <button onClick={onCancel} style={{
+            flex: 1, padding: `${size.sp3} 0`, background: 'none',
+            border: `1px solid ${color.border}`, borderRadius: size.radius,
+            color: color.textSecondary, fontSize: 14, cursor: 'pointer',
+          }}>Cancel</button>
+          <button onClick={onConfirm} disabled={!to} style={{
+            flex: 2, padding: `${size.sp3} 0`, border: 'none', borderRadius: size.radius,
+            background: to ? color.bluePrimary : color.border,
+            color: to ? '#fff' : color.textDim, fontSize: 14, fontWeight: 600,
+            cursor: to ? 'pointer' : 'not-allowed',
+          }}>Advance</button>
+        </div>
+      </div>
     </div>
   )
 }

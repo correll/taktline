@@ -11,36 +11,58 @@ export interface TourCtx {
 export interface TourStep {
   id: string
   title: string
-  body: string
+  /** A function when the wording depends on what the user actually built —
+   *  their own location names, or what is still missing. */
+  body: string | ((c: TourCtx) => string)
   target?: string                 // data-tour attribute to highlight
   isDone?: (c: TourCtx) => boolean // auto-advance when true (omit for info steps)
 }
 
 // The little line the tour builds: two parts that merge into an assembly, then
-// flow to a test station.
-export const LINE = {
+// flow on to a test station and finish in a warehouse.
+//
+// These names are only *suggestions* shown in the copy. Progress is judged on
+// the SHAPE of what the user drew, never on what they called it — a typo
+// ("Asembly") or a deliberate choice to use their own real station names must
+// not strand someone five minutes into their first experience, staring at a
+// tour that has silently stopped advancing with no way to find out why.
+export const SUGGESTED = {
   sources: ['Steel', 'Motor'],
   merge: 'Assembly',
   followup: 'Testing',
   warehouse: 'Warehouse',
 }
-const ALL_STATIONS = [...LINE.sources, LINE.merge, LINE.followup, LINE.warehouse]
+const SUGGESTED_COUNT = 5
 
-function idsByName(stations: Station[]): Map<string, string> {
-  return new Map(stations.map((s) => [s.name.trim().toLowerCase(), s._id]))
+interface Shape {
+  routeCount: number
+  /** A location two or more routes arrive at — parts coming together. */
+  merge?: { _id: string; name: string }
+  /** A location with arrivals but no departures — finished goods stop here. */
+  warehouse?: { _id: string; name: string }
 }
 
-function hasStations(c: TourCtx, names: string[]): boolean {
-  const m = idsByName(c.stations)
-  return names.every((n) => m.has(n.toLowerCase()))
+/** What the drawn graph *is*, independent of naming. */
+function shapeOf(c: TourCtx): Shape {
+  const routes = Object.values(c.routes)
+  const incoming = new Map<string, number>()
+  const outgoing = new Map<string, number>()
+  for (const r of routes) {
+    incoming.set(r.unload, (incoming.get(r.unload) ?? 0) + 1)
+    outgoing.set(r.load, (outgoing.get(r.load) ?? 0) + 1)
+  }
+  return {
+    routeCount: routes.length,
+    merge: c.stations.find((s) => (incoming.get(s._id) ?? 0) >= 2),
+    warehouse: c.stations.find(
+      (s) => (incoming.get(s._id) ?? 0) >= 1 && !(outgoing.get(s._id) ?? 0)),
+  }
 }
 
-function hasRoute(c: TourCtx, from: string, to: string): boolean {
-  const m = idsByName(c.stations)
-  const f = m.get(from.toLowerCase())
-  const t = m.get(to.toLowerCase())
-  if (!f || !t) return false
-  return Object.values(c.routes).some((r) => r.load === f && r.unload === t)
+/** The lesson: parts merge somewhere, flow onward, and end where they are kept. */
+function hasLineShape(c: TourCtx): boolean {
+  const { routeCount, merge, warehouse } = shapeOf(c)
+  return routeCount >= 4 && !!merge && !!warehouse && merge._id !== warehouse._id
 }
 
 export const TOUR_STEPS: TourStep[] = [
@@ -59,20 +81,28 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'map-add-locations',
     title: 'Drop five locations',
-    body: "Locations are the physical places on your floor where work happens. Click the location tool (the pin, top-left), then click the map to drop one — a dialog opens so you can name it. Add five: Steel, Motor, Assembly, Testing, and Warehouse. Drag any location to reposition it. The tour continues once all five exist.",
+    body: (c) => {
+      const left = SUGGESTED_COUNT - c.stations.length
+      return "Locations are the physical places on your floor where work happens. Click the location tool (the pin, top-left), then click the map to drop one — a dialog opens so you can name it. Add five. We'll call ours Steel, Motor, Assembly, Testing and Warehouse, but the names are yours — use your own real stations if you prefer, the tour follows along either way. Drag any location to reposition it."
+        + (left > 0 ? ` ${left} to go.` : "")
+    },
     target: 'map-tool-location',
-    isDone: (c) => hasStations(c, ALL_STATIONS),
+    isDone: (c) => c.stations.length >= SUGGESTED_COUNT,
   },
   {
     id: 'map-add-routes',
     title: 'Connect them into a flow',
-    body: "Now the route tool (the connector, top-left). Click a source location, then a target, to draw an arrow between them — that's a step in the flow. Wire four: Steel → Assembly, Motor → Assembly, Assembly → Testing, and Testing → Warehouse. Two routes into Assembly make it a merge where parts come together; the Warehouse, with no outgoing route, becomes your finished-goods store. (Click a route to delete it; Esc cancels.)",
+    body: (c) => {
+      const base = "Now the route tool (the connector, top-left). Click a source location, then a target, to draw an arrow between them — that's a step in the flow. Wire four, following our example: Steel → Assembly, Motor → Assembly, Assembly → Testing, Testing → Warehouse. What matters is the shape, not the names: two routes arriving at one location make it a merge — where parts come together, and a last location with no outgoing route becomes your finished-goods store. (Click a route to delete it; Esc cancels.)"
+      const { routeCount, merge, warehouse } = shapeOf(c)
+      const missing: string[] = []
+      if (!merge) missing.push("two routes arriving at the same location, to make a merge")
+      if (!warehouse) missing.push("a final location with no outgoing route")
+      if (!missing.length && routeCount < 4) missing.push(`${4 - routeCount} more route(s)`)
+      return missing.length ? `${base}\n\nStill needed: ${missing.join("; ")}.` : base
+    },
     target: 'map-tool-route',
-    isDone: (c) =>
-      hasRoute(c, 'Steel', 'Assembly') &&
-      hasRoute(c, 'Motor', 'Assembly') &&
-      hasRoute(c, 'Assembly', 'Testing') &&
-      hasRoute(c, 'Testing', 'Warehouse'),
+    isDone: hasLineShape,
   },
   {
     id: 'see-in-settings',
@@ -84,14 +114,17 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'open-lots',
     title: 'See your board',
-    body: 'Open the Lots board from the top bar. Assembly now appears as a merge of Steel + Motor, flowing on to Testing and then the Warehouse — a complete little line, one column per location.',
+    body: (c) => {
+      const { merge, warehouse } = shapeOf(c)
+      return `Open the Lots board from the top bar. ${merge?.name ?? 'Your merge station'} now appears as a merge of the two parts feeding it, flowing on to ${warehouse?.name ?? 'the warehouse'} — a complete little line, one column per location.`
+    },
     target: 'nav-lots',
     isDone: (c) => c.pathname === '/lots',
   },
   {
     id: 'pull-from-warehouse',
     title: 'Pull an order from the warehouse',
-    body: "Demand starts at the finished-goods end. On the Warehouse column, click “⬇ pull precursors”: Taktline works backward through the whole line and seeds a Steel lot and a Motor lot in the source queues — creating default lot cards for you, no templates to set up. That's a pull system: a finished-goods order pulls raw material through the line. Then build forward — move both parts up into Assembly, press “Merge”, and advance the assembly through Testing into the Warehouse. Give it a try, then press Next.",
+    body: (c) => `Demand starts at the finished-goods end. On the ${shapeOf(c).warehouse?.name ?? 'Warehouse'} column, click “⬇ pull precursors”: Taktline works backward through the whole line and seeds a lot in each source queue — creating default lot cards for you, no templates to set up. That's a pull system: a finished-goods order pulls raw material through the line. Then build forward — move both parts up into ${shapeOf(c).merge?.name ?? 'the merge'}, press “Merge”, and advance the assembly onward until it lands in ${shapeOf(c).warehouse?.name ?? 'the warehouse'}. Give it a try, then press Next.`,
     target: 'lots-pull',
   },
   {

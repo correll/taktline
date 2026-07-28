@@ -108,8 +108,9 @@ export function TourManager() {
         </div>
 
         <h3 style={{ margin: 0, color: color.textPrimary, fontSize: 16 }}>{step.title}</h3>
-        <p style={{ color: color.textSecondary, fontSize: 13, lineHeight: 1.55, marginTop: size.sp2, marginBottom: size.sp4 }}>
-          {step.body}
+        <p style={{ color: color.textSecondary, fontSize: 13, lineHeight: 1.55, marginTop: size.sp2,
+                    marginBottom: size.sp4, whiteSpace: 'pre-line' }}>
+          {typeof step.body === 'function' ? step.body(ctx) : step.body}
         </p>
 
         {step.isDone && (

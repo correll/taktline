@@ -54,11 +54,14 @@ Consequences worth knowing:
 Capacitor 8 uses Swift Package Manager, so **CocoaPods is not required**.
 
 ```bash
-cd frontend
-npm run build          # the web build the shell points at
-npx cap sync ios       # copy config + plugins into the Xcode project
-npx cap open ios       # opens Xcode
+cd frontend            # the Capacitor CLI lives here, not at the repo root —
+                       # `npx cap` from the root fails with "could not
+                       # determine executable to run"
+npm run ios            # build the web bundle, sync it, open Xcode
 ```
+
+`npm run ios:sync` stops before opening Xcode, and `npm run ios:open` skips
+straight to it when nothing web-side has changed.
 
 In Xcode, once per app:
 

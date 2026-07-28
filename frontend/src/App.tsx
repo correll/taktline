@@ -15,24 +15,26 @@ import { TaktlineLogo } from './components/TaktlineLogo'
 import { ThemeToggle } from './components/ThemeToggle'
 import { color, font, size, shadow } from './theme/tokens'
 import { ToastProvider } from './components/Toast'
+import { RouteErrorBoundary } from './components/ErrorBoundary'
+import { lazyView } from './lazyView'
 import { platformApi } from './api/platform.api'
 
-const MapView        = React.lazy(() => import('./views/map/MapView'))
-const LotsView       = React.lazy(() => import('./views/lots/LotsView'))
-const StatisticsView = React.lazy(() => import('./views/statistics/StatisticsView'))
-const OperatorView   = React.lazy(() => import('./views/operator/OperatorView'))
-const SettingsView   = React.lazy(() => import('./views/settings/SettingsView'))
-const PlatformView   = React.lazy(() => import('./views/platform/PlatformView'))
+const MapView        = lazyView(() => import('./views/map/MapView'))
+const LotsView       = lazyView(() => import('./views/lots/LotsView'))
+const StatisticsView = lazyView(() => import('./views/statistics/StatisticsView'))
+const OperatorView   = lazyView(() => import('./views/operator/OperatorView'))
+const SettingsView   = lazyView(() => import('./views/settings/SettingsView'))
+const PlatformView   = lazyView(() => import('./views/platform/PlatformView'))
 
-const LoginView          = React.lazy(() => import('./views/auth/LoginView'))
-const SignupView         = React.lazy(() => import('./views/auth/SignupView'))
-const VerifyEmailView    = React.lazy(() => import('./views/auth/VerifyEmailView'))
-const ForgotPasswordView = React.lazy(() => import('./views/auth/ForgotPasswordView'))
-const ResetPasswordView  = React.lazy(() => import('./views/auth/ResetPasswordView'))
-const AcceptInviteView   = React.lazy(() => import('./views/auth/AcceptInviteView'))
-const CreateCompanyView  = React.lazy(() => import('./views/company/CreateCompanyView'))
-const LandingView        = React.lazy(() => import('./views/landing/LandingView'))
-const ManualView         = React.lazy(() => import('./views/landing/ManualView'))
+const LoginView          = lazyView(() => import('./views/auth/LoginView'))
+const SignupView         = lazyView(() => import('./views/auth/SignupView'))
+const VerifyEmailView    = lazyView(() => import('./views/auth/VerifyEmailView'))
+const ForgotPasswordView = lazyView(() => import('./views/auth/ForgotPasswordView'))
+const ResetPasswordView  = lazyView(() => import('./views/auth/ResetPasswordView'))
+const AcceptInviteView   = lazyView(() => import('./views/auth/AcceptInviteView'))
+const CreateCompanyView  = lazyView(() => import('./views/company/CreateCompanyView'))
+const LandingView        = lazyView(() => import('./views/landing/LandingView'))
+const ManualView         = lazyView(() => import('./views/landing/ManualView'))
 
 /** Publish the *visual* viewport height as --tk-vvh.
  *
@@ -57,20 +59,22 @@ export default function App() {
   useVisualViewportHeight()
   return (
     <ToastProvider>
-      <React.Suspense fallback={<LoadingPane />}>
-        <Routes>
-          <Route path="/"                element={<RootGate />} />
-          <Route path="/manual"          element={<ManualView />} />
-          <Route path="/login"           element={<LoginView />} />
-          <Route path="/signup"          element={<SignupView />} />
-          <Route path="/verify-email"    element={<VerifyEmailView />} />
-          <Route path="/forgot-password" element={<ForgotPasswordView />} />
-          <Route path="/reset-password"  element={<ResetPasswordView />} />
-          <Route path="/accept-invite"   element={<AcceptInviteView />} />
-          <Route path="/create-company"  element={<RequireAuth allowNoCompany><CreateCompanyView /></RequireAuth>} />
-          <Route path="/*"               element={<RequireAuth><Shell /></RequireAuth>} />
-        </Routes>
-      </React.Suspense>
+      <RouteErrorBoundary>
+        <React.Suspense fallback={<LoadingPane />}>
+          <Routes>
+            <Route path="/"                element={<RootGate />} />
+            <Route path="/manual"          element={<ManualView />} />
+            <Route path="/login"           element={<LoginView />} />
+            <Route path="/signup"          element={<SignupView />} />
+            <Route path="/verify-email"    element={<VerifyEmailView />} />
+            <Route path="/forgot-password" element={<ForgotPasswordView />} />
+            <Route path="/reset-password"  element={<ResetPasswordView />} />
+            <Route path="/accept-invite"   element={<AcceptInviteView />} />
+            <Route path="/create-company"  element={<RequireAuth allowNoCompany><CreateCompanyView /></RequireAuth>} />
+            <Route path="/*"               element={<RequireAuth><Shell /></RequireAuth>} />
+          </Routes>
+        </React.Suspense>
+      </RouteErrorBoundary>
       <ThemeToggle />
     </ToastProvider>
   )
@@ -112,18 +116,22 @@ function Shell() {
       <Topbar connection={connection} />
       <OutageBanner />
       <OrientationNavigator />
+      {/* Inside the shell on purpose: the topbar stays, so a view that fails
+          leaves the rest of the app reachable instead of blanking the screen. */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <React.Suspense fallback={<LoadingPane />}>
-          <Routes>
-            <Route path="/"           element={<PortraitAwareRedirect />} />
-            <Route path="/map"        element={<MapView />} />
-            <Route path="/lots"       element={<LotsView />} />
-            <Route path="/operator"   element={<OperatorView />} />
-            <Route path="/statistics" element={<StatisticsView />} />
-            <Route path="/settings"   element={<RequireAdmin><SettingsView /></RequireAdmin>} />
-            <Route path="/platform"   element={<RequirePlatformStaff><PlatformView /></RequirePlatformStaff>} />
-          </Routes>
-        </React.Suspense>
+        <RouteErrorBoundary>
+          <React.Suspense fallback={<LoadingPane />}>
+            <Routes>
+              <Route path="/"           element={<PortraitAwareRedirect />} />
+              <Route path="/map"        element={<MapView />} />
+              <Route path="/lots"       element={<LotsView />} />
+              <Route path="/operator"   element={<OperatorView />} />
+              <Route path="/statistics" element={<StatisticsView />} />
+              <Route path="/settings"   element={<RequireAdmin><SettingsView /></RequireAdmin>} />
+              <Route path="/platform"   element={<RequirePlatformStaff><PlatformView /></RequirePlatformStaff>} />
+            </Routes>
+          </React.Suspense>
+        </RouteErrorBoundary>
       </div>
 
       {/* Help & onboarding overlays */}

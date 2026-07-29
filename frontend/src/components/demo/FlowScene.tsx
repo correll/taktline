@@ -5,6 +5,7 @@ import type { Route, Station } from '../../models'
 import RouteEdge from '../map/RouteEdge'
 import { getStationIcon } from '../map/StationNode'
 import { useThemeStore } from '../../store/theme.store'
+import { hasWebGL } from './webgl'
 
 // Generic animated flow scene, built from the SAME primitives the app's map
 // uses: RouteEdge (animated dashes, halo, weight badges), the station-tile
@@ -113,6 +114,78 @@ function Tile({ s, count, scale, node }: { s: SceneStation; count: number; scale
   )
 }
 
+const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`
+
+/** The same scene, drawn without a GPU.
+ *
+ *  Pixi throws outright when WebGL is unavailable, and there is no canvas
+ *  renderer to fall back to, so this is not a graceful degradation of the
+ *  Stage — it is a second drawing of the same picture in SVG. It keeps the
+ *  landing page meaningful for crawlers and for anyone whose browser blocks
+ *  WebGL, instead of replacing the front door with an error.
+ *
+ *  Deliberately still: the animation was never the message. The shape of the
+ *  line and where work piles up is.
+ */
+function StaticScene({ stations, edges, wip, worldW, worldH, node, showHeat, maxWip, mode }: {
+  stations: SceneStation[]; edges: SceneEdge[]; wip: Wip
+  worldW: number; worldH: number; node: number
+  showHeat: boolean; maxWip: number; mode: 'night' | 'day'
+}) {
+  const at = (id: string) => {
+    const s = stations.find((x) => x.id === id)
+    return s ? { x: s.x + node / 2, y: s.y + node / 2 } : null
+  }
+  const ink = mode === 'night' ? '#B4B1A9' : '#3D3B37'
+  return (
+    <svg
+      viewBox={`0 0 ${worldW} ${worldH}`}
+      width="100%" height="100%" role="img"
+      aria-label="A production line: locations connected by routes, shaded where work is piling up."
+      style={{ position: 'absolute', inset: 0, background: hex(CANVAS_BG[mode]) }}
+    >
+      {showHeat && stations.map((s) => {
+        const ratio = Math.min(1, (wip[s.id] ?? 0) / maxWip)
+        if (ratio === 0) return null
+        return (
+          <g key={s.id}>
+            <circle cx={s.x + node / 2} cy={s.y + node / 2} r={node * 1.15}
+                    fill={hex(heatTint(ratio * 0.7))} opacity={0.28} />
+            <circle cx={s.x + node / 2} cy={s.y + node / 2} r={node * 0.78}
+                    fill={hex(heatTint(ratio))} opacity={0.5} />
+          </g>
+        )
+      })}
+      {edges.map((e, i) => {
+        const a = at(e.from), b = at(e.to)
+        if (!a || !b) return null
+        const ang = Math.atan2(b.y - a.y, b.x - a.x)
+        const tipX = b.x - Math.cos(ang) * 6, tipY = b.y - Math.sin(ang) * 6
+        return (
+          <g key={i}>
+            <line x1={a.x} y1={a.y} x2={tipX} y2={tipY}
+                  stroke={ink} strokeWidth={2} strokeDasharray="10 6" opacity={0.9} />
+            <polygon
+              points={`${b.x},${b.y} ${b.x - 10 * Math.cos(ang) + 5 * Math.sin(ang)},${b.y - 10 * Math.sin(ang) - 5 * Math.cos(ang)} ${b.x - 10 * Math.cos(ang) - 5 * Math.sin(ang)},${b.y - 10 * Math.sin(ang) + 5 * Math.cos(ang)}`}
+              fill={ink} />
+            {e.qty !== 1 && (
+              <>
+                <circle cx={(a.x + b.x) / 2} cy={(a.y + b.y) / 2} r={node * 0.14}
+                        fill={mode === 'night' ? '#1D1C1A' : '#FFFFFF'} stroke={ink} strokeWidth={1.2} />
+                <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2} textAnchor="middle"
+                      dominantBaseline="central" fontSize={node * 0.15} fontWeight={600}
+                      fill={mode === 'night' ? '#EFEDE7' : '#1A1917'}
+                      fontFamily="Inter, system-ui, sans-serif">{e.qty}</text>
+              </>
+            )}
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+
 export default function FlowScene({
   stations, edges, wip, worldW, worldH, node = 92, showHeat = true, maxWip = 6,
 }: Props) {
@@ -139,6 +212,16 @@ export default function FlowScene({
     <div ref={containerRef} style={{ position: 'relative', width: '100%', height: height || worldH / 2 }}>
       {scale > 0 && (
         <>
+          {/* Pixi throws when it cannot get a WebGL context, and that exception
+              takes the whole page down — which is how the public landing page
+              broke for a crawler. Ask first. */}
+          {!hasWebGL() ? (
+            <StaticScene
+              stations={stations} edges={edges} wip={wip}
+              worldW={worldW} worldH={worldH} node={node}
+              showHeat={showHeat} maxWip={maxWip} mode={mode}
+            />
+          ) : (
           <Stage
             key={mode}   /* theme flip recreates the canvas with the right background */
             width={width}
@@ -163,6 +246,7 @@ export default function FlowScene({
               ))}
             </Container>
           </Stage>
+          )}
           <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
             {stations.map((s) => (
               <Tile key={s.id} s={s} count={wip[s.id] ?? 0} scale={scale} node={node} />

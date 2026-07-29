@@ -28,9 +28,6 @@ class Settings(BaseSettings):
     # /auth/dev/bootstrap helper is enabled. MUST be false in production.
     dev: bool = Field(False, validation_alias=AliasChoices("TAKTLINE_DEV", "DEV"))
 
-    # ── Secrets ───────────────────────────────────────────────────────────────
-    secret_key: str = "dev-insecure-secret-change-in-production"
-
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Comma-separated list of allowed browser origins. Never "*" with credentials.
     cors_origins: str = "http://localhost:3000"

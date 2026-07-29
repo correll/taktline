@@ -12,6 +12,7 @@ import { useCyclePulses } from '../../motion/useCyclePulses'
 import type { CyclePulses } from '../../motion/cycle'
 import { findAccumulations, type Accumulation } from '../../domain/graph'
 import { integrationProvider, isIntegrationStation } from '../../domain/integrations'
+import { hasWebGL } from '../demo/webgl'
 
 /** Pixi needs numeric colours; the partner registry stores CSS hex. */
 function hexToPixi(hex: string | undefined): number | undefined {
@@ -541,8 +542,26 @@ export default function MapCanvas({
       onPointerLeave={handlePointerUp}
       onContextMenu={(e) => { if (tool !== 'select') e.preventDefault() }}
     >
+      {/* Same exposure as the landing demo: without WebGL, Pixi throws and the
+          whole map view is replaced by an error. The station tiles are an HTML
+          overlay, so the map stays usable — you lose the floor plan, the routes
+          and the heat, which is worth saying out loud rather than silently. */}
+      {!hasWebGL() && (
+        <div style={{
+          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 40, maxWidth: 520, background: color.glass,
+          border: `1px solid ${color.glassBorder}`, borderRadius: 4,
+          padding: '8px 14px', fontSize: 12, color: color.glassText,
+          lineHeight: 1.5, textAlign: 'center',
+        }}>
+          This browser has no WebGL, so the floor plan, routes and heatmap can&rsquo;t be drawn.
+          Locations and lot counts still work. Enabling hardware acceleration — or allowing WebGL
+          if a privacy extension blocks it — restores the full map.
+        </div>
+      )}
+
       {/* ── PixiJS: floor plan + heatmap + edges ── */}
-      {canvasSize.w > 0 && (
+      {hasWebGL() && canvasSize.w > 0 && (
         <Stage
           width={canvasSize.w}
           height={canvasSize.h}

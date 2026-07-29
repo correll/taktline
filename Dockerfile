@@ -3,7 +3,7 @@
 # cross-site WebSocket handling — the simplest thing that is also the safest.
 #
 #   docker build -t taktline .
-#   docker run -p 8000:8000 -e DATABASE_URL=… -e SECRET_KEY=… taktline
+#   docker run -p 8000:8000 -e DATABASE_URL=… taktline
 
 # ─── Stage 1: build the SPA ───────────────────────────────────────────────────
 FROM node:22-slim AS web

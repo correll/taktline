@@ -128,7 +128,7 @@ uvicorn app.main:app --reload --port 8000
 
 PostgreSQL is expected at `postgresql+asyncpg://localhost:5432/taktline` by default (local trust auth uses your OS user, no password). Set `DATABASE_URL` as an environment variable to override — e.g. `postgresql+asyncpg://user:pass@host:5432/taktline`. `alembic upgrade head` creates the schema; re-run it after pulling new migrations.
 
-**First run / auth.** The app requires an account. Copy `backend/.env.example` to `backend/.env`. In development, run with `TAKTLINE_DEV=1` so verification/invite links are returned in API responses (no SMTP needed) and the dev bootstrap used by `seed_demo.py` is enabled. Then either open the app and use **Create account → verify → create a company**, or run `TAKTLINE_DEV=1 python seed_demo.py` to create a demo admin (`demo-admin@taktline.dev` / `demo-password-123`) with the full E-Bike process. Configure `SMTP_*` in `.env` to send real email; set `COOKIE_SECURE=1` and a strong `SECRET_KEY` in production.
+**First run / auth.** The app requires an account. Copy `backend/.env.example` to `backend/.env`. In development, run with `TAKTLINE_DEV=1` so verification/invite links are returned in API responses (no SMTP needed) and the dev bootstrap used by `seed_demo.py` is enabled. Then either open the app and use **Create account → verify → create a company**, or run `TAKTLINE_DEV=1 python seed_demo.py` to create a demo admin (`demo-admin@taktline.dev` / `demo-password-123`) with the full E-Bike process. Configure `SMTP_*` in `.env` to send real email; set `COOKIE_SECURE=1` in production.
 
 ### 2. Frontend
 

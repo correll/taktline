@@ -47,8 +47,8 @@ Render reads `render.yaml` and creates:
 | `taktline` | web service, Docker, `starter` plan (~$7/mo, always on) |
 | `taktline-db` | Postgres, `basic-256mb` (~$6/mo, no expiry) — see [storage](#a-note-on-storage) |
 
-It wires `DATABASE_URL` between them and generates `SECRET_KEY` itself, so
-neither ever touches your repo. **This starts billing on apply.**
+It wires `DATABASE_URL` between them, so it never touches your repo.
+**This starts billing on apply.**
 
 Render then prompts for the values it cannot invent:
 
@@ -219,7 +219,6 @@ hand-edit.
 docker build -t taktline .
 docker run -p 8000:8000 \
   -e DATABASE_URL=postgresql://user:pass@host/db \
-  -e SECRET_KEY=$(openssl rand -hex 32) \
   -e TAKTLINE_DEV=0 \
   -e FRONTEND_BASE_URL=https://your-host \
   taktline

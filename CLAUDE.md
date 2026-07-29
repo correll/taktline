@@ -308,6 +308,32 @@ all of them: **never fake a path or a period.**
 - `prefers-reduced-motion: reduce` disables all of it; state still updates and
   the pulse ring settles at its own midpoint.
 
+## WebGL is not guaranteed
+
+PixiJS 7 has no canvas renderer, so `autoDetectRenderer` **throws** when it
+cannot get a WebGL context. That exception escapes into React's render, the
+error boundary catches it, and the entire view is replaced by an apology —
+which is how the **public landing page** broke for a crawler (`Mozilla/5.0
+(compatible; Dataprovider.com)`), reported by the client-error pipeline.
+
+It is not only bots: privacy extensions block WebGL to defeat fingerprinting,
+GPU blocklists and remote desktops disable it, and locked-down office PCs are
+exactly the machines a shop-floor prospect browses from.
+
+So every Pixi surface asks first (`components/demo/webgl.ts::hasWebGL`,
+memoised, releases its probe context):
+
+- **`FlowScene`** (landing hero + manual figures) draws the same scene in SVG
+  instead — background, heat, routes and weight badges; the station tiles were
+  always HTML. Static on purpose: the animation was never the message.
+- **`MapCanvas`** skips the Stage and says what is missing. Station tiles are an
+  HTML overlay, so locations and lot counts still work; the floor plan, routes
+  and heatmap do not.
+
+Verified with `getContext('webgl*')` stubbed to null: no crash screen, the SVG
+scene renders, no canvas is attempted, and the page keeps its content — while a
+browser with WebGL still gets the real canvas.
+
 ## Map scale calibration
 
 The map view renders the floor plan sprite at its **raw image pixel dimensions** (`naturalWidth × naturalHeight`). Station positions are stored in real-world units (meters or feet). The `pixelsPerUnit` setting tells the map how many raw image pixels equal one real-world unit.

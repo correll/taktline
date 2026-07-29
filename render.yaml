@@ -1,6 +1,6 @@
 # Render Blueprint — one web service (API + SPA on a single origin) and one
 # Postgres database. Point Render at this repo ("New → Blueprint") and it
-# provisions both, wires DATABASE_URL, and generates SECRET_KEY.
+# provisions both and wires DATABASE_URL.
 #
 # Values marked `sync: false` are NOT stored in the repo; Render prompts for
 # them on first deploy (or leave them blank and fill them in later under
@@ -53,9 +53,6 @@ services:
         fromDatabase:
           name: taktline-db
           property: connectionString
-      - key: SECRET_KEY
-        generateValue: true            # 32-byte random, stored by Render, never in git
-
       # ── Production posture ────────────────────────────────────────────────
       - key: TAKTLINE_DEV
         value: "0"                     # disables dev links + /auth/dev/bootstrap

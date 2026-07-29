@@ -89,6 +89,56 @@ def _would_create_cycle(edges, new_load: str, new_unload: str) -> bool:
     return False
 
 
+async def _check_boundary_placement(session, company_id, load_uuid, unload_uuid) -> None:
+    """Where an integration may attach to the flow.
+
+    Demand enters at the queues and goods leave at the end; an integration
+    wired anywhere else quietly breaks the pull. If Odoo raised demand against
+    a station in the *middle* of the line, a release would inject lots there
+    and the precursors feeding it would never be ordered — the line would run
+    short of parts with no indication why. So:
+
+    * a **demand link** (integration → station) may only target a station with
+      no incoming production routes: a leaf queue, where material starts.
+    * a **handoff link** (station → integration) may only leave a station with
+      no outgoing production routes: the end of the flow, where goods are
+      finished.
+
+    Attaching an integration to a leaf leaves it a leaf — boundary links are
+    excluded from every graph judgement — so this rule is about intent, and it
+    is checked here because the map is where the mistake gets made.
+    """
+    load = await session.get(StationRow, load_uuid)
+    unload = await session.get(StationRow, unload_uuid)
+    bound = set((await session.execute(
+        select(StationRow.id).where(StationRow.companyId == company_id,
+                                    StationRow.integrationProvider.isnot(None))
+    )).scalars().all())
+
+    if load is not None and load.integrationProvider:      # demand link
+        incoming = (await session.execute(
+            select(RouteRow.load).where(RouteRow.companyId == company_id,
+                                        RouteRow.unload == unload_uuid)
+        )).scalars().all()
+        if any(src not in bound for src in incoming):
+            raise HTTPException(400,
+                f"{load.name} raises demand, so it can only feed a starting queue — "
+                f"{unload.name if unload else 'that location'} already receives work from "
+                "the line. Connect it to the location where material starts instead; "
+                "releasing an order there orders every precursor automatically.")
+
+    if unload is not None and unload.integrationProvider:   # handoff link
+        outgoing = (await session.execute(
+            select(RouteRow.unload).where(RouteRow.companyId == company_id,
+                                          RouteRow.load == load_uuid)
+        )).scalars().all()
+        if any(dst not in bound for dst in outgoing):
+            raise HTTPException(400,
+                f"{unload.name} receives finished goods, so it can only be fed from the "
+                f"end of the flow — {load.name if load else 'that location'} still sends "
+                "work onward. Connect it to the last location instead.")
+
+
 @router.get("/", response_model=List[Route])
 async def list_routes(ctx: CompanyContext = Depends(get_active_company),
                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
@@ -221,6 +271,8 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
     )).scalar_one_or_none()
     if dup:
         raise HTTPException(400, "Route already exists between these two locations")
+
+    await _check_boundary_placement(session, ctx.company_id, load_uuid, unload_uuid)
 
     edges = await _process_edges(session, ctx.company_id, process_uuid)
     if _would_create_cycle(edges, body.load, body.unload):

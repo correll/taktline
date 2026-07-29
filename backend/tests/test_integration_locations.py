@@ -233,3 +233,52 @@ def test_bound_locations_report_no_oee_or_takt(actor):
         assert s["oee"] is None, s
     work = a.req("GET", f"/sessions/stats/{cell['_id']}").json()
     assert work["isWarehouse"] is False, work
+
+
+# ─── Where an integration may attach ─────────────────────────────────────────
+
+def test_demand_may_only_feed_a_starting_queue(actor):
+    """An ERP wired to the middle of the line would inject lots there and the
+    precursors feeding it would never be ordered — the line runs short of parts
+    with nothing to explain why."""
+    a = actor(); bootstrap_admin(a)
+    odoo, intake, cell, ship, proc, tmpl = _line(a)
+    # Cell A already receives work from Intake, so it is not where material starts.
+    r = a.req("POST", "/routes/", {"processId": proc, "load": odoo["_id"],
+                                   "unload": cell["_id"], "quantity": 1})
+    assert r.status_code == 400, r.text
+    assert "starting queue" in r.json()["detail"], r.text
+
+
+def test_demand_into_a_leaf_queue_is_allowed(actor):
+    a = actor(); bootstrap_admin(a)
+    odoo = _station(a, "Odoo", integrationProvider="odoo", integrationRole="both")
+    intake = _station(a, "Intake")
+    proc = a.req("POST", "/processes/", {"name": "Line"}).json()["_id"]
+    r = a.req("POST", "/routes/", {"processId": proc, "load": odoo["_id"],
+                                   "unload": intake["_id"], "quantity": 1})
+    assert r.status_code == 201, r.text
+
+
+def test_a_queue_fed_by_an_erp_is_still_a_leaf(actor):
+    """The boundary link must not turn a starting queue into a mid-line
+    station: a release still mints there rather than pulling further back."""
+    a = actor(); bootstrap_admin(a)
+    odoo, intake, cell, ship, proc, tmpl = _line(a)
+    a.req("POST", "/orders", {"productTemplateId": tmpl["_id"], "quantity": 2,
+                              "source": "odoo", "externalRef": "MO-LEAF"})
+    cards = a.req("GET", "/cards/").json()
+    assert len(cards) == 1, cards
+    assert cards[0]["bins"].get(intake["_id"], {}).get("count") == 2, cards[0]
+
+
+def test_handoff_may_only_leave_the_end_of_the_flow(actor):
+    """Goods leave when they are finished; a shipper hanging off a mid-line
+    station would take parts that still have work to come."""
+    a = actor(); bootstrap_admin(a)
+    odoo, intake, cell, ship, proc, tmpl = _line(a)
+    # Intake still sends work onward to Cell A.
+    r = a.req("POST", "/routes/", {"processId": proc, "load": intake["_id"],
+                                   "unload": ship["_id"], "quantity": 1})
+    assert r.status_code == 400, r.text
+    assert "end of the flow" in r.json()["detail"], r.text

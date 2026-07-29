@@ -1,4 +1,6 @@
 import React, { useCallback, useState } from 'react'
+import StationIntegrationPanel from './StationIntegrationPanel'
+import { isIntegrationStation } from '../../domain/integrations'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } from '../../store'
 import { stationsApi } from '../../api/stations.api'
 import { color, font, size, shadow } from '../../theme/tokens'
@@ -95,6 +97,11 @@ export default function StationPanel({ stationId, onClose }: Props) {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: size.sp4, display: 'flex', flexDirection: 'column', gap: size.sp4 }}>
+        {/* An integration location holds no lots — the useful questions are
+            about wiring and setup, so it gets its own panel entirely. */}
+        {isIntegrationStation(station) ? (
+          <StationIntegrationPanel station={station} />
+        ) : (<>
 
         {/* Machine status */}
         <Section label="MACHINE">
@@ -190,6 +197,7 @@ export default function StationPanel({ stationId, onClose }: Props) {
           )}
         </Section>
 
+      </>)}
       </div>
 
       {showCreate && (

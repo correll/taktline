@@ -1004,10 +1004,33 @@ function DonePanel({
 
   const timeStr = formatElapsed(elapsed)
 
+  // At a split, advancing does not pick one branch — it mints a piece on
+  // *every* branch at once (a bar becomes four tubes and an offcut). Naming
+  // only the first destination made that look like a choice the operator was
+  // making, and hid the fact that one press produces several lots.
+  const branches = useMemo(() => {
+    const bound = new Set(Object.values(stations)
+      .filter((st) => st.integrationProvider).map((st) => st._id))
+    const outgoing = Object.values(routes).filter((r) =>
+      r.load === stationId && !bound.has(r.unload) &&
+      (!card?.processId || r.processId === card.processId))
+    return outgoing.map((r) => stations[r.unload]).filter(Boolean)
+  }, [stationId, routes, stations, card])
+
   const nextStation = useMemo(() => {
+    if (branches.length > 0) return branches[0]
     const ids = getValidDestinations(stationId, routes, card?.processId)
     return ids.length > 0 ? stations[ids[0]] : null
-  }, [stationId, routes, stations, card])
+  }, [branches, stationId, routes, stations, card])
+
+  /** "Weld", or "Modules, Busbars and Cables" when the lot splits. */
+  const destinationLabel = useMemo(() => {
+    const names = (branches.length > 1 ? branches : nextStation ? [nextStation] : [])
+      .map((st) => st.name)
+    if (names.length === 0) return ''
+    if (names.length === 1) return names[0]
+    return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  }, [branches, nextStation])
 
   // Where this location hands finished goods to the outside world. The link is
   // drawn on the map but carries no material: sending is an act someone
@@ -1106,7 +1129,7 @@ function DonePanel({
             transition: 'all 0.15s ease',
           }}
         >
-          {moving ? 'MOVING…' : `MOVE → ${nextStation.name}`}
+          {moving ? 'MOVING…' : `MOVE → ${destinationLabel}`}
         </button>
       )}
 

@@ -1,5 +1,6 @@
 import React from 'react'
 import { color, font, size } from '../../theme/tokens'
+import { useNow } from '../../motion/useNow'
 import type { Card, LotTemplate } from '../../models'
 
 interface Props {
@@ -10,13 +11,18 @@ interface Props {
   onMove?:   () => void
 }
 
-function timeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime()
-  const m  = Math.floor(ms / 60000)
-  if (m < 1)  return 'just now'
-  if (m < 60) return `${m}m`
+/** How long this lot has been sitting, in the largest unit that still says
+ *  something: seconds while someone is watching it move, then minutes, hours,
+ *  days. Starting at seconds is the point — on a board refreshed live, "0s"
+ *  ticking up is what tells you the card just landed. */
+function ageLabel(iso: string, now: number): string {
+  const raw = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'
+  const secs = Math.max(0, Math.floor((now - new Date(raw).getTime()) / 1000))
+  if (secs < 60)      return `${secs}s`
+  const m = Math.floor(secs / 60)
+  if (m < 60)         return `${m}m`
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h`
+  if (h < 24)         return `${h}h`
   return `${Math.floor(h / 24)}d`
 }
 
@@ -40,6 +46,7 @@ export const lotLabel = (card: Pick<Card, 'lotNum' | '_id'>): string => {
 }
 
 export default function LotCard({ card, template, stationId, onClick }: Props) {
+  const now = useNow()
   const count  = card.bins[stationId]?.count ?? 0
   const accent = template?.color ?? color.lotBlue
   const pct    = card.totalQuantity > 0 ? count / card.totalQuantity : 0
@@ -130,19 +137,22 @@ export default function LotCard({ card, template, stationId, onClick }: Props) {
           }} />
         </div>
 
-        {/* Row 3: description (if any) + time ago */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {card.description ? (
+        {/* Row 3: age (left) + description. Age leads because on a Kanban board
+            it is the number that matters — a card that has sat for two days is
+            the one to ask about, and it should be in the same place on every
+            card so a column can be scanned down rather than read. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 9, color: color.textDim, fontFamily: font.mono, flexShrink: 0 }}>
+            {ageLabel(card.updatedAt, now)}
+          </span>
+          {card.description && (
             <span style={{
-              flex: 1, fontSize: 9, color: color.textDim,
+              flex: 1, fontSize: 9, color: color.textDim, textAlign: 'right',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
               {card.description}
             </span>
-          ) : <span style={{ flex: 1 }} />}
-          <span style={{ fontSize: 9, color: color.textDim, fontFamily: font.mono, flexShrink: 0 }}>
-            {timeAgo(card.updatedAt)}
-          </span>
+          )}
         </div>
 
       </div>

@@ -40,6 +40,12 @@ interface Props {
    *  invisible. Shifting them apart is the only cue that survives, since a
    *  colour you cannot see tells you nothing. */
   offsetPx?: number
+  /** Longitudinal shift of the weight badge along the run, in world px,
+   *  measured in the canonical (lower-id → higher-id) frame. The lane gap is a
+   *  few px but a badge is 9+ px of radius, so when two lanes both carry a
+   *  weight their badges land on top of each other; staggering them along the
+   *  line is what keeps both numbers readable. */
+  badgeShiftPx?: number
 }
 
 function drawDashedLine(
@@ -69,9 +75,10 @@ function drawDashedLine(
 }
 
 export default function RouteEdge({ route, fromStation, toStation, nodeSize,
-                                   boundaryTint, tint, offsetPx = 0 }: Props) {
-  const gRef    = useRef<PIXI.Graphics>(null)
-  const offset  = useRef(0)
+                                   boundaryTint, tint, offsetPx = 0, badgeShiftPx = 0 }: Props) {
+  const gRef     = useRef<PIXI.Graphics>(null)
+  const badgeRef = useRef<PIXI.Graphics>(null)
+  const offset   = useRef(0)
   const themeMode = useThemeStore((s) => s.mode)
 
   // Edge-weight badge: how many precursor units one assembly consumes. Only
@@ -82,13 +89,20 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize,
   const half       = nodeSize / 2
   let midX = fromStation && toStation ? (fromStation.position.x + toStation.position.x) / 2 + half : 0
   let midY = fromStation && toStation ? (fromStation.position.y + toStation.position.y) / 2 + half : 0
-  if (offsetPx && fromStation && toStation) {
+  if ((offsetPx || badgeShiftPx) && fromStation && toStation) {
     const dx = toStation.position.x - fromStation.position.x
     const dy = toStation.position.y - fromStation.position.y
     const len = Math.hypot(dx, dy) || 1
     const flip = String(route.load) > String(route.unload) ? -1 : 1   // same frame as the line
     midX += (-dy / len) * offsetPx * flip
     midY += (dx / len) * offsetPx * flip
+    // The stagger runs along the line, clamped so a badge never slides under
+    // a station tile on a short edge. Applied in the canonical frame so two
+    // opposite-direction routes agree on which end is "first".
+    const maxShift = Math.max(0, len / 2 - half - badgeR)
+    const shift = Math.max(-maxShift, Math.min(maxShift, badgeShiftPx))
+    midX += (dx / len) * shift * flip
+    midY += (dy / len) * shift * flip
   }
 
   const redraw = useCallback(() => {
@@ -140,17 +154,28 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize,
     g.closePath()
     g.endFill()
 
-    if (showBadge) {
-      g.lineStyle(1.2, colors.line, 0.9)
-      g.beginFill(colors.badgeFill, 1)
-      g.drawCircle((x1 + x2) / 2, (y1 + y2) / 2, badgeR)
-      g.endFill()
-    }
-  }, [fromStation, toStation, nodeSize, half, showBadge, badgeR, themeMode,
+  }, [fromStation, toStation, nodeSize, half, themeMode,
       boundaryTint, tint, offsetPx])
 
   // Initial draw
   useEffect(() => { redraw() }, [redraw])
+
+  // The badge lives in its own Graphics, sorted above every edge line (the
+  // parent container sorts children): drawn in tree order it sits under
+  // whichever sibling edge renders later, which crosses the number out with a
+  // dashed line. It doesn't animate, so it redraws only when it moves.
+  useEffect(() => {
+    const g = badgeRef.current
+    if (!g) return
+    g.clear()
+    if (!showBadge || !fromStation || !toStation) return
+    const base = EDGE_COLORS[themeMode]
+    const lineColor = boundaryTint ?? tint ?? base.line
+    g.lineStyle(1.2, lineColor, 0.9)
+    g.beginFill(base.badgeFill, 1)
+    g.drawCircle(midX, midY, badgeR)
+    g.endFill()
+  }, [showBadge, midX, midY, badgeR, themeMode, boundaryTint, tint, fromStation, toStation])
 
   useTick((delta) => {
     offset.current = (offset.current + delta * FLOW_SPEED) % (DASH + GAP)
@@ -161,19 +186,23 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize,
     <>
       <Graphics ref={gRef} />
       {showBadge && fromStation && toStation && (
-        <Text
-          text={String(quantity)}
-          x={midX}
-          y={midY}
-          anchor={0.5}
-          resolution={4}
-          style={new PIXI.TextStyle({
-            fontFamily: 'Inter, system-ui, sans-serif',
-            fontSize:   badgeR * 1.05,
-            fontWeight: '600',
-            fill:       EDGE_COLORS[themeMode].badgeText,
-          })}
-        />
+        <>
+          <Graphics ref={badgeRef} zIndex={20} />
+          <Text
+            text={String(quantity)}
+            x={midX}
+            y={midY}
+            anchor={0.5}
+            resolution={4}
+            zIndex={21}
+            style={new PIXI.TextStyle({
+              fontFamily: 'Inter, system-ui, sans-serif',
+              fontSize:   badgeR * 1.05,
+              fontWeight: '600',
+              fill:       EDGE_COLORS[themeMode].badgeText,
+            })}
+          />
+        </>
       )}
     </>
   )

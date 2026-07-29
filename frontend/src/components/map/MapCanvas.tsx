@@ -550,13 +550,22 @@ export default function MapCanvas({
       byPair.set(key, [...(byPair.get(key) ?? []), r._id])
     }
     const gap = Math.max(3, nodeSize * 0.055)
+    // The lane gap is a few px; a weight badge is 9+ px of radius. So when two
+    // lanes of one pair both carry a weight, the perpendicular shift cannot
+    // separate the badges — they are staggered *along* the run instead, far
+    // enough apart to clear each other's circle.
+    const badgeSpacing = Math.max(9, nodeSize * 0.13) * 2.4
     const lanes: Record<string, number> = {}
+    const badgeShifts: Record<string, number> = {}
     for (const ids of byPair.values()) {
       // Stable order, so a line does not hop sides when routes are refetched.
       const ordered = [...ids].sort()
       ordered.forEach((id, i) => { lanes[id] = (i - (ordered.length - 1) / 2) * gap })
+      const badged = ordered.filter((id) => (routes[id]?.quantity ?? 1) > 1)
+      if (badged.length > 1)
+        badged.forEach((id, i) => { badgeShifts[id] = (i - (badged.length - 1) / 2) * badgeSpacing })
     }
-    return lanes
+    return { lanes, badgeShifts }
   }, [routes, nodeSize])
 
   // Which way work crosses each integration boundary, read from the drawn
@@ -629,7 +638,10 @@ export default function MapCanvas({
           }}
         >
           <StageBackground color={CANVAS_BG[themeMode]} />
-          <Container x={viewport.x} y={viewport.y} scale={viewport.scale}>
+          {/* sortableChildren: weight badges carry a zIndex so a number is
+              never crossed out by a sibling edge that happens to render later.
+              Everything else keeps insertion order (the sort is stable). */}
+          <Container x={viewport.x} y={viewport.y} scale={viewport.scale} sortableChildren>
             {mapConfig?.floorPlanUrl && floorPlanRect && (
               <FloorPlanSprite url={mapConfig.floorPlanUrl} rect={floorPlanRect} />
             )}
@@ -656,7 +668,7 @@ export default function MapCanvas({
               const boundaryTint = bound
                 ? hexToPixi(integrationProvider(bound.integrationProvider)?.color)
                 : undefined
-              const lane = routeLanes[route._id]
+              const lane = routeLanes.lanes[route._id]
               return (
                 <RouteEdge
                   key={route._id}
@@ -667,6 +679,7 @@ export default function MapCanvas({
                   boundaryTint={boundaryTint}
                   tint={hexToInt(processPalette[route.processId] ?? '#888888')}
                   offsetPx={lane}
+                  badgeShiftPx={routeLanes.badgeShifts[route._id] ?? 0}
                 />
               )
             })}

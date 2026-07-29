@@ -535,6 +535,24 @@ class MoveBody(BaseModel):
     quantity:      int = 1
 
 
+
+async def _is_forward_move(session, company_id, row: CardRow, from_id: str, to_id: str) -> bool:
+    """Is there a production route carrying work from here to there?
+
+    Used to tell "pushing this onward" from "putting it back" — the board's
+    drag does both, and only the first should be gated at a merge."""
+    from_uuid, to_uuid = parse_uuid(from_id), parse_uuid(to_id)
+    if from_uuid is None or to_uuid is None:
+        return False
+    hit = (await session.execute(
+        select(RouteRow.id).where(RouteRow.companyId == company_id,
+                                  RouteRow.processId == row.processId,
+                                  RouteRow.load == from_uuid,
+                                  RouteRow.unload == to_uuid).limit(1)
+    )).first()
+    return hit is not None
+
+
 async def _unsplit_back(session, company_id, row: CardRow, from_id: str, to_id: str,
                         quantity: int):
     """Moving pieces back onto the location they were cut from re-forms the lot.
@@ -679,6 +697,15 @@ async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(
     """Super-admin lot-board drag: unconstrained move of units between any two
     bins (forward or backward along the graph — backward can trigger unmerge)."""
     row = await _get_owned(session, card_id, ctx, for_update=True)
+    # The board drag is unconstrained on purpose — backwards, sideways, to fix a
+    # mistake — but pushing a precursor *onward* out of the station that
+    # assembles it is not a correction, it is the same lie /advance already
+    # refuses: an unmerged motor booked as a finished e-bike, and the units it
+    # should have been merged with quietly stranded. Only forward moves are
+    # gated, so dragging back to undo still works.
+    if await _is_forward_move(session, ctx.company_id, row, body.fromStationId,
+                              body.toStationId):
+        await _assert_not_unmerged_precursor(session, ctx.company_id, row, body.fromStationId)
     # Coming back down a split branch undoes the split rather than moving units.
     reformed = await _unsplit_back(session, ctx.company_id, row, body.fromStationId,
                                    body.toStationId, body.quantity)

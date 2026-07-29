@@ -505,3 +505,62 @@ def test_every_session_dependency_commits_before_the_response():
                 f"its commit would land after the response is sent")
             checked += 1
     assert checked > 50   # sanity: the walk really saw the app
+
+
+# ─── The merge gate applies to the board drag, not just to /advance ──────────
+
+def _merge_gate_rig(a):
+    """Cell A + Cell B ─► Assembly ─► Testing, with an assembly product defined
+    and one unmerged precursor standing at Assembly."""
+    qa, qb = _station(a, "Cell A"), _station(a, "Cell B")
+    asm, test = _station(a, "Assembly"), _station(a, "Testing")
+    proc = a.req("POST", "/processes/", {"name": "Line"}).json()["_id"]
+    for load, unload in ((qa, asm), (qb, asm), (asm, test)):
+        _route(a, proc, load, unload)
+    motor = _template(a, "Motor", proc, qa)
+    _template(a, "Frame", proc, qb)
+    _template(a, "E-Bike", proc, asm)          # the thing Assembly mints
+    card = a.req("POST", "/cards/", {"lotTemplateId": motor, "processId": proc,
+                                     "totalQuantity": 1,
+                                     "bins": {asm: {"count": 1}}}).json()
+    return qa, asm, test, card
+
+
+def test_the_board_drag_cannot_push_an_unmerged_precursor_onward(actor):
+    """/advance has refused this for a while; the board's drag never did, so a
+    motor could be dragged out of Assembly into Testing and booked as a finished
+    e-bike, stranding the frame it should have been merged with."""
+    a = actor(); bootstrap_admin(a)
+    qa, asm, test, card = _merge_gate_rig(a)
+    r = a.req("POST", f"/cards/{card['_id']}/move",
+              {"fromStationId": asm, "toStationId": test, "quantity": 1})
+    assert r.status_code == 409, r.text
+    assert "precursor waiting to be merged" in r.json()["detail"], r.text
+    # and nothing moved
+    fresh = a.req("GET", f"/cards/{card['_id']}").json()
+    assert fresh["bins"].get(asm, {}).get("count") == 1, fresh
+
+
+def test_dragging_a_precursor_back_is_still_allowed(actor):
+    """The gate is about pushing work onward, not about correcting a mistake —
+    a super-admin must still be able to put a precursor back where it came
+    from, which is also how an unmerge starts."""
+    a = actor(); bootstrap_admin(a)
+    qa, asm, test, card = _merge_gate_rig(a)
+    r = a.req("POST", f"/cards/{card['_id']}/move",
+              {"fromStationId": asm, "toStationId": qa, "quantity": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["bins"].get(qa, {}).get("count") == 1, r.json()
+
+
+def test_the_assembly_itself_moves_on_freely(actor):
+    """Only precursors are held: what the merge minted is finished work."""
+    a = actor(); bootstrap_admin(a)
+    qa, asm, test, _ = _merge_gate_rig(a)
+    ebike = next(t for t in a.req("GET", "/lot-templates/").json() if t["name"] == "E-Bike")
+    proc = a.req("GET", "/processes/").json()[0]["_id"]
+    made = a.req("POST", "/cards/", {"lotTemplateId": ebike["_id"], "processId": proc,
+                                     "totalQuantity": 1, "bins": {asm: {"count": 1}}}).json()
+    r = a.req("POST", f"/cards/{made['_id']}/move",
+              {"fromStationId": asm, "toStationId": test, "quantity": 1})
+    assert r.status_code == 200, r.text

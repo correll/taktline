@@ -1,0 +1,17 @@
+# Taktline — crawl freely. This is a public product site and we want it read.
+User-agent: *
+Allow: /
+
+# Signed-in surfaces hold nothing a crawler can reach (every one needs a
+# session), so these are listed to save crawl budget, not to hide anything.
+Disallow: /map
+Disallow: /lots
+Disallow: /operator
+Disallow: /statistics
+Disallow: /settings
+Disallow: /platform
+Disallow: /reset-password
+Disallow: /verify-email
+Disallow: /accept-invite
+
+Sitemap: https://taktline.com/sitemap.xml

@@ -336,6 +336,28 @@ Verified with `getContext('webgl*')` stubbed to null: no crash screen, the SVG
 scene renders, no canvas is attempted, and the page keeps its content — while a
 browser with WebGL still gets the real canvas.
 
+## What crawlers see
+
+The landing page is an SPA, so a bot that does not run JavaScript used to get an
+empty `<div id="root">`. Four things now carry the story without it:
+
+- **`<noscript>`** — the same pitch in plain HTML: what Taktline is, what it
+  does, how it is priced, links to the manual and signup.
+- **JSON-LD** (`SoftwareApplication`) — name, category, price, feature list and
+  audience, in a form machines parse rather than guess at.
+- **`public/robots.txt`** — crawl freely; the signed-in routes are disallowed to
+  save crawl budget, not to hide anything (they all need a session anyway).
+- **`public/sitemap.xml`** — `/`, `/manual`, `/signup`, `/login`.
+
+`PixiBoundary` backs up the WebGL probe: the manual stacks several animated
+figures on one page and browsers cap live WebGL contexts at roughly 8–16, so a
+Stage can fail for reasons the probe cannot predict. One figure falling back to
+SVG costs a figure rather than the page.
+
+**Crash reports can be dismissed** (`DELETE /platform/client-errors/{id}`, or
+`?message=` for every copy of one message — the same crash from twenty browsers
+is twenty rows saying one thing). Staff-only, audited, idempotent.
+
 ## Map scale calibration
 
 The map view renders the floor plan sprite at its **raw image pixel dimensions** (`naturalWidth × naturalHeight`). Station positions are stored in real-world units (meters or feet). The `pixelsPerUnit` setting tells the map how many raw image pixels equal one real-world unit.

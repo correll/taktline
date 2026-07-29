@@ -6,6 +6,7 @@ import RouteEdge from '../map/RouteEdge'
 import { getStationIcon } from '../map/StationNode'
 import { useThemeStore } from '../../store/theme.store'
 import { hasWebGL } from './webgl'
+import PixiBoundary from './PixiBoundary'
 
 // Generic animated flow scene, built from the SAME primitives the app's map
 // uses: RouteEdge (animated dashes, halo, weight badges), the station-tile
@@ -222,6 +223,13 @@ export default function FlowScene({
               showHeat={showHeat} maxWip={maxWip} mode={mode}
             />
           ) : (
+          <PixiBoundary fallback={
+            <StaticScene
+              stations={stations} edges={edges} wip={wip}
+              worldW={worldW} worldH={worldH} node={node}
+              showHeat={showHeat} maxWip={maxWip} mode={mode}
+            />
+          }>
           <Stage
             key={mode}   /* theme flip recreates the canvas with the right background */
             width={width}
@@ -246,6 +254,7 @@ export default function FlowScene({
               ))}
             </Container>
           </Stage>
+          </PixiBoundary>
           )}
           <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
             {stations.map((s) => (

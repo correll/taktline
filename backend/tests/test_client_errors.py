@@ -75,3 +75,39 @@ def test_reading_reports_is_staff_only(actor):
     a = actor(); bootstrap_admin(a)
     r = a.req("GET", "/platform/client-errors/list")
     assert r.status_code == 404, r.text     # non-staff sees no such endpoint
+
+
+def test_staff_can_dismiss_a_report(actor, owner):
+    a = actor(); bootstrap_admin(a)
+    a.req("POST", "/client-errors/", {**REPORT, "message": "one to dismiss"})
+    rows = owner.req("GET", "/platform/client-errors/list").json()
+    mine = next(x for x in rows if x["message"] == "one to dismiss")
+
+    assert owner.req("DELETE", f"/platform/client-errors/{mine['id']}").status_code == 204
+    after = owner.req("GET", "/platform/client-errors/list").json()
+    assert not [x for x in after if x["message"] == "one to dismiss"]
+
+    # Idempotent: a double-click is not an error.
+    assert owner.req("DELETE", f"/platform/client-errors/{mine['id']}").status_code == 204
+
+
+def test_dismissing_by_message_clears_every_copy(actor, owner):
+    """The same crash from twenty browsers is twenty rows saying one thing."""
+    a = actor(); bootstrap_admin(a)
+    for _ in range(3):
+        a.req("POST", "/client-errors/", {**REPORT, "message": "the same crash"})
+    a.req("POST", "/client-errors/", {**REPORT, "message": "a different one"})
+
+    r = owner.req("DELETE", "/platform/client-errors?message=the%20same%20crash")
+    assert r.status_code == 200, r.text
+    assert r.json()["removed"] == 3, r.json()
+
+    left = [x["message"] for x in owner.req("GET", "/platform/client-errors/list").json()]
+    assert "the same crash" not in left
+    assert "a different one" in left
+
+
+def test_dismissing_is_staff_only(actor):
+    a = actor(); bootstrap_admin(a)
+    a.req("POST", "/client-errors/", {**REPORT, "message": "not yours"})
+    assert a.req("DELETE", "/platform/client-errors").status_code == 404

@@ -87,4 +87,12 @@ export const platformApi = {
   deleteUser: (id: string): Promise<void> => client.delete(`/platform/users/${id}`),
   setPlatformRole: (id: string, role: 'support' | null): Promise<void> =>
     client.put(`/platform/users/${id}/platform-role`, { role }),
+
+  /** Dismiss one crash report once it has been read, reported or fixed. */
+  deleteClientError: (id: string): Promise<void> =>
+    client.delete(`/platform/client-errors/${id}`),
+  /** Clear every report, or every copy of one message — the same crash from
+   *  twenty browsers is twenty rows saying one thing. */
+  clearClientErrors: (message?: string): Promise<{ removed: number }> =>
+    client.delete('/platform/client-errors', { params: { message } }),
 }

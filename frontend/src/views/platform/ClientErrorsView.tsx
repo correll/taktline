@@ -55,6 +55,39 @@ export default function ClientErrorsView() {
   const [err, setErr] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [open, setOpen] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState<string | null>(null)
+
+  /** Dismissing is the whole point of reading these: a report you have acted on
+   *  should stop competing for attention with one you have not. */
+  const dismiss = async (e: ClientErrorReport) => {
+    setBusy(e.id)
+    try {
+      await platformApi.deleteClientError(e.id)
+      setRows((prev) => (prev ?? []).filter((x) => x.id !== e.id))
+    } catch (err) { setErr(String((err as Error)?.message ?? err)) }
+    finally { setBusy(null) }
+  }
+
+  /** The same crash from twenty browsers is twenty rows saying one thing. */
+  const dismissAllLike = async (e: ClientErrorReport) => {
+    if (!confirm(`Dismiss every report of “${e.message.slice(0, 60)}”?`)) return
+    setBusy(e.id)
+    try {
+      await platformApi.clearClientErrors(e.message)
+      setRows((prev) => (prev ?? []).filter((x) => x.message !== e.message))
+    } catch (err) { setErr(String((err as Error)?.message ?? err)) }
+    finally { setBusy(null) }
+  }
+
+  const clearAll = async () => {
+    if (!confirm('Dismiss every crash report? They are diagnostics, not an audit trail.')) return
+    setBusy('all')
+    try {
+      await platformApi.clearClientErrors()
+      setRows([])
+    } catch (err) { setErr(String((err as Error)?.message ?? err)) }
+    finally { setBusy(null) }
+  }
 
   useEffect(() => {
     platformApi.clientErrors()
@@ -80,6 +113,13 @@ export default function ClientErrorsView() {
         <NavLink to="/platform" style={{ fontSize: 12, color: color.blueBright, textDecoration: 'none' }}>
           ← Platform
         </NavLink>
+        {(rows?.length ?? 0) > 0 && (
+          <button onClick={clearAll} disabled={busy === 'all'} style={{
+            marginLeft: 'auto', background: 'transparent', border: `1px solid ${color.border}`,
+            borderRadius: size.radius, color: color.textSecondary,
+            padding: `4px ${size.sp3}`, fontSize: 12, cursor: 'pointer',
+          }}>{busy === 'all' ? 'Clearing…' : 'Dismiss all'}</button>
+        )}
       </div>
       <p style={{ fontSize: 12, color: color.textDim, margin: `0 0 ${size.sp5}`, maxWidth: 680, lineHeight: 1.6 }}>
         Crashes that reached a customer&rsquo;s screen, newest first. The error boundary sends these
@@ -113,6 +153,17 @@ export default function ClientErrorsView() {
                 </div>
                 <div style={{ fontSize: 11, color: color.textDim, marginTop: 4 }}>
                   {timeAgo(e.createdAt)} · {e.url || '—'} · {e.userEmail || 'not signed in'}
+                  {(rows ?? []).filter((x) => x.message === e.message).length > 1 && (
+                    <>
+                      {' · '}
+                      <button onClick={() => dismissAllLike(e)} style={{
+                        background: 'none', border: 'none', padding: 0, font: 'inherit',
+                        color: color.blueBright, cursor: 'pointer', textDecoration: 'underline',
+                      }}>
+                        dismiss all {(rows ?? []).filter((x) => x.message === e.message).length} like this
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
               <button onClick={() => copy(e)} style={{
@@ -128,6 +179,16 @@ export default function ClientErrorsView() {
                 padding: `6px ${size.sp3}`, fontSize: 12, cursor: 'pointer',
               }}>
                 {open.has(e.id) ? 'Hide' : 'Stack'}
+              </button>
+              <button
+                onClick={() => dismiss(e)} disabled={busy === e.id}
+                title="Dismiss this report"
+                style={{
+                  flexShrink: 0, background: 'transparent', border: `1px solid ${color.border}`,
+                  borderRadius: size.radius, color: color.textSecondary,
+                  padding: `6px ${size.sp3}`, fontSize: 12, cursor: 'pointer',
+                }}>
+                {busy === e.id ? '…' : 'Dismiss'}
               </button>
             </div>
             {open.has(e.id) && (

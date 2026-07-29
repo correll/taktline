@@ -39,6 +39,41 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+
+    <!-- Structured data. A crawler that renders nothing still learns what this
+         is, who makes it, what it costs and what it does. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Taktline",
+      "applicationCategory": "BusinessApplication",
+      "applicationSubCategory": "Manufacturing Execution System",
+      "operatingSystem": "Web browser; iOS; Android",
+      "url": "https://taktline.com/",
+      "description": "Digital kanban and manufacturing execution system for small manufacturers. Track every lot and every station live on your own floor plan, with splits, merges, pull scheduling, cycle time, OEE and ERP integration.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "Free forever, no credit card, no seat limits."
+      },
+      "featureList": [
+        "Live kanban board of every lot and location",
+        "Floor plan map drawn to scale, with a WIP heatmap",
+        "Pull scheduling: an order seeds every precursor automatically",
+        "Merging and splitting: assemblies and disassemblies on the board",
+        "Cycle time, line cycle time, takt time and OEE per location",
+        "Operator dashboard with start/stop timing and barcode scanning",
+        "ERP and store integration: Odoo, NetSuite, Shopify, WooCommerce, QuickBooks, Xero, ShipStation",
+        "Works offline for reading; installable on phones and tablets"
+      ],
+      "audience": {
+        "@type": "Audience",
+        "audienceType": "Job shops, assembly lines and remanufacturers of 5-200 people"
+      }
+    }
+    </script>
   </head>
   <body>
     <script>
@@ -48,6 +83,40 @@
         if (t === 'day' || t === 'night') document.documentElement.dataset.theme = t
       } catch (e) {}
     </script>
+    <noscript>
+      <!-- Most crawlers execute JavaScript; plenty do not, and the ones that do
+           not used to see an empty page. This is the same story the rendered
+           landing page tells, in plain HTML. -->
+      <main style="max-width:44rem;margin:0 auto;padding:2rem 1.25rem;font-family:Inter,system-ui,sans-serif;line-height:1.6">
+        <h1>Taktline — your whole shop floor, at a glance</h1>
+        <p>
+          Taktline is a browser-based <strong>digital kanban and manufacturing
+          execution system</strong> for small manufacturers: job shops, assembly
+          lines and remanufacturers of roughly 5&ndash;200 people. Every lot and
+          every station is live on your own floor plan, so you know what is
+          where, what is late, and what a job actually costs.
+        </p>
+        <h2>What it does</h2>
+        <ul>
+          <li><strong>Live kanban board</strong> — one column per location, every lot card where it actually is.</li>
+          <li><strong>Floor plan map to scale</strong> — with a heatmap showing where work piles up, and real transport distance in metres.</li>
+          <li><strong>Pull scheduling</strong> — releasing an order for a finished product orders every precursor down to the material queues.</li>
+          <li><strong>Merging and splitting</strong> — assemblies and disassemblies are modelled properly: one battery tears down into modules, busbars and cables, each its own product.</li>
+          <li><strong>Timing that means something</strong> — takt time (the beat demand sets), cycle time (how long the work takes), line cycle time (how often a piece really leaves) and OEE, per location.</li>
+          <li><strong>Operator dashboard</strong> — a tablet at each station: pick a lot, press start, press stop. Barcode scan-to-advance included.</li>
+          <li><strong>ERP and store integration</strong> — Odoo, NetSuite, Shopify, WooCommerce, QuickBooks, Xero and ShipStation, plus CSV import and a plain JSON connector.</li>
+        </ul>
+        <h2>How it is priced</h2>
+        <p>Free forever on your own line. No credit card, no seat limits, and your data exports at any time.</p>
+        <h2>Read more</h2>
+        <p>
+          <a href="/manual">The user manual</a> explains the lean method behind it —
+          value stream mapping, the seven wastes, pull systems — and how each part of
+          the app serves it. <a href="/signup">Create a free account</a> or
+          <a href="/login">sign in</a>.
+        </p>
+      </main>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

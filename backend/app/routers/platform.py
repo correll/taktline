@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
@@ -310,3 +310,37 @@ async def list_client_errors(companyId: str | None = None, limit: int = 100,
         "userAgent": r.userAgent, "appVersion": r.appVersion,
         "createdAt": r.createdAt,
     } for r in rows]
+
+
+@router.delete("/client-errors/{error_id}", status_code=204)
+async def delete_client_error(error_id: str,
+                              staff: User = Depends(require_platform_staff),
+                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Dismiss a crash report once it has been read, reported or fixed.
+
+    These are diagnostics with a 30-day life, not an audit trail, so staff may
+    clear them; the platform audit records who did. Idempotent — a row already
+    gone is a 204, so a double-click is not an error."""
+    row = await session.get(ClientErrorRow, require_uuid(error_id, "Report not found"))
+    if row is not None:
+        await session.delete(row)
+        _audit(session, staff, "client_error.delete", target_type="client_error",
+               target_id=error_id, message=(row.message or "")[:120])
+
+
+@router.delete("/client-errors", status_code=200)
+async def delete_client_errors(message: str | None = None,
+                               staff: User = Depends(require_platform_staff),
+                               session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Clear reports in bulk — all of them, or every copy of one message.
+
+    The same crash from twenty browsers is twenty rows saying one thing, so
+    dismissing them one at a time is busywork that leaves real reports buried."""
+    stmt = delete(ClientErrorRow)
+    if message:
+        stmt = stmt.where(ClientErrorRow.message == message)
+    result = await session.execute(stmt)
+    removed = result.rowcount or 0
+    _audit(session, staff, "client_error.delete_bulk",
+           target_type="client_error", removed=removed, message=message)
+    return {"removed": removed}

@@ -227,14 +227,19 @@ async def _weight_allowed(session, company_id, load_uuid, unload_uuid, exclude_i
       how many downstream units are *produced* per upstream unit (one steel bar
       cut into four tubes).
 
-    Anywhere else a lot simply moves along 1:1.
+    Anywhere else a lot simply moves along 1:1 — including out of a **choice**
+    station, whose several routes are either/or destinations, not branches of a
+    disassembly. A route out of a choice station may still carry a weight when
+    the *target* is a merge: that meaning belongs to the merge.
     """
-    return (
-        await _other_incoming_count(session, company_id, unload_uuid, exclude_id,
-                                    process_id) >= 1
-        or await _other_outgoing_count(session, company_id, load_uuid, exclude_id,
-                                       process_id) >= 1
-    )
+    if await _other_incoming_count(session, company_id, unload_uuid, exclude_id,
+                                   process_id) >= 1:
+        return True
+    if await _other_outgoing_count(session, company_id, load_uuid, exclude_id,
+                                   process_id) < 1:
+        return False
+    load_station = await session.get(StationRow, load_uuid)
+    return load_station is None or load_station.branchMode != "choice"
 
 
 async def _normalize_weights(session, company_id, *, unload_uuid=None, load_uuid=None,
@@ -281,6 +286,10 @@ async def _validate_output_template(session, company_id, template_id, load_uuid,
         return None
     if await _other_outgoing_count(session, company_id, load_uuid, exclude_id, process_id) < 1:
         raise HTTPException(400, _OUTPUT_TEMPLATE_ERROR)
+    load_station = await session.get(StationRow, load_uuid)
+    if load_station is not None and load_station.branchMode == "choice":
+        raise HTTPException(400, "A choice station routes lots unchanged — only a "
+                                 "split station's branches yield a product")
     tmpl = await session.get(LotTemplateRow, tmpl_uuid)
     if tmpl is None or tmpl.companyId != company_id:
         raise HTTPException(404, "Output product not found")

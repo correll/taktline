@@ -12,7 +12,7 @@ import RouteEdge from './RouteEdge'
 import MotionLayer from './MotionLayer'
 import { useCyclePulses } from '../../motion/useCyclePulses'
 import type { CyclePulses } from '../../motion/cycle'
-import { findAccumulations, type Accumulation } from '../../domain/graph'
+import { findAccumulations, stationRoles, type Accumulation } from '../../domain/graph'
 import { integrationProvider, isIntegrationStation } from '../../domain/integrations'
 import { processColorsFor, hexToInt } from '../../domain/processColors'
 import { hasWebGL } from '../demo/webgl'
@@ -435,16 +435,39 @@ export default function MapCanvas({
     }
   }, [handleCanvasClick])
 
+  // The station just gained a second outgoing production route: the same shape
+  // means two opposite things (a split fans every lot out; a choice sends each
+  // lot down one branch), so the person drawing it is asked — once. An answer
+  // is stored either way and the question never repeats.
+  const [branchPrompt, setBranchPrompt] = useState<string | null>(null)
+  const shouldPromptBranchMode = useCallback((from: string, procId: string, newUnload: string) => {
+    const st = stationsRef.current[from]
+    if (!st || st.branchMode || isIntegrationStation(st)) return false
+    const isBound = (id: string) => {
+      const t = stationsRef.current[id]
+      return !!t && isIntegrationStation(t)
+    }
+    const outs = new Set(Object.values(routesRef.current)
+      .filter((r) => r.processId === procId && r.load === from && !isBound(r.unload))
+      .map((r) => r.unload))
+    if (!isBound(newUnload)) outs.add(newUnload)
+    return outs.size >= 2
+  }, [])
+
   // Route tool: click a station to lock it as source, then a second to connect.
   const handleRouteAnchor = useCallback((stationId: string) => {
     const from = routeFromRef.current
     if (!from) { setRouteFrom(stationId); return }       // lock source
     if (from === stationId) { setRouteFrom(null); return } // click same → abort
     if (routeProcessId) {
-      createRoute({ processId: routeProcessId, load: from, unload: stationId, quantity: 1 }).catch(() => {})
+      createRoute({ processId: routeProcessId, load: from, unload: stationId, quantity: 1 })
+        .then(() => {
+          if (shouldPromptBranchMode(from, routeProcessId, stationId)) setBranchPrompt(from)
+        })
+        .catch(() => {})
     }
     setRouteFrom(null)                                     // done → ready for the next
-  }, [routeProcessId, createRoute])
+  }, [routeProcessId, createRoute, shouldPromptBranchMode])
 
   // Escape aborts an in-progress route / closes menus.
   useEffect(() => {
@@ -512,7 +535,9 @@ export default function MapCanvas({
       Object.values(routes).map((r) => ({
         load: r.load, unload: r.unload, quantity: r.quantity, processId: r.processId,
       })),
-      Object.keys(stations)),
+      Object.keys(stations),
+      new Set(Object.values(stations)
+        .filter((s) => s.branchMode === 'choice').map((s) => s._id))),
     [routes, stations])
   // Storage and boundary stations are *meant* to fill up — a dock or a shelf
   // accumulating finished goods is the system working, not a problem to route
@@ -567,6 +592,26 @@ export default function MapCanvas({
     }
     return { lanes, badgeShifts }
   }, [routes, nodeSize])
+
+  // MERGE / SPLIT / CHOICE auto-labels under the tiles. Judged per process on
+  // distinct stations, boundary links excluded — the same scoping as every
+  // other piece of graph reasoning.
+  const roleTags = React.useMemo(() => {
+    const bound = new Set(Object.values(stations)
+      .filter(isIntegrationStation).map((s) => s._id))
+    const edges = Object.values(routes)
+      .filter((r) => !bound.has(r.load) && !bound.has(r.unload))
+      .map((r) => ({ load: r.load, unload: r.unload, processId: r.processId }))
+    const modes = Object.fromEntries(
+      Object.values(stations).map((s) => [s._id, s.branchMode]))
+    const tags: Record<string, string> = {}
+    for (const [id, role] of Object.entries(stationRoles(edges, modes))) {
+      const parts = [role.merge ? 'MERGE' : null,
+                     role.fan ? role.fan.toUpperCase() : null].filter(Boolean)
+      if (parts.length) tags[id] = parts.join(' · ')
+    }
+    return tags
+  }, [stations, routes])
 
   // Which way work crosses each integration boundary, read from the drawn
   // links: an outgoing route places orders that pull work through (↓), an incoming one
@@ -713,6 +758,7 @@ export default function MapCanvas({
                       || (accHover && accumulationIds.has(station._id))}
             cyclePeriodMs={cyclePulses.periodMs[station._id]}
             boundaryFlow={boundaryFlows[station._id]}
+            roleTag={roleTags[station._id]}
             onSelect={() => onSelectStation(station._id)}
             onRouteAnchor={() => handleRouteAnchor(station._id)}
             onContextMenu={(cx, cy) => setCtxMenu({ stationId: station._id, x: cx, y: cy })}
@@ -917,6 +963,60 @@ export default function MapCanvas({
       {editStation && stations[editStation] && (
         <MapStationEditModal stationId={editStation} onClose={() => setEditStation(null)} />
       )}
+
+      {/* Split-or-choice prompt — the second outgoing route was just drawn */}
+      {branchPrompt && stations[branchPrompt] && (
+        <BranchModePrompt
+          station={stations[branchPrompt]}
+          onClose={() => setBranchPrompt(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+/** One question, asked once, when a station gains its second outgoing route.
+ *  The same shape means opposite things, so it cannot be inferred. Dismissing
+ *  stores 'split' — the historical default — so the prompt never nags. */
+function BranchModePrompt({ station, onClose }: { station: Station; onClose: () => void }) {
+  const updateStation = useStationsStore((s) => s.update)
+  const pick = (mode: 'split' | 'choice') => {
+    updateStation(station._id, { branchMode: mode }).catch(() => {})
+    onClose()
+  }
+  const OPTION: React.CSSProperties = {
+    display: 'block', width: '100%', textAlign: 'left', borderRadius: 6,
+    background: 'transparent', border: `1px solid ${color.border}`,
+    padding: '10px 12px', cursor: 'pointer', color: color.textPrimary,
+    fontFamily: 'Inter, system-ui, sans-serif',
+  }
+  return (
+    <div style={MODAL_BG} onPointerDown={() => pick('split')}>
+      <div style={{ ...MODAL_CARD, width: 360 }} onPointerDown={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: color.textPrimary }}>
+          {station.name} now has several outgoing routes
+        </div>
+        <div style={{ fontSize: 12.5, color: color.textSecondary, lineHeight: 1.55 }}>
+          What happens to a lot leaving it?
+        </div>
+        <button style={OPTION} onClick={() => pick('split')}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Split — taken apart</div>
+          <div style={{ fontSize: 12, color: color.textSecondary, marginTop: 2, lineHeight: 1.5 }}>
+            One lot becomes a piece on every branch at once, like a teardown.
+            Branch weights say how many pieces each route yields.
+          </div>
+        </button>
+        <button style={OPTION} onClick={() => pick('choice')}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Choice — one way or the other</div>
+          <div style={{ fontSize: 12, color: color.textSecondary, marginTop: 2, lineHeight: 1.5 }}>
+            Each lot moves whole down the one branch the worker picks.
+            Nothing is created or taken apart.
+          </div>
+        </button>
+        <div style={{ fontSize: 11, color: color.textDim, lineHeight: 1.5 }}>
+          This can be changed later by editing the station.
+        </div>
+      </div>
     </div>
   )
 }

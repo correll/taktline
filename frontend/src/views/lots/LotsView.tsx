@@ -7,7 +7,7 @@ import CreateLotModal from '../../components/lots/CreateLotModal'
 import MergeLotModal from '../../components/lots/MergeLotModal'
 import MoveLotModal from '../../components/lots/MoveLotModal'
 import LotDetailModal from '../../components/lots/LotDetailModal'
-import { mergeNodes, computeColumnGroups, computeLanes, type BarSpan } from '../../domain/graph'
+import { mergeNodes, computeColumnGroups, computeLanes, stationRoles, type BarSpan } from '../../domain/graph'
 import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { useRole } from '../../auth/useRole'
 import { useLotFlip } from '../../motion/useLotFlip'
@@ -232,10 +232,16 @@ export default function LotsView() {
     return {
       edges: Object.values(routes)
         .filter((r) => !bound.has(r.load) && !bound.has(r.unload))
-        .map((r) => ({ load: r.load, unload: r.unload })),
+        .map((r) => ({ load: r.load, unload: r.unload, processId: r.processId })),
       nodeIds: Object.keys(stations).filter((id) => !bound.has(id)),
     }
   }, [stations, routes])
+
+  // MERGE / SPLIT / CHOICE auto-labels, judged per process on distinct stations.
+  const stationRoleMap = useMemo(
+    () => stationRoles(flowGraph.edges, Object.fromEntries(
+      Object.values(stations).map((s) => [s._id, s.branchMode]))),
+    [flowGraph, stations])
 
   const { order: topoOrder, solidBars, dashedBars } = useMemo(
     () => computeColumnGroups(flowGraph.edges, flowGraph.nodeIds),
@@ -347,6 +353,7 @@ export default function LotsView() {
       cardLimit,
       sortBy,
       sortDir,
+      fan: stationRoleMap[stationId]?.fan ?? null,
     }
     return mergeNodeSet.has(stationId)
       ? <MergeColumn  key={stationId} {...props} />
@@ -699,6 +706,30 @@ interface ColumnProps {
   canEdit:      boolean   // super-admin: drag / move / unmerge
   canManageLots: boolean  // admin+: create lots, pull precursors, merge
   onLockedDrag: (cardId?: string) => void
+  /** 'split' or 'choice' when the station fans out (2+ outgoing routes in some
+   *  process) — rendered as an auto-label so the two shapes are tellable apart. */
+  fan:          'split' | 'choice' | null
+}
+
+/** SPLIT / CHOICE / MERGE label chip — the station's role in the graph, said
+ *  out loud. The word carries the identity; the hue only groups it. */
+function RoleChip({ label, hue }: { label: string; hue: string }) {
+  return (
+    <span style={{
+      fontSize: 8, fontFamily: font.mono, letterSpacing: '0.08em',
+      color: hue, background: `${hue}20`, border: `1px solid ${hue}40`,
+      borderRadius: size.radiusFull, padding: '1px 5px',
+    }}>
+      {label}
+    </span>
+  )
+}
+
+const FAN_HUES = { split: '#0E7490', choice: '#B45309' } as const
+
+function FanChip({ fan }: { fan: 'split' | 'choice' | null }) {
+  if (!fan) return null
+  return <RoleChip label={fan.toUpperCase()} hue={FAN_HUES[fan]} />
 }
 
 // ─── Drop-zone styling helper ─────────────────────────────────────────────────
@@ -728,7 +759,7 @@ function KanbanColumn({
   stationId, station, lots, templates, routes,
   onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, lockedCardId, onDragStart, onDragEnd, onDrop,
-  cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag,
+  cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag, fan,
 }: KanbanColumnProps) {
   const [hovering,   setHovering]   = useState(false)
   const totalUnits  = lots.reduce((sum, c) => sum + (c.bins[stationId]?.count ?? 0), 0)
@@ -781,17 +812,20 @@ function KanbanColumn({
           <span style={{ fontWeight: 600, fontSize: 13, color: color.textPrimary }}>
             {station.name}
           </span>
-          <span style={{
-            background:   lots.length > 0 ? `${accentColor}22` : color.bgElevated,
-            color:        lots.length > 0 ? accentColor : color.textDim,
-            borderRadius: size.radiusFull,
-            padding:      '1px 8px',
-            fontSize:     11,
-            fontFamily:   font.mono,
-            fontWeight:   600,
-          }}>
-            {lots.length}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <FanChip fan={fan} />
+            <span style={{
+              background:   lots.length > 0 ? `${accentColor}22` : color.bgElevated,
+              color:        lots.length > 0 ? accentColor : color.textDim,
+              borderRadius: size.radiusFull,
+              padding:      '1px 8px',
+              fontSize:     11,
+              fontFamily:   font.mono,
+              fontWeight:   600,
+            }}>
+              {lots.length}
+            </span>
+          </div>
         </div>
         {totalUnits > 0 && (
           <div style={{ fontSize: 10, color: color.textDim, marginTop: 2, fontFamily: font.mono }}>
@@ -973,7 +1007,7 @@ interface MergeColumnProps extends ColumnProps {
 function MergeColumn({
   stationId, station, lots, templates, routes, onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, lockedCardId, onDragStart, onDragEnd, onDrop,
-  cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag,
+  cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag, fan,
 }: MergeColumnProps) {
   const navigate    = useNavigate()
   const accentColor = station.color ?? '#8B5CF6'
@@ -1044,13 +1078,8 @@ function MergeColumn({
             {station.name}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            <span style={{
-              fontSize: 8, fontFamily: font.mono, letterSpacing: '0.08em',
-              color: '#8B5CF6', background: '#8B5CF620', border: '1px solid #8B5CF640',
-              borderRadius: size.radiusFull, padding: '1px 5px',
-            }}>
-              MERGE
-            </span>
+            <RoleChip label="MERGE" hue="#8B5CF6" />
+            <FanChip fan={fan} />
             <span style={{
               background:   lots.length > 0 ? `${accentColor}22` : color.bgElevated,
               color:        lots.length > 0 ? accentColor : color.textDim,

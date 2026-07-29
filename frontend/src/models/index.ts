@@ -31,6 +31,11 @@ export interface Station {
    *  accumulating. A property of the station, not a shape in the graph: a
    *  final test bench is a leaf that very much does work. */
   isStorage: boolean
+  /** What two or more outgoing routes mean here. 'split' (and null, the
+   *  default): a disassembly — one lot fans out to every branch at once.
+   *  'choice': either/or routing — each lot moves 1:1 down the one branch the
+   *  worker picks. Same shape, opposite meaning, so it is declared. */
+  branchMode?: 'split' | 'choice' | null
   createdAt: string
   updatedAt: string
 }

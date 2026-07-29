@@ -233,6 +233,12 @@ async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id
     from_uuid, to_uuid = parse_uuid(from_id), parse_uuid(to_id)
     if from_uuid is None or to_uuid is None:
         return None
+    # A station declared a **choice** has the same two-or-more-routes shape but
+    # the opposite meaning: either/or routing. Every lot leaves it 1:1 down the
+    # branch the worker names — nothing is minted, nothing is relabelled.
+    from_station = await session.get(StationRow, from_uuid)
+    if from_station is not None and from_station.branchMode == "choice":
+        return None
     branches = list((await session.execute(
         select(RouteRow).where(
             RouteRow.companyId == company_id,
@@ -616,6 +622,11 @@ async def _unsplit_back(session, company_id, row: CardRow, from_id: str, to_id: 
     """
     to_uuid, from_uuid = parse_uuid(to_id), parse_uuid(from_id)
     if to_uuid is None or from_uuid is None:
+        return None
+    # Nothing was transformed on the way out of a choice station, so there is
+    # nothing to undo on the way back — it is a plain move.
+    to_station = await session.get(StationRow, to_uuid)
+    if to_station is not None and to_station.branchMode == "choice":
         return None
     branches = await _outgoing_routes_for_split(session, company_id, to_uuid, row.processId)
     if len(branches) < 2:

@@ -80,6 +80,8 @@ class IoStation(BaseModel):
     color: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{3,8}$")
     icon: Optional[str] = Field(None, max_length=40)
     isStorage: bool = False
+    # 'split' (default) or 'choice' — what several outgoing routes mean here.
+    branchMode: Optional[Literal["split", "choice"]] = None
     integrationProvider: Optional[str] = Field(None, max_length=40)
     integrationRole: Optional[str] = Field(None, max_length=10)
 
@@ -201,6 +203,7 @@ async def export_map(ctx: CompanyContext = Depends(require_super_admin),
             position=IoPosition(**{k: (s.position or {}).get(k, d)
                                    for k, d in (("x", 0), ("y", 0), ("width", 60), ("height", 60))}),
             color=s.color, icon=s.icon, isStorage=bool(s.isStorage),
+            branchMode=s.branchMode,
             integrationProvider=s.integrationProvider, integrationRole=s.integrationRole,
         ) for s in stations],
         processes=[IoProcess(ref=p_ref[p.id], name=p.name, description=p.description or "",
@@ -270,6 +273,7 @@ async def import_map(doc: MapDocument,
             companyId=ctx.company_id, name=st.name, description=st.description,
             position=st.position.model_dump(), adapterType=None, adapterConfig={},
             color=st.color, icon=st.icon, isStorage=st.isStorage,
+            branchMode=st.branchMode,
             integrationProvider=st.integrationProvider,
             integrationRole=(st.integrationRole or ("both" if st.integrationProvider else None)),
         )

@@ -3,7 +3,7 @@ import { Heart, ScanLine } from 'lucide-react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
 import { sessionsApi, type WorkSession } from '../../api/sessions.api'
 import { color, font, size, shadow } from '../../theme/tokens'
-import type { Card } from '../../models'
+import type { Card, Station } from '../../models'
 import { formatDistanceToNow, differenceInSeconds } from 'date-fns'
 import { getValidDestinations } from '../lots/LotsView'
 import { mergeNodes } from '../../domain/graph'
@@ -1008,14 +1008,40 @@ function DonePanel({
   // *every* branch at once (a bar becomes four tubes and an offcut). Naming
   // only the first destination made that look like a choice the operator was
   // making, and hid the fact that one press produces several lots.
-  const branches = useMemo(() => {
+  const branchRoutes = useMemo(() => {
     const bound = new Set(Object.values(stations)
       .filter((st) => st.integrationProvider).map((st) => st._id))
-    const outgoing = Object.values(routes).filter((r) =>
+    return Object.values(routes).filter((r) =>
       r.load === stationId && !bound.has(r.unload) &&
       (!card?.processId || r.processId === card.processId))
-    return outgoing.map((r) => stations[r.unload]).filter(Boolean)
   }, [stationId, routes, stations, card])
+
+  const branches = useMemo(
+    () => branchRoutes.map((r) => stations[r.unload]).filter(Boolean),
+    [branchRoutes, stations])
+
+  // But not every lot at a many-routed station splits. Two cases move 1:1 and
+  // the worker genuinely PICKS the destination:
+  //  - the station is declared a **choice** (either/or routing), or
+  //  - the lot already wears one of the branches' products (a piece of this
+  //    station's own split — setting one aside is a relocation, mirroring the
+  //    backend's piece check in cards._split_branches).
+  const picksDestination = useMemo(() => {
+    if (!card || branchRoutes.length < 2) return false
+    if (station?.branchMode === 'choice') return true
+    const procRoutes = Object.values(routes).filter((r) => r.processId === card.processId)
+    const t = templates[card.lotTemplateId]
+    for (const r of branchRoutes) {
+      if (r.outputTemplateId != null) {
+        if (r.outputTemplateId === card.lotTemplateId) return true
+        continue
+      }
+      const intoMerge = procRoutes.filter((x) => x.unload === r.unload).length >= 2
+      const startAt = intoMerge ? stationId : r.unload
+      if (t && t.startStationId === startAt) return true
+    }
+    return false
+  }, [card, branchRoutes, station, routes, templates, stationId])
 
   const nextStation = useMemo(() => {
     if (branches.length > 0) return branches[0]
@@ -1055,10 +1081,11 @@ function DonePanel({
     } finally { setSending(false) }
   }
 
-  const doMove = async () => {
-    if (!nextStation) return
+  const doMove = async (target?: Station) => {
+    const dest = target ?? nextStation
+    if (!dest) return
     setMoving(true)
-    try { await onMove(nextStation._id) } finally { setMoving(false) }
+    try { await onMove(dest._id) } finally { setMoving(false) }
   }
 
   return (
@@ -1114,9 +1141,34 @@ function DonePanel({
         </div>
       )}
 
-      {nextStation && (
+      {picksDestination ? (
+        <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: size.sp3 }}>
+          <div style={{ fontSize: 11, color: color.textDim, textAlign: 'center' }}>
+            This lot moves whole — pick where it goes.
+          </div>
+          {branches.map((st) => (
+            <button
+              key={st._id}
+              onClick={() => doMove(st)}
+              disabled={moving}
+              style={{
+                width: '100%', padding: `${size.sp4} 0`,
+                background:   moving ? `${color.bluePrimary}40` : color.bluePrimary,
+                border: 'none', borderRadius: size.radiusMd,
+                color: '#fff', fontFamily: font.mono,
+                fontSize: 17, fontWeight: 700, letterSpacing: '0.1em',
+                cursor: moving ? 'not-allowed' : 'pointer',
+                boxShadow: `0 4px 20px ${color.bluePrimary}30`,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {moving ? 'MOVING…' : `MOVE → ${st.name.toUpperCase()}`}
+            </button>
+          ))}
+        </div>
+      ) : nextStation && (
         <button
-          onClick={doMove}
+          onClick={() => doMove()}
           disabled={moving}
           style={{
             width: '100%', maxWidth: 320, padding: `${size.sp5} 0`,

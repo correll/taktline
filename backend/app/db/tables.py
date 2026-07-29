@@ -227,6 +227,12 @@ class Station(Base):
     # on the heatmap — exactly where a queue building up matters most.
     isStorage: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                             server_default=text("false"), default=False)
+    # What two or more outgoing routes MEAN at this station. 'split' (the
+    # default, also NULL): a disassembly — one lot fans out to every branch at
+    # once. 'choice': plain either/or routing — each lot moves 1:1 down the one
+    # branch the worker picks; nothing is minted or relabelled. Declared, not
+    # inferred: the graph shape is identical, only the intent differs.
+    branchMode: Mapped[str | None] = mapped_column(String, nullable=True)
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
 
@@ -234,6 +240,10 @@ class Station(Base):
         CheckConstraint(
             "\"integrationRole\" IS NULL OR \"integrationRole\" IN ('source','sink','both')",
             name="ck_station_integration_role",
+        ),
+        CheckConstraint(
+            "\"branchMode\" IS NULL OR \"branchMode\" IN ('split','choice')",
+            name="ck_station_branch_mode",
         ),
     )
 

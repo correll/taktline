@@ -62,6 +62,9 @@ interface Props {
    *  from the drawn links. 'pull' = orders are placed here and pull work through (↓),
    *  'out' = finished goods leave through it (↑), 'both' = ⇵. */
   boundaryFlow?: 'pull' | 'out' | 'both'
+  /** Auto-label for the station's role in the graph — "MERGE", "SPLIT",
+   *  "CHOICE", or a combination. Undefined for a plain chain station. */
+  roleTag?: string
   onSelect:  () => void
   onRouteAnchor: () => void   // route tool: clicked to become source / target
   onContextMenu: (clientX: number, clientY: number) => void
@@ -69,7 +72,7 @@ interface Props {
 
 export default function StationNode({
   station, lotCount, selected, nodeSize, viewport, tool, routeArmed, flashing, cyclePeriodMs,
-  boundaryFlow, onSelect, onRouteAnchor, onContextMenu,
+  boundaryFlow, roleTag, onSelect, onRouteAnchor, onContextMenu,
 }: Props) {
   const updateStation = useStationsStore((s) => s.update)
   const nudgePosition = useStationsStore((s) => s.nudgePosition)
@@ -149,6 +152,7 @@ export default function StationNode({
   const bgOpacity   = selected ? 0.95 : 0.88
 
   return (
+    <>
     <div
       className={flashing ? 'map-node-flash' : undefined}
       onPointerDown={handlePointerDown}
@@ -320,5 +324,29 @@ export default function StationNode({
         </div>
       )}
     </div>
+
+    {/* Role auto-label under the tile — MERGE / SPLIT / CHOICE. Outside the
+        node because the tile clips its overflow, and the role belongs to the
+        station, not to whatever fits beside its name. */}
+    {roleTag && showLabel && (
+      <div style={{
+        position:      'absolute',
+        left:          screenX,
+        top:           screenY + screenSize + 2,
+        width:         screenSize,
+        textAlign:     'center',
+        fontSize:      Math.max(7, Math.min(9.5, screenSize * 0.095)),
+        fontFamily:    '"JetBrains Mono", monospace',
+        letterSpacing: '0.08em',
+        color:         'var(--tk-map-node-text)',
+        opacity:       0.75,
+        userSelect:    'none',
+        pointerEvents: 'none',
+        whiteSpace:    'nowrap',
+      }}>
+        {roleTag}
+      </div>
+    )}
+    </>
   )
 }

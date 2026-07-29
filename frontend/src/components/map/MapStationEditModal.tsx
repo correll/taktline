@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
-import { useStationsStore } from '../../store'
+import React, { useMemo, useState } from 'react'
+import { useProcessesStore, useStationsStore } from '../../store'
+import { isIntegrationStation } from '../../domain/integrations'
 import { STATION_ICONS } from './StationNode'
 import { color } from '../../theme/tokens'
 
@@ -13,14 +14,39 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
   const [icon, setIcon] = useState<string | null>(station?.icon ?? null)
   const [col,  setCol]  = useState<string | null>(station?.color ?? null)
   const [storage, setStorage] = useState<boolean>(station?.isStorage ?? false)
+  const [branchMode, setBranchMode] = useState<'split' | 'choice'>(
+    station?.branchMode === 'choice' ? 'choice' : 'split')
   const [saving, setSaving] = useState(false)
+
+  // The split-or-choice question only exists once the station actually has
+  // several outgoing production routes in some process — before that there is
+  // nothing to decide, so the control stays out of the way.
+  const routes    = useProcessesStore((s) => s.routes)
+  const stations  = useStationsStore((s) => s.stations)
+  const fansOut = useMemo(() => {
+    const byProc = new Map<string, Set<string>>()
+    for (const r of Object.values(routes)) {
+      if (r.load !== stationId) continue
+      const target = stations[r.unload]
+      if (target && isIntegrationStation(target)) continue
+      if (!byProc.has(r.processId)) byProc.set(r.processId, new Set())
+      byProc.get(r.processId)!.add(r.unload)
+    }
+    return [...byProc.values()].some((s) => s.size >= 2)
+  }, [routes, stations, stationId])
+
   if (!station) return null
 
   const save = async () => {
     if (!name.trim()) return
     setSaving(true)
-    try { await updateStation(stationId, { name: name.trim(), icon, color: col, isStorage: storage }); onClose() }
-    finally { setSaving(false) }
+    try {
+      await updateStation(stationId, {
+        name: name.trim(), icon, color: col, isStorage: storage,
+        ...(fansOut ? { branchMode } : {}),
+      })
+      onClose()
+    } finally { setSaving(false) }
   }
 
   return (
@@ -50,6 +76,34 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
             actually happens, including the last station on a line.
           </span>
         </label>
+
+        {/* Only shown once the station has several outgoing routes — the same
+            shape means opposite things, and only its owner knows which. */}
+        {fansOut && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <span style={LABEL}>SEVERAL OUTGOING ROUTES MEAN…</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {([['split', 'Split', 'one lot becomes a piece on every branch'],
+                 ['choice', 'Choice', 'each lot goes down one chosen branch']] as const)
+                .map(([mode, label, hint]) => (
+                <button key={mode} title={hint} onClick={() => setBranchMode(mode)} style={{
+                  flex: 1, padding: '7px 10px', borderRadius: 5, cursor: 'pointer',
+                  background: branchMode === mode ? '#D85A3033' : 'transparent',
+                  border: `1px solid ${branchMode === mode ? '#D85A30' : color.border}`,
+                  color: branchMode === mode ? color.textPrimary : color.textSecondary,
+                  fontSize: 12.5, fontWeight: 600,
+                }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span style={{ fontSize: 11, color: color.textDim, lineHeight: 1.5 }}>
+              {branchMode === 'split'
+                ? 'A teardown: advancing a lot out mints a piece on every branch, per the branch weights.'
+                : 'Either/or routing: the worker sends each lot whole down one branch. Nothing is minted.'}
+            </span>
+          </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           <span style={LABEL}>ICON</span>

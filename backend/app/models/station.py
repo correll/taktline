@@ -24,6 +24,9 @@ class Station(TimestampedModel):
     integrationRole: Optional[str] = None       # 'source' | 'sink' | 'both'
     # Storage, not work: excluded from the heatmap, OEE and accumulation warnings.
     isStorage: bool = False
+    # What multiple outgoing routes mean here: 'split' (default) fans a lot out
+    # to every branch at once; 'choice' moves each lot 1:1 down one chosen branch.
+    branchMode: Optional[str] = None
 
 
 class StationCreate(BaseModel):
@@ -37,6 +40,7 @@ class StationCreate(BaseModel):
     integrationProvider: Optional[str] = None
     integrationRole: Optional[str] = None
     isStorage: bool = False
+    branchMode: Optional[str] = None
 
 
 class StationUpdate(BaseModel):
@@ -50,3 +54,4 @@ class StationUpdate(BaseModel):
     integrationProvider: Optional[str] = None
     integrationRole: Optional[str] = None
     isStorage: Optional[bool] = None
+    branchMode: Optional[str] = None

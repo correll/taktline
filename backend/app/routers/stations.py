@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
-from ..db.tables import Station as StationRow, StationFavorite as FavoriteRow
+from ..db.tables import Route as RouteRow, Station as StationRow, StationFavorite as FavoriteRow
 from ..deps.auth import CompanyContext, ensure_sandbox_quota, get_active_company, require_super_admin
 from ..models.station import Station, StationCreate, StationUpdate
 from ..models.common import utcnow
@@ -27,9 +27,44 @@ def _to_station(r: StationRow) -> Station:
         integrationProvider=r.integrationProvider,
         integrationRole=r.integrationRole,
         isStorage=bool(r.isStorage),
+        branchMode=r.branchMode,
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
     )
+
+
+def _validate_branch_mode(mode) -> None:
+    if mode is not None and mode not in ("split", "choice"):
+        raise HTTPException(400, "branchMode must be 'split' or 'choice'")
+
+
+async def _strip_split_semantics(session: AsyncSession, company_id, station_uuid) -> None:
+    """Becoming a choice station retires the split-only meaning its outgoing
+    routes carried. A declared branch product goes (a choice routes lots
+    unchanged, it yields nothing), and a stale branch weight resets to 1 —
+    left in place it would multiply the pull math as if the station still cut
+    material apart. A weight consumed by a merge at the *target* survives:
+    that meaning belongs to the merge, not to this station."""
+    outgoing = (await session.execute(
+        select(RouteRow).where(RouteRow.companyId == company_id,
+                               RouteRow.load == station_uuid)
+    )).scalars().all()
+    for r in outgoing:
+        changed = False
+        if r.outputTemplateId is not None:
+            r.outputTemplateId = None
+            changed = True
+        if r.quantity != 1:
+            feeds = (await session.execute(
+                select(RouteRow.id).where(RouteRow.companyId == company_id,
+                                          RouteRow.processId == r.processId,
+                                          RouteRow.unload == r.unload)
+            )).scalars().all()
+            if len(feeds) < 2:            # not a merge feed — the weight was split-only
+                r.quantity = 1
+                changed = True
+        if changed:
+            r.updatedAt = utcnow()
 
 
 def _validate_integration(provider, role) -> None:
@@ -71,6 +106,7 @@ async def create_station(body: StationCreate, ctx: CompanyContext = Depends(requ
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     await ensure_sandbox_quota(session, ctx, StationRow)
     _validate_integration(body.integrationProvider, body.integrationRole)
+    _validate_branch_mode(body.branchMode)
     row = StationRow(**body.model_dump(), companyId=ctx.company_id)
     session.add(row)
     await session.flush()
@@ -138,9 +174,13 @@ async def update_station(station_id: str, body: StationUpdate,
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     _validate_integration(patch.get("integrationProvider", row.integrationProvider),
                           patch.get("integrationRole", row.integrationRole))
+    _validate_branch_mode(patch.get("branchMode"))
+    became_choice = patch.get("branchMode") == "choice" and row.branchMode != "choice"
     for k, v in patch.items():
         setattr(row, k, v)
     row.updatedAt = utcnow()
+    if became_choice:
+        await _strip_split_semantics(session, ctx.company_id, row.id)
     await session.flush()
     station = _to_station(row)
     if "adapterType" in patch or "adapterConfig" in patch:

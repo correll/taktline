@@ -354,6 +354,8 @@ export default function LotsView() {
       sortBy,
       sortDir,
       fan: stationRoleMap[stationId]?.fan ?? null,
+      hasProdOutgoing: flowGraph.edges.some((e) => e.load === stationId),
+      hasProdIncoming: flowGraph.edges.some((e) => e.unload === stationId),
     }
     return mergeNodeSet.has(stationId)
       ? <MergeColumn  key={stationId} {...props} />
@@ -709,6 +711,12 @@ interface ColumnProps {
   /** 'split' or 'choice' when the station fans out (2+ outgoing routes in some
    *  process) — rendered as an auto-label so the two shapes are tellable apart. */
   fan:          'split' | 'choice' | null
+  /** Whether MATERIAL flows out of / into this station — production routes
+   *  only. A handoff link to a shipper is not flow: counting it made the last
+   *  real station look mid-chain, which hid its "pull precursors" footer and
+   *  offered a Move that had nowhere legal to go. */
+  hasProdOutgoing: boolean
+  hasProdIncoming: boolean
 }
 
 /** SPLIT / CHOICE / MERGE label chip — the station's role in the graph, said
@@ -760,12 +768,10 @@ function KanbanColumn({
   onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, lockedCardId, onDragStart, onDragEnd, onDrop,
   cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag, fan,
+  hasProdOutgoing: hasOutgoing, hasProdIncoming: hasIncoming,
 }: KanbanColumnProps) {
   const [hovering,   setHovering]   = useState(false)
   const totalUnits  = lots.reduce((sum, c) => sum + (c.bins[stationId]?.count ?? 0), 0)
-  const hasOutgoing    = Object.values(routes).some((r) => r.load   === stationId)
-  const hasIncoming    = Object.values(routes).some((r) => r.unload === stationId)
-  const isMergeStation = Object.values(routes).filter((r) => r.unload === stationId).length >= 2
   const accentColor = station.color ?? color.lotBlue
 
   const displayLots = [...lots].sort((a, b) => {
@@ -1008,10 +1014,10 @@ function MergeColumn({
   stationId, station, lots, templates, routes, onCreateLot, onOpenDetail, onMoveLot,
   unlocked, isDragging, isDropTarget, lockedCardId, onDragStart, onDragEnd, onDrop,
   cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag, fan,
+  hasProdOutgoing: hasOutgoing,
 }: MergeColumnProps) {
   const navigate    = useNavigate()
   const accentColor = station.color ?? '#8B5CF6'
-  const hasOutgoing = Object.values(routes).some((r) => r.load === stationId)
 
   const displayLots = [...lots].sort((a, b) => {
     const cmp = sortBy === 'age'

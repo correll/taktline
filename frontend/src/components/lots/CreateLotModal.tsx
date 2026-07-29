@@ -28,9 +28,14 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
   // A station that still feeds something downstream is an *intermediate* node —
   // not the end of the line. Pulling here builds work-in-process that then has
   // to travel further; the recommended pull point is the finished-goods leaf.
+  // Only PRODUCTION routes count as downstream: a handoff link to a shipper is
+  // the end of the line, not a further step.
   const isIntermediate = useMemo(
-    () => isPullStation && Object.values(routes).some((r) => r.load === stationId),
-    [isPullStation, routes, stationId],
+    () => isPullStation && Object.values(routes).some((r) => {
+      const target = stations[r.unload]
+      return r.load === stationId && !(target && target.integrationProvider)
+    }),
+    [isPullStation, routes, stations, stationId],
   )
 
   const validTemplates = useMemo(

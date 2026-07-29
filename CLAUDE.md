@@ -211,6 +211,14 @@ Instance-level tier for support, entirely separate from company roles: **owner**
 - **Impersonation** is an explicit time-boxed `SupportGrant` (default 60 min, max 8 h): `get_active_company`, `load_membership`, and the WS handshake fall back to an active grant with role `super_admin` when membership is missing. `/auth/me` surfaces grant companies flagged `impersonated: true` so the switcher/banner ("Supporting <name> · End") just work.
 - **Destructive ops**: `DELETE /platform/companies/{id}` needs the exact name in `confirmName`; `DELETE /platform/users/{id}` may remove a company super_admin (deliberately bypassing the tenant-side last-super-admin guard) but never an owner or yourself.
 - **Everything is audited** in `platform_audit` (no FKs — rows survive actor/target deletion).
+- **Client crash reports**: the frontend error boundary POSTs every caught
+  render error to `POST /client-errors/` (no auth required — a 401 on the
+  report would lose the crash twice; attribution is session-verified or absent,
+  never taken from the raw header) and stashes it in
+  `localStorage['taktline.lastError']`. Staff read them at
+  `GET /platform/client-errors` (newest first, `?companyId=` filter). FK-free
+  rows, 30-day rolling retention enforced at write time, hard truncation +
+  10/min/IP rate limit.
 - **Metrics**: `GET /platform/status` (uptime, req/min ring buffer from `core/traffic.py`, live WS connections, session/work/event counts); `GET /platform/companies` adds per-company activeUsers, devices (live sockets), and monthly `usage_counters` (API requests + WS messages, accumulated in-memory in `core/usage.py`, flushed every 30 s).
 - Frontend: `/platform` route (`RequirePlatformStaff`, UX-only), nav entry appears when `user.platformRole` is set.
 

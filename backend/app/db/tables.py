@@ -585,6 +585,25 @@ class IntegrationOutbox(Base):
     deliveredAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ClientError(Base):
+    """A crash report from the frontend error boundary. Deliberately FK-free:
+    a report from a deleted sandbox account is still a report, and sandbox
+    visitors are exactly who walks the odd paths. Retention is a rolling
+    window enforced at write time (see routers/client_errors.py)."""
+    __tablename__ = "client_errors"
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    userEmail: Mapped[str | None] = mapped_column(String, nullable=True)
+    message: Mapped[str] = mapped_column(String, nullable=False)
+    stack: Mapped[str] = mapped_column(String, nullable=False, default="")
+    componentStack: Mapped[str] = mapped_column(String, nullable=False, default="")
+    url: Mapped[str] = mapped_column(String, nullable=False, default="")
+    appVersion: Mapped[str] = mapped_column(String, nullable=False, default="")
+    userAgent: Mapped[str] = mapped_column(String, nullable=False, default="")
+    createdAt: Mapped[datetime] = _created()
+
+
 class ApiKey(Base):
     """A scoped, revocable service credential for external integrations
     (connectors, Zapier, a customer's IT). Only the SHA-256 hash is stored."""

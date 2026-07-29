@@ -27,8 +27,8 @@ from ..core.traffic import traffic
 from ..core.usage import month_bucket
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (
-    AuthSession, Card, CardEvent, Company, Membership, PlatformAudit,
-    Station, SupportGrant, UsageCounter, User, WorkSession,
+    AuthSession, Card, CardEvent, ClientError as ClientErrorRow, Company, Membership,
+    PlatformAudit, Station, SupportGrant, UsageCounter, User, WorkSession,
 )
 from ..deps.auth import platform_role_of, require_platform_owner, require_platform_staff
 from ..models.common import utcnow
@@ -289,4 +289,24 @@ async def list_audit(limit: int = 100, user: User = Depends(require_platform_sta
         "id": str(r.id), "actorEmail": r.actorEmail, "action": r.action,
         "targetType": r.targetType, "targetId": r.targetId,
         "detail": r.detail, "createdAt": r.createdAt,
+    } for r in rows]
+
+@router.get("/client-errors")
+async def list_client_errors(companyId: str | None = None, limit: int = 100,
+                             _staff=Depends(require_platform_staff),
+                             session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """The frontend error boundary's reports — what actually crashed on a
+    customer's screen, answerable after the fact instead of lost to a reload.
+    Newest first; filter by company to follow up a specific report."""
+    stmt = select(ClientErrorRow).order_by(ClientErrorRow.createdAt.desc()).limit(min(limit, 500))
+    cid = parse_uuid(companyId) if companyId else None
+    if cid is not None:
+        stmt = stmt.where(ClientErrorRow.companyId == cid)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [{
+        "id": str(r.id), "companyId": str(r.companyId) if r.companyId else None,
+        "userEmail": r.userEmail, "message": r.message, "url": r.url,
+        "componentStack": r.componentStack, "stack": r.stack,
+        "userAgent": r.userAgent, "appVersion": r.appVersion,
+        "createdAt": r.createdAt,
     } for r in rows]

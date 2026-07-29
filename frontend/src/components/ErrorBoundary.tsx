@@ -2,6 +2,7 @@ import React from 'react'
 import { useLocation } from 'react-router-dom'
 import { color, font, size } from '../theme/tokens'
 import { isChunkLoadError } from '../lazyView'
+import { client } from '../api/client'
 
 /** The app had no error boundary, which in React 18 means any error thrown
  *  while rendering unmounts the whole tree and leaves an empty <div id="root">
@@ -30,8 +31,23 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // No telemetry sink yet; the console is what a support session can read.
     console.error('[taktline] render error:', error, info.componentStack)
+    // The console dies with the tab; the report must not. Two sinks, both
+    // best-effort: localStorage (readable in a support session even offline)
+    // and the server (readable by platform staff after the user reloaded and
+    // moved on — which is exactly when "what actually happened?" gets asked).
+    const report = {
+      message: String(error?.message ?? error).slice(0, 1000),
+      stack: String(error?.stack ?? '').slice(0, 6000),
+      componentStack: String(info.componentStack ?? '').slice(0, 6000),
+      url: window.location.href.slice(0, 500),
+    }
+    try {
+      localStorage.setItem('taktline.lastError',
+        JSON.stringify({ ...report, at: new Date().toISOString() }))
+    } catch { /* storage full or blocked — the POST below still goes out */ }
+    // A crashed view must never crash again in the reporter.
+    try { client.post('/client-errors/', report).catch(() => {}) } catch { /* noop */ }
   }
 
   componentDidUpdate(prev: Props) {

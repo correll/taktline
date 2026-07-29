@@ -256,6 +256,26 @@ def test_set_aside_to_spares_relocates_and_never_mints(actor):
     assert _at(a, spares) == 2                      # one of each chemistry
 
 
+# ─── Pulling at a shared station names its process ───────────────────────────
+
+def test_pull_at_a_shared_station_honours_the_named_process(actor):
+    """QA is fed by both chemistries, one route each, so a bare pull falls to
+    the deterministic tie-break. Naming the process pulls THAT line — and a
+    process that does not feed the station is refused, never substituted."""
+    a = actor(); bootstrap_admin(a)
+    g = _build(a)
+
+    r = a.req("POST", f"/merge/{g.qa}/pull", {"quantity": 1, "processId": g.lfp["proc"]})
+    assert r.status_code == 201, r.text
+    packs = [c for c in _cards(a) if c["bins"].get(g.intake)]
+    assert len(packs) == 1 and packs[0]["lotTemplateId"] == g.lfp["pack"], \
+        "the pull walked the wrong chemistry"
+
+    stranger = a.req("POST", "/processes/", {"name": "Stranger"}).json()["_id"]
+    r = a.req("POST", f"/merge/{g.qa}/pull", {"quantity": 1, "processId": stranger})
+    assert r.status_code == 400 and "does not feed" in r.json()["detail"], r.text
+
+
 # ─── Two merges, one bench — both reachable ──────────────────────────────────
 
 def _stage_both_lines(a, g):

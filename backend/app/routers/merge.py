@@ -52,6 +52,10 @@ class MergePerformBody(BaseModel):
 
 class PullRequest(BaseModel):
     quantity: int
+    # On a station several processes share, the pull walks ONE process's
+    # upstream chain — this names it. Omitted, the deterministic default
+    # (most feeds, then process id) applies.
+    processId: Optional[str] = None
 
 
 class PullSourceInfo(BaseModel):
@@ -545,12 +549,19 @@ async def pull_for_merge(station_id: str, body: PullRequest,
     if len(incoming) < 1:
         raise HTTPException(400, "This station has no upstream sources to pull from")
 
-    # The pull walks ONE process's upstream chain. On a shared station prefer
-    # the process that actually merges here (most feeds), deterministically.
+    # The pull walks ONE process's upstream chain. The caller may name it (the
+    # modal's process picker on a shared station); otherwise prefer the process
+    # that actually merges here (most feeds), deterministically.
     by_proc: dict = {}
     for r in incoming:
         by_proc.setdefault(r.processId, []).append(r)
-    process_id = sorted(by_proc, key=lambda pid: (-len(by_proc[pid]), str(pid)))[0]
+    if body.processId is not None:
+        wanted = parse_uuid(body.processId)
+        if wanted is None or wanted not in by_proc:
+            raise HTTPException(400, "That process does not feed this station")
+        process_id = wanted
+    else:
+        process_id = sorted(by_proc, key=lambda pid: (-len(by_proc[pid]), str(pid)))[0]
     sources = await _leaf_sources(session, ctx.company_id, station_uuid, body.quantity, process_id)
     if not sources:
         raise HTTPException(422, "No upstream source stations found")

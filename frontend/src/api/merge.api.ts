@@ -44,6 +44,7 @@ export const mergeApi = {
   perform: (stationId: string, cardIds?: string[]): Promise<MergeResult> =>
     client.post(`/merge/${stationId}`, cardIds && cardIds.length ? { cardIds } : {}),
 
-  pull: (stationId: string, quantity: number): Promise<PullResult> =>
-    client.post(`/merge/${stationId}/pull`, { quantity }),
+  pull: (stationId: string, quantity: number, processId?: string): Promise<PullResult> =>
+    client.post(`/merge/${stationId}/pull`,
+                processId ? { quantity, processId } : { quantity }),
 }

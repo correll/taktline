@@ -43,6 +43,24 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
     [templates, stationId],
   )
 
+  // A pull walks ONE process's upstream chain. When several processes feed
+  // this station the worker picks which line to order; the default mirrors the
+  // backend's deterministic rule (most feeds here, then process id) so leaving
+  // it untouched changes nothing.
+  const processes = useProcessesStore((s) => s.processes)
+  const feedingProcesses = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const r of Object.values(routes)) {
+      if (r.unload === stationId) counts.set(r.processId, (counts.get(r.processId) ?? 0) + 1)
+    }
+    return [...counts.keys()]
+      .sort((a, b) => (counts.get(b)! - counts.get(a)!) || (a < b ? -1 : a > b ? 1 : 0))
+      .map((id) => processes[id])
+      .filter(Boolean)
+  }, [routes, processes, stationId])
+  const [pullProcessId, setPullProcessId] = useState<string>('')
+  const effPullProcess = pullProcessId || feedingProcesses[0]?._id || ''
+
   const [templateId, setTemplateId]   = useState(() => {
     const valid = Object.values(templates).filter((t) => t.startStationId === stationId)
     return valid.length === 1 ? valid[0]._id : ''
@@ -66,7 +84,9 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
         // Pull precursor lots from the upstream source queues (cascades to leaves).
         // Refetch templates too — the pull auto-provisions source templates
         // server-side; without them lots would display as "Unknown".
-        const result = await mergeApi.pull(stationId, quantity)
+        const result = await mergeApi.pull(
+          stationId, quantity,
+          feedingProcesses.length > 1 ? effPullProcess : undefined)
         await Promise.all([fetchCards(), fetchProcesses()])
         setPullResult(result.sources)
       } else {
@@ -175,6 +195,33 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
                 ⚠ Note that creating intermediate products creates excessive
                 Work-in-Process. Unless intermediate assemblies are also products,
                 you should create work orders by pulling from the <b>end of the line</b>.
+              </div>
+            )}
+
+            {/* Process picker — several lines share this station, and a pull
+                orders exactly one of them. */}
+            {isPullStation && feedingProcesses.length > 1 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp1 }}>
+                <span style={{ fontSize: 10, color: color.textSecondary, fontFamily: font.mono, letterSpacing: '0.08em' }}>
+                  PROCESS TO PULL
+                </span>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {feedingProcesses.map((p) => (
+                    <button
+                      key={p._id}
+                      onClick={() => setPullProcessId(p._id)}
+                      style={{
+                        flex: 1, minWidth: 90, padding: '7px 10px', borderRadius: 5, cursor: 'pointer',
+                        background: effPullProcess === p._id ? '#D85A3033' : 'transparent',
+                        border: `1px solid ${effPullProcess === p._id ? '#D85A30' : color.border}`,
+                        color: effPullProcess === p._id ? color.textPrimary : color.textSecondary,
+                        fontSize: 12.5, fontWeight: 600,
+                      }}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 

@@ -242,7 +242,9 @@ async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id
     )).scalars().all())
     # A handoff link to an integration node is not a production branch. Counting
     # it made one production route + one handoff read as a split, and advancing
-    # minted a piece onto the partner's node.
+    # minted a piece onto the partner's node. The placement rules now refuse
+    # that shape within a process in both creation orders, so this filter is
+    # defense for data drawn before the rule existed.
     bound = await _boundary_station_ids(session, company_id)
     branches = [b for b in branches if b.unload not in bound]
     if len(branches) < 2 or not any(b.unload == to_uuid for b in branches):

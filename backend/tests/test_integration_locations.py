@@ -253,7 +253,7 @@ def test_demand_belongs_on_the_location_where_the_product_is_made(actor):
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
     assert "starts a pull" in detail, detail
-    assert "No product is made at Cell A" in detail, detail
+    assert "No product of this process is made at Cell A" in detail, detail
 
 
 def test_demand_into_a_products_own_location_is_allowed(actor):
@@ -322,5 +322,5 @@ def test_handoff_may_only_leave_the_end_of_the_flow(actor):
                                    "unload": ship["_id"], "quantity": 1})
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
-    assert "after the last work step" in detail, detail
+    assert "last location of this process" in detail, detail
     assert "still sends work on to Cell A" in detail, detail

@@ -106,7 +106,6 @@ def _build(a: Actor) -> Rig:
         routes["mod_re"]   = _route(a, p, g.modtest, g.reasm)
         routes["bus_re"]   = _route(a, p, g.busbar, g.reasm)
         routes["re_qa"]    = _route(a, p, g.reasm, g.qa)
-        routes["qa_wh"]    = _route(a, p, g.qa, g.wh)
 
         pack   = _tmpl(a, f"{name} used pack", p, g.intake)
         module = _tmpl(a, f"{name} module", p, g.modtest)
@@ -345,26 +344,55 @@ def test_no_endpoint_can_park_a_lot_on_the_partner_node(actor):
     assert _at(a, g.ship) == 0
 
 
-def test_a_handoff_link_is_not_a_split_branch(actor):
-    """QA sends work to the Warehouse and hands off to ShipStation. Advancing
-    to the Warehouse must move 1:1 — before the fix the handoff link counted as
-    a second branch, the move fanned out, and a phantom piece landed on the
-    partner's node."""
-    a = actor(); bootstrap_admin(a)
-    g = _build(a)
-    _order(a, g, g.nmc, 1, "NMC-1")
-    mods, bus = _teardown(a, g, g.nmc, "NMC-1")
-    _advance(a, mods["_id"], g.modtest, g.reasm, 3)
-    _advance(a, bus["_id"], g.busbar, g.reasm, 2)
-    made_id = a.req("POST", f"/merge/{g.reasm}",
-                    {"cardIds": [c["_id"] for c in _cards(a) if c["bins"].get(g.reasm)]}
-                    ).json()["createdCardId"]
-    _advance(a, made_id, g.reasm, g.qa, 1)
+def test_ship_and_stock_are_two_processes(actor):
+    """Ship-or-stock is not a branch inside one process — it is two processes
+    over the same stations: one pulled by the warehouse (make-to-stock,
+    completing on arrival there) and one pulled by the shipper (make-to-order,
+    completing at the handoff). The same physical QA bench carries both, and
+    each process's flow through it stays deterministic.
 
-    before = len(_cards(a))
-    _advance(a, made_id, g.qa, g.wh, 1)
-    assert len(_cards(a)) == before, "the move minted a phantom piece"
-    assert _at(a, g.ship) == 0 and _at(a, g.wh) == 1
+    An earlier placement rule special-cased onward routes to storage instead,
+    which smuggled an either/or into a single process — exactly the thing the
+    separate-process convention exists to prevent."""
+    a = actor(); bootstrap_admin(a)
+    cell = _st(a, "Cell")
+    qa   = _st(a, "Shared QA")
+    wh   = _st(a, "Stock shelf", isStorage=True)
+    ship = _st(a, "ShipStation", integrationProvider="shipstation", integrationRole="sink")
+
+    stock = a.req("POST", "/processes/", {"name": "To stock"}).json()["_id"]
+    _route(a, stock, cell, qa)
+    _route(a, stock, qa, wh)
+    stock_tmpl = _tmpl(a, "Stock widget", stock, cell)
+
+    to_ship = a.req("POST", "/processes/", {"name": "To ship"}).json()["_id"]
+    _route(a, to_ship, cell, qa)
+    ship_tmpl = _tmpl(a, "Ship widget", to_ship, cell)
+    # The handoff draws fine: within ITS process QA sends work nowhere else.
+    # The stock process's QA→shelf route belongs to a different value stream
+    # and must not count against it.
+    _route(a, to_ship, qa, ship)
+
+    # The mirror: the ship process may not later fork around its own handoff.
+    r = a.req("POST", "/routes/", {"processId": to_ship, "load": qa,
+                                   "unload": wh, "quantity": 1})
+    assert r.status_code == 400, r.text
+    assert "its own process" in r.json()["detail"] or "own process" in r.json()["detail"], r.text
+
+    # Both flows run over the shared bench, each deterministic in its process.
+    sc = a.req("POST", "/cards/", {"lotTemplateId": stock_tmpl, "processId": stock,
+                                   "totalQuantity": 1, "bins": {cell: {"count": 1}}}).json()
+    _advance(a, sc["_id"], cell, qa, 1)
+    _advance(a, sc["_id"], qa, wh, 1)                 # 1:1, no phantom anywhere
+    assert _at(a, wh) == 1 and _at(a, ship) == 0
+
+    hc = a.req("POST", "/cards/", {"lotTemplateId": ship_tmpl, "processId": to_ship,
+                                   "totalQuantity": 1, "bins": {cell: {"count": 1}}}).json()
+    _advance(a, hc["_id"], cell, qa, 1)
+    r = a.req("POST", f"/cards/{hc['_id']}/handoff",
+              {"fromStationId": qa, "integrationStationId": ship, "quantity": 1})
+    assert r.status_code == 200, r.text
+    assert a.req("GET", f"/cards/{hc['_id']}").status_code == 404   # left the system
 
 
 # ─── Partial handoff: progress, then completion ──────────────────────────────

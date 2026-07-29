@@ -169,7 +169,7 @@ where *material enters*, which was wrong: a line can have many material entry
 points and only one finished product, so pointing the ERP at an entry point
 picks an arbitrary branch and says nothing about what was ordered. The check is
 skipped while a company has no products defined, so a line can be drawn before
-its products are named. Handoffs are the mirror — a link into an integration may only come from a location whose onward production routes lead nowhere or to **storage**: ship-or-stock (QA → Warehouse *or* → ShipStation) is a legitimate end of a flow, and what the rule stops is a shipper mid-line taking parts that still have *work* to come.
+its products are named. Handoffs are the mirror — a link into an integration may only leave the **end of its own process's flow**: a station that sends work nowhere else *in that process* (and once a process hands off at a station, adding an onward production route to it in the same process is refused — the mirror rule). **Ship-or-stock is two processes, not a branch**: one pulled by the warehouse (make-to-stock, completing on arrival there) and one pulled by the shipper (make-to-order, completing at the handoff), sharing the same physical stations with each flow deterministic in its own process — the same convention as all either/or routing. Every placement judgement is scoped to the link's own process; an earlier storage carve-out that allowed both destinations inside one process smuggled in exactly the either/or the convention forbids, and has been removed.
 
 **Setup information is in the app**, not in a wiki: `domain/integrations.ts`
 carries a per-provider `setup` spec — every value to fetch from the partner,

@@ -89,31 +89,34 @@ def _would_create_cycle(edges, new_load: str, new_unload: str) -> bool:
     return False
 
 
-async def _check_boundary_placement(session, company_id, load_uuid, unload_uuid) -> None:
-    """Where an integration may attach to the flow.
+async def _check_boundary_placement(session, company_id, process_uuid,
+                                    load_uuid, unload_uuid) -> None:
+    """Where an integration may attach to a process's flow.
 
-    An order from an ERP asks for **one finished product**, so the link belongs
-    on the location where *that product is made*. Creating the order there
-    starts a pull, and the pull orders every precursor back down the graph on
-    its own.
+    Everything here is judged **within the route's own process** — the same
+    scoping every other graph judgement obeys. An earlier version read the
+    station's routes across all processes, which broke the moment two value
+    streams shared a station.
 
-    An earlier version of this required the link to land on a location with
-    nothing feeding it — where material enters. That was wrong: a line can have
-    many material entry points and only one finished product, so pointing the
-    ERP at an entry point picks one arbitrary branch and says nothing about
-    what was ordered. What matters is not where material starts but where the
-    product is finished.
+    * A **demand link** (integration → station) targets the location where the
+      ordered product is *made in this process*: creating the order there
+      starts a pull, and the pull orders every precursor by itself. (Checked
+      only once this process has products, so a line can be drawn before its
+      products are named.)
 
-    Concretely: the target must be a **product origin** — some product template
-    starts there (Settings → Templates). For a product assembled from
-    precursors that is the merge location; for one made from raw material it is
-    the queue itself, which is why both cases pass the same test.
+    * A **handoff link** (station → integration) may only leave the **end of
+      this process's flow** — a station that sends work nowhere else *in this
+      process*. Ship-or-stock is not an exception, it is two processes: one
+      pulled by the warehouse (make-to-stock, completing on arrival there) and
+      one pulled by the shipper (make-to-order, completing at the handoff).
+      The same physical QA bench carries both; each process's flow through it
+      stays deterministic. An earlier version special-cased onward routes to
+      storage instead, which smuggled an either/or into a single process —
+      exactly what the separate-process convention exists to prevent.
 
-    The check is skipped while a company still has no products defined, so a
-    line can be drawn before its products are named.
-
-    Handoffs are the mirror: finished goods leave at the end, so a link *into*
-    an integration may only come from a location that sends work nowhere else.
+    * The mirror: once a process hands off at a station, that station is the
+      end of that process's flow, so adding an onward production route to it
+      *in the same process* is refused with the same advice.
     """
     load = await session.get(StationRow, load_uuid)
     unload = await session.get(StationRow, unload_uuid)
@@ -125,13 +128,15 @@ async def _check_boundary_placement(session, company_id, load_uuid, unload_uuid)
     if load is not None and load.integrationProvider:      # a link carrying demand
         any_templates = (await session.execute(
             select(LotTemplateRow.id)
-            .where(LotTemplateRow.companyId == company_id).limit(1)
+            .where(LotTemplateRow.companyId == company_id,
+                   LotTemplateRow.processId == process_uuid).limit(1)
         )).first()
         if any_templates is None:
-            return                                          # no products yet — nothing to check
+            return                                          # no products in this process yet
         makes_a_product = (await session.execute(
             select(LotTemplateRow.id).where(
                 LotTemplateRow.companyId == company_id,
+                LotTemplateRow.processId == process_uuid,
                 LotTemplateRow.startStationId == unload_uuid).limit(1)
         )).first()
         if makes_a_product is None:
@@ -139,31 +144,40 @@ async def _check_boundary_placement(session, company_id, load_uuid, unload_uuid)
             raise HTTPException(400,
                 f"An order from {load.name} asks for a finished product, so connect it to the "
                 f"location where that product is made — creating the order there starts a pull "
-                f"that orders every precursor for you. No product is made at {where}. "
-                f"Set a product's location under Settings → Templates.")
+                f"that orders every precursor for you. No product of this process is made at "
+                f"{where}. Set a product's location under Settings → Templates.")
 
     if unload is not None and unload.integrationProvider:   # a link carrying finished goods
-        outgoing = (await session.execute(
+        onward = (await session.execute(
             select(RouteRow.unload).where(RouteRow.companyId == company_id,
+                                          RouteRow.processId == process_uuid,
                                           RouteRow.load == load_uuid)
         )).scalars().all()
-        # Ship-or-stock is a legitimate end of a flow: the same QA bench may
-        # send a finished pack to the warehouse shelf or out the door. What the
-        # rule exists to stop is a shipper hanging mid-line, taking parts that
-        # still have WORK to come — so only onward routes to a *work* location
-        # count against it. Storage is not work to come.
-        onward_work = []
-        for d in outgoing:
-            if d in bound:
-                continue
-            dst = await session.get(StationRow, d)
-            if dst is not None and not dst.isStorage:
-                onward_work.append(dst)
-        if onward_work:
+        onward_flow = [d for d in onward if d not in bound]
+        if onward_flow:
+            nxt = await session.get(StationRow, onward_flow[0])
             raise HTTPException(400,
-                f"Finished goods leave through {unload.name}, so connect it after the last "
-                f"work step. {load.name if load else 'That location'} still sends work on to "
-                f"{onward_work[0].name}.")
+                f"Finished goods leave through {unload.name}, so connect it to the last "
+                f"location of this process — {load.name if load else 'that location'} still "
+                f"sends work on to {nxt.name if nxt else 'another location'} here. To both "
+                f"ship and stock, model each destination as its own process.")
+
+    if (load is not None and not load.integrationProvider
+            and unload is not None and not unload.integrationProvider):
+        # ordinary production route: its source must not already be this
+        # process's handoff point
+        handoff = (await session.execute(
+            select(StationRow).join(RouteRow, RouteRow.unload == StationRow.id)
+            .where(RouteRow.companyId == company_id,
+                   RouteRow.processId == process_uuid,
+                   RouteRow.load == load_uuid,
+                   StationRow.integrationProvider.isnot(None)).limit(1)
+        )).scalars().first()
+        if handoff is not None:
+            raise HTTPException(400,
+                f"{load.name} already hands finished goods to {handoff.name} in this "
+                f"process, so it is the end of this flow. To also send work to "
+                f"{unload.name}, model that destination as its own process.")
 
 
 @router.get("/", response_model=List[Route])
@@ -299,7 +313,8 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
     if dup:
         raise HTTPException(400, "Route already exists between these two locations")
 
-    await _check_boundary_placement(session, ctx.company_id, load_uuid, unload_uuid)
+    await _check_boundary_placement(session, ctx.company_id, process_uuid,
+                                    load_uuid, unload_uuid)
 
     edges = await _process_edges(session, ctx.company_id, process_uuid)
     if _would_create_cycle(edges, body.load, body.unload):

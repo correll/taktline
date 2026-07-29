@@ -92,21 +92,28 @@ def _would_create_cycle(edges, new_load: str, new_unload: str) -> bool:
 async def _check_boundary_placement(session, company_id, load_uuid, unload_uuid) -> None:
     """Where an integration may attach to the flow.
 
-    Demand enters at the queues and goods leave at the end; an integration
-    wired anywhere else quietly breaks the pull. If Odoo raised demand against
-    a station in the *middle* of the line, a release would inject lots there
-    and the precursors feeding it would never be ordered — the line would run
-    short of parts with no indication why. So:
+    An order from an ERP asks for **one finished product**, so the link belongs
+    on the location where *that product is made*. Creating the order there
+    starts a pull, and the pull orders every precursor back down the graph on
+    its own.
 
-    * a **demand link** (integration → station) may only target a station with
-      no incoming production routes: a leaf queue, where material starts.
-    * a **handoff link** (station → integration) may only leave a station with
-      no outgoing production routes: the end of the flow, where goods are
-      finished.
+    An earlier version of this required the link to land on a location with
+    nothing feeding it — where material enters. That was wrong: a line can have
+    many material entry points and only one finished product, so pointing the
+    ERP at an entry point picks one arbitrary branch and says nothing about
+    what was ordered. What matters is not where material starts but where the
+    product is finished.
 
-    Attaching an integration to a leaf leaves it a leaf — boundary links are
-    excluded from every graph judgement — so this rule is about intent, and it
-    is checked here because the map is where the mistake gets made.
+    Concretely: the target must be a **product origin** — some product template
+    starts there (Settings → Templates). For a product assembled from
+    precursors that is the merge location; for one made from raw material it is
+    the queue itself, which is why both cases pass the same test.
+
+    The check is skipped while a company still has no products defined, so a
+    line can be drawn before its products are named.
+
+    Handoffs are the mirror: finished goods leave at the end, so a link *into*
+    an integration may only come from a location that sends work nowhere else.
     """
     load = await session.get(StationRow, load_uuid)
     unload = await session.get(StationRow, unload_uuid)
@@ -115,28 +122,38 @@ async def _check_boundary_placement(session, company_id, load_uuid, unload_uuid)
                                     StationRow.integrationProvider.isnot(None))
     )).scalars().all())
 
-    if load is not None and load.integrationProvider:      # demand link
-        incoming = (await session.execute(
-            select(RouteRow.load).where(RouteRow.companyId == company_id,
-                                        RouteRow.unload == unload_uuid)
-        )).scalars().all()
-        if any(src not in bound for src in incoming):
+    if load is not None and load.integrationProvider:      # a link carrying demand
+        any_templates = (await session.execute(
+            select(LotTemplateRow.id)
+            .where(LotTemplateRow.companyId == company_id).limit(1)
+        )).first()
+        if any_templates is None:
+            return                                          # no products yet — nothing to check
+        makes_a_product = (await session.execute(
+            select(LotTemplateRow.id).where(
+                LotTemplateRow.companyId == company_id,
+                LotTemplateRow.startStationId == unload_uuid).limit(1)
+        )).first()
+        if makes_a_product is None:
+            where = unload.name if unload else "that location"
             raise HTTPException(400,
-                f"{load.name} raises demand, so it can only feed a starting queue — "
-                f"{unload.name if unload else 'that location'} already receives work from "
-                "the line. Connect it to the location where material starts instead; "
-                "releasing an order there orders every precursor automatically.")
+                f"An order from {load.name} asks for a finished product, so connect it to the "
+                f"location where that product is made — creating the order there starts a pull "
+                f"that orders every precursor for you. No product is made at {where}. "
+                f"Set a product's location under Settings → Templates.")
 
-    if unload is not None and unload.integrationProvider:   # handoff link
+    if unload is not None and unload.integrationProvider:   # a link carrying finished goods
         outgoing = (await session.execute(
             select(RouteRow.unload).where(RouteRow.companyId == company_id,
                                           RouteRow.load == load_uuid)
         )).scalars().all()
-        if any(dst not in bound for dst in outgoing):
+        onward = [d for d in outgoing if d not in bound]
+        if onward:
+            nxt = await session.get(StationRow, onward[0])
             raise HTTPException(400,
-                f"{unload.name} receives finished goods, so it can only be fed from the "
-                f"end of the flow — {load.name if load else 'that location'} still sends "
-                "work onward. Connect it to the last location instead.")
+                f"Finished goods leave through {unload.name}, so connect it to the last location "
+                f"in the flow. {load.name if load else 'That location'} still sends work on to "
+                f"{nxt.name if nxt else 'another location'}.")
 
 
 @router.get("/", response_model=List[Route])

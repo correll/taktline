@@ -66,24 +66,25 @@ export default function StationIntegrationPanel({ station }: { station: Station 
       </div>
 
       <p style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.6, marginTop: size.sp3 }}>
-        {provider.blurb} <b style={{ color: color.textSecondary }}>Lots never sit here.</b> A link out
-        of this location is demand — releasing an order runs the same pull the “create precursors”
-        button does, so every precursor is ordered, not just the last part. A link into it is a
-        handoff: finished goods leave when someone sends them.
+        {provider.blurb} <b style={{ color: color.textSecondary }}>Lots never sit here.</b> An order
+        from {provider.label} asks for one finished product, so a link out of this location points at
+        the place <i>that product is made</i> — creating the order there starts a pull, and the pull
+        orders every precursor back down to the material queues on its own. A link into this location
+        is the reverse: finished goods leave through it when someone sends them.
       </p>
 
       {/* ── How it is wired ── */}
       <SectionLabel>WIRING</SectionLabel>
       {feeds.length === 0 && takes.length === 0 ? (
         <div style={{ fontSize: 11.5, color: color.warnText, lineHeight: 1.55 }}>
-          Not connected to anything yet. Draw a link from here to the location where material
-          starts (a queue with nothing feeding it), or from your last location to here for
-          handoffs.
+          Not connected to anything yet. Draw a link from here to the location where the product you
+          order is made — for an assembled product that is the location it is assembled at, not the
+          queues its parts come from. For handoffs, draw one from your last location to here.
         </div>
       ) : (
         <>
-          {feeds.map((r) => <Row key={r._id} label="Raises demand at">{name(r.unload)}</Row>)}
-          {takes.map((r) => <Row key={r._id} label="Receives from">{name(r.load)}</Row>)}
+          {feeds.map((r) => <Row key={r._id} label="Orders the product made at">{name(r.unload)}</Row>)}
+          {takes.map((r) => <Row key={r._id} label="Takes finished goods from">{name(r.load)}</Row>)}
         </>
       )}
 

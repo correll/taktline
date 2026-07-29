@@ -110,9 +110,11 @@ export default function IntegrationLocations() {
         A location bound to a partner marks where work <b style={{ color: color.textSecondary }}>enters or
         leaves the business</b>. Add one, drag it where it belongs, then draw a link between it and the
         location it exchanges with. <b style={{ color: color.textSecondary }}>Cards never sit on a
-        partner&rsquo;s node.</b> A link <i>from</i> an ERP is demand: releasing an order fires the same
-        pull the &ldquo;create precursors&rdquo; button does, and the lots appear at your queue. A link
-        <i> to</i> a partner is a handoff: the finished lot waits at your own location until someone
+        partner&rsquo;s node.</b> A link <i>from</i> an ERP points at the location where the product it
+        orders is <i>made</i> — an order there starts a pull, and the pull orders every precursor
+        down to the material queues by itself. (A line can have many places material enters but only
+        one finished product, which is why the link follows the product, not the material.) A link
+        <i>to</i> a partner is a handoff: the finished lot waits at your own location until someone
         sends it. Because these links carry no material they are ignored by merges, splits, pulls and
         the cycle check — and bound locations stay out of the heatmap, OEE and takt.
       </p>

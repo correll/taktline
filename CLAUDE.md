@@ -140,13 +140,19 @@ line, ↑ = receives finished goods), so either wiring is readable at a glance.
 Boundary nodes are also excluded from the Lots board's columns (cards never sit
 on them, so the column would be permanently empty).
 
-**Where an integration may attach** (`routes._check_boundary_placement`): a
-demand link may only target a station with **no incoming production routes** (a
-starting queue), and a handoff link may only leave one with **no outgoing
-production routes** (the end of the flow). An ERP wired mid-line would inject
-lots there and the precursors feeding it would never be ordered — the line runs
-short of parts with nothing to explain why. Attaching to a leaf leaves it a
-leaf, since boundary links are excluded from every graph judgement.
+**Where an integration may attach** (`routes._check_boundary_placement`): an
+order asks for **one finished product**, so a demand link must target the
+location where *that product is made* — a station some lot template starts at
+(Settings → Templates). For an assembled product that is the merge location;
+for one made from raw material it is the queue, so both pass the same test.
+Creating the order there starts a pull, which orders every precursor down to
+the material queues by itself. An earlier version required the link to land
+where *material enters*, which was wrong: a line can have many material entry
+points and only one finished product, so pointing the ERP at an entry point
+picks an arbitrary branch and says nothing about what was ordered. The check is
+skipped while a company has no products defined, so a line can be drawn before
+its products are named. Handoffs are the mirror — a link into an integration
+may only come from a location that sends work nowhere else.
 
 **Setup information is in the app**, not in a wiki: `domain/integrations.ts`
 carries a per-provider `setup` spec — every value to fetch from the partner,

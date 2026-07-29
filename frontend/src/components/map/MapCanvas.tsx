@@ -497,7 +497,7 @@ export default function MapCanvas({
   const ppu = mapConfig?.pixelsPerUnit ?? DEFAULT_NODE_SIZE
 
   // Which way work crosses each integration boundary, read from the drawn
-  // links: an outgoing route raises demand into the line (↓), an incoming one
+  // links: an outgoing route places orders that pull work through (↓), an incoming one
   // receives finished goods (↑). Drives the arrows on the partner's mark.
   const boundaryFlows = React.useMemo(() => {
     const flows: Record<string, 'pull' | 'out' | 'both'> = {}

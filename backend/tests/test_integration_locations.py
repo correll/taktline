@@ -237,32 +237,69 @@ def test_bound_locations_report_no_oee_or_takt(actor):
 
 # ─── Where an integration may attach ─────────────────────────────────────────
 
-def test_demand_may_only_feed_a_starting_queue(actor):
-    """An ERP wired to the middle of the line would inject lots there and the
-    precursors feeding it would never be ordered — the line runs short of parts
-    with nothing to explain why."""
+def test_demand_belongs_on_the_location_where_the_product_is_made(actor):
+    """An order asks for one finished product. Pointing the ERP at a location
+    where nothing is made says nothing about what was ordered — and a line can
+    have many material entry points but only one finished product, which is
+    why "where material starts" is the wrong test."""
     a = actor(); bootstrap_admin(a)
-    odoo, intake, cell, ship, proc, tmpl = _line(a)
-    # Cell A already receives work from Intake, so it is not where material starts.
+    odoo, intake, cell, ship, proc, tmpl = _line(a)   # product is made at Intake
     r = a.req("POST", "/routes/", {"processId": proc, "load": odoo["_id"],
                                    "unload": cell["_id"], "quantity": 1})
     assert r.status_code == 400, r.text
-    assert "starting queue" in r.json()["detail"], r.text
+    detail = r.json()["detail"]
+    assert "starts a pull" in detail, detail
+    assert "No product is made at Cell A" in detail, detail
 
 
-def test_demand_into_a_leaf_queue_is_allowed(actor):
+def test_demand_into_a_products_own_location_is_allowed(actor):
+    a = actor(); bootstrap_admin(a)
+    odoo, intake, cell, ship, proc, tmpl = _line(a)
+    # _line already draws Odoo → Intake, and the Widget template starts there.
+    routes = a.req("GET", "/routes/").json()
+    assert any(r["load"] == odoo["_id"] and r["unload"] == intake["_id"] for r in routes), routes
+
+
+def test_demand_may_target_an_assembly_location(actor):
+    """The case that motivates the rule: an assembled product is made at its
+    merge location, deep in the flow, and that is exactly where the ERP order
+    belongs — the pull walks back to the queues on its own."""
     a = actor(); bootstrap_admin(a)
     odoo = _station(a, "Odoo", integrationProvider="odoo", integrationRole="both")
-    intake = _station(a, "Intake")
+    qa, qb = _station(a, "Queue A"), _station(a, "Queue B")
+    asm = _station(a, "Assembly")
+    proc = a.req("POST", "/processes/", {"name": "Line"}).json()["_id"]
+    for load, unload in ((qa["_id"], asm["_id"]), (qb["_id"], asm["_id"])):
+        a.req("POST", "/routes/", {"processId": proc, "load": load,
+                                   "unload": unload, "quantity": 1})
+    a.req("POST", "/lot-templates/", {"name": "Widget", "processId": proc,
+                                      "startStationId": asm["_id"]})
+    r = a.req("POST", "/routes/", {"processId": proc, "load": odoo["_id"],
+                                   "unload": asm["_id"], "quantity": 1})
+    assert r.status_code == 201, r.text
+
+    # And the pull still seeds both material entry points, not the assembly.
+    tmpl = [t for t in a.req("GET", "/lot-templates/").json() if t["name"] == "Widget"][0]
+    a.req("POST", "/orders", {"productTemplateId": tmpl["_id"], "quantity": 1,
+                              "source": "odoo", "externalRef": "MO-ASM"})
+    seeded = {sid for c in a.req("GET", "/cards/").json() for sid in c["bins"]}
+    assert seeded == {qa["_id"], qb["_id"]}, seeded
+
+
+def test_a_line_with_no_products_yet_can_still_be_drawn(actor):
+    """Chicken-and-egg: the graph often exists before its products are named."""
+    a = actor(); bootstrap_admin(a)
+    odoo = _station(a, "Odoo", integrationProvider="odoo", integrationRole="both")
+    anywhere = _station(a, "Cell A")
     proc = a.req("POST", "/processes/", {"name": "Line"}).json()["_id"]
     r = a.req("POST", "/routes/", {"processId": proc, "load": odoo["_id"],
-                                   "unload": intake["_id"], "quantity": 1})
+                                   "unload": anywhere["_id"], "quantity": 1})
     assert r.status_code == 201, r.text
 
 
 def test_a_queue_fed_by_an_erp_is_still_a_leaf(actor):
-    """The boundary link must not turn a starting queue into a mid-line
-    station: a release still mints there rather than pulling further back."""
+    """The boundary link must not turn a location into a mid-line station: a
+    release still mints there rather than pulling further back."""
     a = actor(); bootstrap_admin(a)
     odoo, intake, cell, ship, proc, tmpl = _line(a)
     a.req("POST", "/orders", {"productTemplateId": tmpl["_id"], "quantity": 2,
@@ -274,11 +311,12 @@ def test_a_queue_fed_by_an_erp_is_still_a_leaf(actor):
 
 def test_handoff_may_only_leave_the_end_of_the_flow(actor):
     """Goods leave when they are finished; a shipper hanging off a mid-line
-    station would take parts that still have work to come."""
+    location would take parts that still have work to come."""
     a = actor(); bootstrap_admin(a)
     odoo, intake, cell, ship, proc, tmpl = _line(a)
-    # Intake still sends work onward to Cell A.
     r = a.req("POST", "/routes/", {"processId": proc, "load": intake["_id"],
                                    "unload": ship["_id"], "quantity": 1})
     assert r.status_code == 400, r.text
-    assert "end of the flow" in r.json()["detail"], r.text
+    detail = r.json()["detail"]
+    assert "last location in the flow" in detail, detail
+    assert "still sends work on to Cell A" in detail, detail

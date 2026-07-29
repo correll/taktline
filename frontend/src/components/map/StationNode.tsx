@@ -59,7 +59,7 @@ interface Props {
    *  data, so the node stays still rather than pulsing at an invented rate. */
   cyclePeriodMs?: number
   /** For an integration node: which ways work crosses this boundary, read
-   *  from the drawn links. 'pull' = it raises demand into the line (↓),
+   *  from the drawn links. 'pull' = orders are placed here and pull work through (↓),
    *  'out' = finished goods leave through it (↑), 'both' = ⇵. */
   boundaryFlow?: 'pull' | 'out' | 'both'
   onSelect:  () => void
@@ -224,9 +224,9 @@ export default function StationNode({
       {integration ? (
         <div
           title={`${integration.label} — ${roleLabel(station.integrationRole)}`
-                 + (boundaryFlow === 'pull' ? ' (raises demand ↓)'
+                 + (boundaryFlow === 'pull' ? ' (places orders ↓)'
                   : boundaryFlow === 'out'  ? ' (receives finished goods ↑)'
-                  : boundaryFlow === 'both' ? ' (demand ↓ · finished goods ↑)' : '')}
+                  : boundaryFlow === 'both' ? ' (places orders ↓ · finished goods ↑)' : '')}
           style={{
             flexShrink: 0,
             width: iconSize * 1.18, height: iconSize * 1.18,

@@ -396,6 +396,38 @@ def test_selected_cards_name_the_process_and_both_merges_run(actor):
     assert _at(a, g.modtest, g.lfp["proc"]) == 0   # LFP had none
 
 
+def test_unmerging_at_a_bench_with_an_erp_link_puts_nothing_on_the_partner(actor):
+    """Reassembly is where Odoo raises demand, so it has a boundary link among
+    its incoming routes. Dissolving an assembly must recreate the precursors of
+    the two *material* feeds only: read from the raw route table the demand link
+    counted as a third branch, and the unmerge minted a lot ON the Odoo node —
+    inventing a template named after it — which is the one thing an integration
+    node may never hold. The rescue path then walked that phantom onto the
+    bench, where it sat looking like a precursor nobody could merge."""
+    a = actor(); bootstrap_admin(a)
+    g = _build(a)
+    _order(a, g, g.lfp, 1, "LFP-1")
+    mods, bus = _teardown(a, g, g.lfp, "LFP-1")
+    _advance(a, mods["_id"], g.modtest, g.reasm, 6)
+    _advance(a, bus["_id"], g.busbar, g.reasm, 1)
+    r = a.req("POST", f"/merge/{g.reasm}", {"processId": g.lfp["proc"]})
+    assert r.status_code == 201, r.text
+    assembly = r.json()["createdCardId"]
+
+    r = a.req("POST", f"/cards/{assembly}/unmerge", {"stationId": g.reasm, "quantity": 1})
+    assert r.status_code == 200, r.text
+
+    made = [a.req("GET", f"/cards/{cid}").json() for cid in r.json()["createdCardIds"]]
+    assert len(made) == 2, [m["bins"] for m in made]          # not three
+    assert all(g.odoo not in m["bins"] for m in made), "a lot was minted on the ERP node"
+    assert {list(m["bins"])[0] for m in made} == {g.modtest, g.busbar}
+    assert _at(a, g.odoo) == 0
+
+    # And no template was invented at the partner to carry such a lot.
+    starts = {t["startStationId"] for t in a.req("GET", "/lot-templates/").json()}
+    assert g.odoo not in starts, "a product was provisioned at the ERP node"
+
+
 def test_a_selection_spanning_two_processes_is_refused(actor):
     a = actor(); bootstrap_admin(a)
     g = _build(a)

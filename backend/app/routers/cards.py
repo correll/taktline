@@ -278,11 +278,10 @@ async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id
 
 
 async def _is_merge_station(session, company_id, station_uuid, process_id) -> bool:
-    return (await session.execute(
-        select(func.count()).select_from(RouteRow).where(
-            RouteRow.companyId == company_id, RouteRow.unload == station_uuid,
-            RouteRow.processId == process_id)
-    )).scalar_one() >= 2
+    """Two or more *material* feeds converge here, within one process. An ERP's
+    demand link is not a feed — counted as one it turned a plain station into a
+    merge and pinned split pieces to the wrong product."""
+    return len(await _incoming_routes(session, company_id, station_uuid, process_id)) >= 2
 
 
 async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id: str,
@@ -512,12 +511,15 @@ async def _record_order_progress(session, company_id, card_row: CardRow, to_stat
         return
     if await _sink_link(session, company_id, to_uuid) is not None:
         return  # handed over explicitly, not on arrival
-    has_outgoing = (await session.execute(
-        select(RouteRow.id).where(RouteRow.companyId == company_id,
-                                  RouteRow.processId == card_row.processId,
-                                  RouteRow.load == to_uuid).limit(1)
-    )).first()
-    if has_outgoing:
+    # Onward *production* routes only: a link to a partner is a boundary, not a
+    # further step, so it must not stop this station reading as finished goods.
+    bound = await _boundary_station_ids(session, company_id)
+    onward = (await session.execute(
+        select(RouteRow.unload).where(RouteRow.companyId == company_id,
+                                      RouteRow.processId == card_row.processId,
+                                      RouteRow.load == to_uuid)
+    )).scalars().all()
+    if any(u not in bound for u in onward):
         return  # not a finished-goods location
     order = await session.get(OrderRow, card_row.orderId)
     if order is None or order.companyId != company_id or order.status in ("completed", "cancelled"):
@@ -981,11 +983,12 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
 
     # The assembly dissolves along its OWN process's feeds — a sibling process
     # sharing this station contributes no branches (and must gain no lots).
-    incoming = (await session.execute(
-        select(RouteRow).where(RouteRow.companyId == ctx.company_id,
-                               RouteRow.processId == row.processId,
-                               RouteRow.unload == station_uuid)
-    )).scalars().all()
+    # `_incoming_routes` also drops boundary links, which is what keeps this
+    # honest: an ERP's demand link is not a branch the assembly came from, and
+    # counting it minted a precursor lot ON the partner's node (provisioning a
+    # template named after it), which is the one thing an integration node may
+    # never hold.
+    incoming = await _incoming_routes(session, ctx.company_id, station_uuid, row.processId)
     if len(incoming) < 2:
         raise HTTPException(400, "Not a merge station — nothing to unmerge")
 

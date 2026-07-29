@@ -12,7 +12,7 @@ export interface TourStep {
   id: string
   title: string
   /** A function when the wording depends on what the user actually built —
-   *  their own location names, or what is still missing. */
+   *  their own station names, or what is still missing. */
   body: string | ((c: TourCtx) => string)
   target?: string                 // data-tour attribute to highlight
   isDone?: (c: TourCtx) => boolean // auto-advance when true (omit for info steps)
@@ -36,9 +36,9 @@ const SUGGESTED_COUNT = 5
 
 interface Shape {
   routeCount: number
-  /** A location two or more routes arrive at — parts coming together. */
+  /** A station two or more routes arrive at — parts coming together. */
   merge?: { _id: string; name: string }
-  /** A location with arrivals but no departures — finished goods stop here. */
+  /** A station with arrivals but no departures — finished goods stop here. */
   warehouse?: { _id: string; name: string }
 }
 
@@ -69,35 +69,35 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'welcome',
     title: 'Build your first line',
-    body: "We'll draw a tiny but complete line right on the map — two parts (Steel and Motor) that merge into an Assembly, flow on to Testing, and finish in a Warehouse — then run a lot through it. Follow the highlights; the tour advances on its own as you go. It takes about five minutes. Press Next to begin.",
+    body: "We'll draw a tiny but complete line right on the floor plan — two parts (Steel and Motor) that merge into an Assembly, flow on to Testing, and finish in a Warehouse — then run a lot through it. Follow the highlights; the tour advances on its own as you go. It takes about five minutes. Press Next to begin.",
   },
   {
     id: 'open-map',
-    title: 'Open the map',
-    body: "We'll lay the line out on the map — the floor where your locations live. Open the Map view from the top bar.",
+    title: 'Open the floor plan',
+    body: "We'll lay the line out on the floor plan — the floor where your stations live. Open the Floor plan view from the top bar.",
     target: 'nav-map',
     isDone: (c) => c.pathname === '/map',
   },
   {
-    id: 'map-add-locations',
-    title: 'Drop five locations',
+    id: 'map-add-stations',
+    title: 'Drop five stations',
     body: (c) => {
       const left = SUGGESTED_COUNT - c.stations.length
-      return "Locations are the physical places on your floor where work happens. Click the location tool (the pin, top-left), then click the map to drop one — a dialog opens so you can name it. Add five. We'll call ours Steel, Motor, Assembly, Testing and Warehouse, but the names are yours — use your own real stations if you prefer, the tour follows along either way. Drag any location to reposition it."
+      return "Stations are the physical places on your floor where work happens. Click the station tool (the pin, top-left), then click the floor plan to drop one — a dialog opens so you can name it. Add five. We'll call ours Steel, Motor, Assembly, Testing and Warehouse, but the names are yours — use your own real stations if you prefer, the tour follows along either way. Drag any station to reposition it."
         + (left > 0 ? ` ${left} to go.` : "")
     },
-    target: 'map-tool-location',
+    target: 'map-tool-station',
     isDone: (c) => c.stations.length >= SUGGESTED_COUNT,
   },
   {
     id: 'map-add-routes',
     title: 'Connect them into a flow',
     body: (c) => {
-      const base = "Now the route tool (the connector, top-left). Click a source location, then a target, to draw an arrow between them — that's a step in the flow. Wire four, following our example: Steel → Assembly, Motor → Assembly, Assembly → Testing, Testing → Warehouse. What matters is the shape, not the names: two routes arriving at one location make it a merge — where parts come together, and a last location with no outgoing route becomes your finished-goods store. (Click a route to delete it; Esc cancels.)"
+      const base = "Now the route tool (the connector, top-left). Click a source station, then a target, to draw an arrow between them — that's a step in the flow. Wire four, following our example: Steel → Assembly, Motor → Assembly, Assembly → Testing, Testing → Warehouse. What matters is the shape, not the names: two routes arriving at one station make it a merge — where parts come together, and a last station with no outgoing route becomes your finished-goods store. (Click a route to delete it; Esc cancels.)"
       const { routeCount, merge, warehouse } = shapeOf(c)
       const missing: string[] = []
-      if (!merge) missing.push("two routes arriving at the same location, to make a merge")
-      if (!warehouse) missing.push("a final location with no outgoing route")
+      if (!merge) missing.push("two routes arriving at the same station, to make a merge")
+      if (!warehouse) missing.push("a final station with no outgoing route")
       if (!missing.length && routeCount < 4) missing.push(`${4 - routeCount} more route(s)`)
       return missing.length ? `${base}\n\nStill needed: ${missing.join("; ")}.` : base
     },
@@ -107,7 +107,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'see-in-settings',
     title: 'See & fine-tune it in Settings',
-    body: "Everything you just drew is also in Settings — open it. Your Locations, Process, and Routes are here as editable lists, and it's where you add lot templates, rename things, or upload a floor-plan image under Settings → Map. (On the map you can also right-click a location to edit or delete it.)",
+    body: "Everything you just drew is also in Settings — open it. Your Stations, Process, and Routes are here as editable lists, and it's where you add lot templates, rename things, or upload a floor-plan image under Settings → Floor plan. (On the floor plan you can also right-click a station to edit or delete it.)",
     target: 'nav-settings',
     isDone: (c) => c.pathname === '/settings',
   },
@@ -116,7 +116,7 @@ export const TOUR_STEPS: TourStep[] = [
     title: 'See your board',
     body: (c) => {
       const { merge, warehouse } = shapeOf(c)
-      return `Open the Lots board from the top bar. ${merge?.name ?? 'Your merge station'} now appears as a merge of the two parts feeding it, flowing on to ${warehouse?.name ?? 'the warehouse'} — a complete little line, one column per location.`
+      return `Open the Lots board from the top bar. ${merge?.name ?? 'Your merge station'} now appears as a merge of the two parts feeding it, flowing on to ${warehouse?.name ?? 'the warehouse'} — a complete little line, one column per station.`
     },
     target: 'nav-lots',
     isDone: (c) => c.pathname === '/lots',

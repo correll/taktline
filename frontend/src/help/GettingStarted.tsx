@@ -28,7 +28,7 @@ export function GettingStarted() {
         </div>
         <h2 style={{ color: color.textPrimary, fontSize: 20, margin: 0 }}>Welcome to Taktline</h2>
         <p style={{ color: color.textSecondary, fontSize: 14, lineHeight: 1.6, marginTop: size.sp3 }}>
-          Taktline models your production as a living graph — locations, routes, and lot cards that flow
+          Taktline models your production as a living graph — stations, routes, and lot cards that flow
           through them. {isSuperAdmin
             ? 'New here? Take a five-minute guided tour and build your first line end to end, or browse the manual.'
             : 'Browse the manual to learn how the board and operator views work.'}

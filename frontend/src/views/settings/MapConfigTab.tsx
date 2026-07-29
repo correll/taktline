@@ -114,7 +114,7 @@ export default function MapConfigTab() {
         gap:         size.sp5,
       }}>
         <div style={{ fontSize: 11, fontFamily: font.mono, color: color.textDim, letterSpacing: '0.1em' }}>
-          MAP CONFIGURATION
+          FLOOR PLAN
         </div>
 
         {/* Upload button */}
@@ -189,7 +189,7 @@ export default function MapConfigTab() {
               style={{ ...inputStyle, fontFamily: font.mono }}
             />
             <span style={{ fontSize: 10, color: color.textDim }}>
-              Side length of each location square on the map (in {unit}).
+              Side length of each station square on the map (in {unit}).
               Currently {(parseFloat(stationSizeUnits) * parseFloat(pixelsPerUnit) || 0).toFixed(0)} px.
             </span>
           </label>
@@ -214,12 +214,6 @@ export default function MapConfigTab() {
             Upload a floor plan image to see it here as you adjust the scale.
           </div>
         )}
-
-        {/* Export/import above the danger zone: shipping a line to a file is
-            everyday work; deleting everything is not. Burying the file section
-            underneath the delete button hid it below the fold — found the hard
-            way, by its intended user asking where it was. */}
-        <MapFileSection onError={setError} />
 
         {/* ── Clear map data ── */}
         <div style={{
@@ -249,103 +243,6 @@ export default function MapConfigTab() {
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-// ─── The line as a file ──────────────────────────────────────────────────────
-
-/** Export the whole line definition — stations, processes, routes, products —
- *  as JSON, and import one back, replacing the current line.
- *
- *  The file is data, never instructions: the server re-validates everything
- *  through the same rules the editor uses (strict schema, allow-listed enums,
- *  re-minted ids, cycle/placement/weight checks), so nothing pasted into a
- *  file can execute or reach past this company. Lots, sessions, orders and
- *  the floor-plan image are deliberately not in the file — they are state or
- *  media, not the map. */
-function MapFileSection({ onError }: { onError: (e: string | null) => void }) {
-  const [busy, setBusy] = useState<'export' | 'import' | null>(null)
-  const [summary, setSummary] = useState<string | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  const doExport = async () => {
-    setBusy('export'); onError(null)
-    try {
-      const doc = await client.get('/map-io/export')
-      const blob = new Blob([JSON.stringify(doc, null, 2)],
-                            { type: 'application/json' })
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = 'taktline-map.json'
-      a.click()
-      URL.revokeObjectURL(a.href)
-    } catch (e) { onError(String((e as Error)?.message ?? e)) }
-    finally { setBusy(null) }
-  }
-
-  const doImport = async (file: File) => {
-    onError(null); setSummary(null)
-    let doc: unknown
-    try {
-      doc = JSON.parse(await file.text())
-    } catch {
-      onError('That file is not valid JSON.')
-      return
-    }
-    if (!confirm(
-      'Import this map?\n\nThis REPLACES the current line: all locations, '
-      + 'processes, routes, products and lots. The floor-plan image and '
-      + 'statistics history are kept. This cannot be undone.')) return
-    setBusy('import')
-    try {
-      const d = await client.post('/map-io/import', doc) as {
-        stations: number; processes: number; templates: number; routes: number }
-      setSummary(`Imported: ${d.stations} locations, ${d.processes} processes, `
-                 + `${d.templates} products, ${d.routes} routes.`)
-      // Everything on screen refers to the old line — reload rather than
-      // chase every store.
-      setTimeout(() => window.location.reload(), 1200)
-    } catch (e) {
-      // client unwraps FastAPI's detail into the Error message already.
-      onError(String((e as Error)?.message ?? e).slice(0, 500))
-    } finally {
-      setBusy(null)
-      if (fileRef.current) fileRef.current.value = ''
-    }
-  }
-
-  return (
-    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${color.border}` }}>
-      <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace',
-                    letterSpacing: '0.08em', color: color.textDim, marginBottom: 6 }}>
-        MAP AS A FILE
-      </div>
-      <p style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.55, margin: '0 0 10px' }}>
-        The whole line — locations, processes, routes, products — as a JSON file you can
-        back up, share, or edit. Importing <b style={{ color: color.textSecondary }}>replaces
-        the current line</b> (lots included); the floor-plan image and history stay. Every
-        file is re-validated by the server exactly like edits made here, so a file can
-        describe a map and nothing else.
-      </p>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={doExport} disabled={busy !== null}
-                style={{ ...secondaryBtn, flex: 1, justifyContent: 'center' }}>
-          {busy === 'export' ? 'Exporting…' : '⬇ Export JSON'}
-        </button>
-        <button onClick={() => fileRef.current?.click()} disabled={busy !== null}
-                style={{ ...secondaryBtn, flex: 1, justifyContent: 'center' }}>
-          {busy === 'import' ? 'Importing…' : '⬆ Import JSON'}
-        </button>
-        <input ref={fileRef} type="file" accept=".json,application/json"
-               style={{ display: 'none' }}
-               onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f) }} />
-      </div>
-      {summary && (
-        <div style={{ fontSize: 12, color: color.statusRunning, marginTop: 8 }}>
-          {summary} Reloading…
-        </div>
-      )}
     </div>
   )
 }

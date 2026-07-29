@@ -109,7 +109,7 @@ function MapToolbar({ tool, setTool, processList, routeProcessId, setRouteProces
       <div style={{ display: 'flex', gap: 4, background: color.glass,
                     border: `1px solid ${color.border}`, borderRadius: 8, padding: 4 }}>
         {btn('select', MousePointer2, 'Select / pan')}
-        {btn('location', MapPin, 'Add location — click the map to place one')}
+        {btn('station', MapPin, 'Add station — click the map to place one')}
         {btn('route', Waypoints, 'Add route — click source then target')}
       </div>
       {tool === 'route' && (

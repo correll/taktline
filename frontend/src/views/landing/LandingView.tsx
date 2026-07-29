@@ -197,7 +197,7 @@ const STEPS = [
   {
     Icon: Map,
     title: 'Map your value stream in minutes',
-    body: 'Draw your locations and routes right on the floor plan — the same graph your material actually follows, splits and merges included.',
+    body: 'Draw your stations and routes right on the floor plan — the same graph your material actually follows, splits and merges included.',
   },
   {
     Icon: TabletSmartphone,
@@ -467,7 +467,7 @@ function FromTheBook() {
 
 const FAQ: { q: string; a: React.ReactNode }[] = [
   { q: 'How long until it is running?',
-    a: <>Minutes. Draw your locations and routes on the map and the board is live —
+    a: <>Minutes. Draw your stations and routes on the floor plan and the board is live —
         there is nothing to print or install. The five-minute tutorial builds a line end
         to end so you can see the shape of it before touching your own.</> },
   { q: 'Is my data mine?',

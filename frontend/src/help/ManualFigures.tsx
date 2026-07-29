@@ -46,7 +46,7 @@ export function FigureFlow() {
     return w
   })
   return (
-    <Figure caption={<>The flow as a graph: locations are nodes, routes are directed edges, and lot
+    <Figure caption={<>The flow as a graph: stations are nodes, routes are directed edges, and lot
       cards (the green counts) travel along them from source to warehouse.</>}>
       <FlowScene stations={FLOW_STATIONS} edges={FLOW_EDGES} wip={wip}
                  worldW={774} worldH={172} node={92} showHeat={false} />

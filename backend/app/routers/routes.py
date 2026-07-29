@@ -140,12 +140,12 @@ async def _check_boundary_placement(session, company_id, process_uuid,
                 LotTemplateRow.startStationId == unload_uuid).limit(1)
         )).first()
         if makes_a_product is None:
-            where = unload.name if unload else "that location"
+            where = unload.name if unload else "that station"
             raise HTTPException(400,
                 f"An order from {load.name} asks for a finished product, so connect it to the "
-                f"location where that product is made — creating the order there starts a pull "
+                f"station where that product is made — creating the order there starts a pull "
                 f"that orders every precursor for you. No product of this process is made at "
-                f"{where}. Set a product's location under Settings → Templates.")
+                f"{where}. Set a product's station under Settings → Templates.")
 
     if unload is not None and unload.integrationProvider:   # a link carrying finished goods
         onward = (await session.execute(
@@ -158,8 +158,8 @@ async def _check_boundary_placement(session, company_id, process_uuid,
             nxt = await session.get(StationRow, onward_flow[0])
             raise HTTPException(400,
                 f"Finished goods leave through {unload.name}, so connect it to the last "
-                f"location of this process — {load.name if load else 'that location'} still "
-                f"sends work on to {nxt.name if nxt else 'another location'} here. To both "
+                f"station of this process — {load.name if load else 'that station'} still "
+                f"sends work on to {nxt.name if nxt else 'another station'} here. To both "
                 f"ship and stock, model each destination as its own process.")
 
     if (load is not None and not load.integrationProvider
@@ -311,7 +311,7 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
         )
     )).scalar_one_or_none()
     if dup:
-        raise HTTPException(400, "Route already exists between these two locations")
+        raise HTTPException(400, "Route already exists between these two stations")
 
     await _check_boundary_placement(session, ctx.company_id, process_uuid,
                                     load_uuid, unload_uuid)
@@ -353,7 +353,7 @@ async def update_route(route_id: str, body: RouteUpdate,
     new_load = body.load or str(row.load)
     new_unload = body.unload or str(row.unload)
     if new_load == new_unload:
-        raise HTTPException(400, "A route cannot connect a location to itself")
+        raise HTTPException(400, "A route cannot connect a station to itself")
 
     if body.load or body.unload:
         ids = [_req_fk(new_load), _req_fk(new_unload)]

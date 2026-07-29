@@ -29,7 +29,7 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
       <div className="tk-modal-card" onPointerDown={(e) => e.stopPropagation()} style={{ background: color.bgPanel,
         border: `1px solid ${color.border}`, borderRadius: 8, padding: 20, width: 360,
         display: 'flex', flexDirection: 'column', gap: 14, boxShadow: 'var(--tk-shadow-lg)' }}>
-        <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>Edit location</div>
+        <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>Edit station</div>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span style={LABEL}>NAME</span>
@@ -47,7 +47,7 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
             <b style={{ color: color.textSecondary }}>Storage, not work</b> — finished goods rest
             here by design. Kept out of the heatmap (which it would otherwise flatten), reports no
             OEE or cycle time, and never flagged for accumulating. Leave this off for anywhere work
-            actually happens, including the last location on a line.
+            actually happens, including the last station on a line.
           </span>
         </label>
 

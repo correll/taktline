@@ -278,7 +278,7 @@ function CompaniesSection({ companies, onChanged }: {
             </div>
             <p style={{ fontSize: 12.5, color: color.textSecondary, margin: 0, lineHeight: 1.5 }}>
               This permanently removes the company and everything in it — {deleting.members} member{deleting.members !== 1 && 's'},
-              {' '}{deleting.stations} locations, {deleting.cards} lots. Type the company's exact name to confirm.
+              {' '}{deleting.stations} stations, {deleting.cards} lots. Type the company's exact name to confirm.
             </p>
             <input
               value={confirmName} onChange={(e) => setConfirmName(e.target.value)}

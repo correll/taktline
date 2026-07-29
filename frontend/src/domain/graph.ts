@@ -62,7 +62,7 @@ export function sourceNodes(edges: Edge[]): Set<string> {
 }
 
 // Station IDs with 2+ incoming edges (valid merge / assembly stations).
-/** Locations where two or more feeds converge **within one process**.
+/** Stations where two or more feeds converge **within one process**.
  *
  *  The scoping is the whole point. A bench two lines happen to share has two
  *  incoming routes in total but one per process, and it assembles nothing —

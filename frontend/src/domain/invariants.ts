@@ -40,9 +40,9 @@ export function assertCardBinConservation(card: {
   )
 }
 
-// Route: a location cannot route to itself.
+// Route: a station cannot route to itself.
 export function assertNoSelfLoop(load: string, unload: string): void {
-  assert(load !== unload, `route self-loop: location ${load} routes to itself`)
+  assert(load !== unload, `route self-loop: station ${load} routes to itself`)
 }
 
 // Route: quantity must be at least 1.

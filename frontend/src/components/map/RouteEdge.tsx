@@ -35,7 +35,7 @@ interface Props {
   /** The colour of the process this route belongs to. */
   tint?: number
   /** Perpendicular shift in world px. Two processes routing between the same
-   *  pair of locations would otherwise be drawn one exactly on top of the
+   *  pair of stations would otherwise be drawn one exactly on top of the
    *  other, so the second line — and the fact that there are two — would be
    *  invisible. Shifting them apart is the only cue that survives, since a
    *  colour you cannot see tells you nothing. */

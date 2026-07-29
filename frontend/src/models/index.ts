@@ -22,13 +22,13 @@ export interface Station {
   description: string
   color: string | null
   icon:  string | null
-  /** Bound integration partner — set when this location is where work enters
+  /** Bound integration partner — set when this station is where work enters
    *  or leaves the business rather than a place manufacturing happens. */
   integrationProvider: string | null
   integrationRole: 'source' | 'sink' | 'both' | null
   /** Storage rather than work — finished goods rest here by design, so it is
    *  kept out of the heatmap, reports no OEE, and is never flagged for
-   *  accumulating. A property of the location, not a shape in the graph: a
+   *  accumulating. A property of the station, not a shape in the graph: a
    *  final test bench is a leaf that very much does work. */
   isStorage: boolean
   createdAt: string

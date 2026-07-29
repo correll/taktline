@@ -44,7 +44,7 @@ const getIcon = getStationIcon
 
 // ─── Station node (HTML overlay) ─────────────────────────────────────────────
 
-export type MapTool = 'select' | 'location' | 'route'
+export type MapTool = 'select' | 'station' | 'route'
 
 interface Props {
   station:   Station
@@ -136,7 +136,7 @@ export default function StationNode({
 
   if (screenSize < 6) return null
 
-  // A bound location wears its partner's colour unless someone has picked one
+  // A bound station wears its partner's colour unless someone has picked one
   // deliberately: on a map of the shop floor it should read as a foreign
   // object, because that is exactly what it is.
   const integration  = integrationProvider(station.integrationProvider)
@@ -218,7 +218,7 @@ export default function StationNode({
         borderRadius: `${Math.max(3, screenSize * 0.08)}px ${Math.max(3, screenSize * 0.08)}px 0 0`,
       }} />
 
-      {/* Icon — or the partner's mark for an integration location. Letters
+      {/* Icon — or the partner's mark for an integration station. Letters
           rather than logos: partner artwork is trademarked, unreadable at this
           size, and would need re-licensing at every rebrand. */}
       {integration ? (

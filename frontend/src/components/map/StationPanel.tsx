@@ -97,7 +97,7 @@ export default function StationPanel({ stationId, onClose }: Props) {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: size.sp4, display: 'flex', flexDirection: 'column', gap: size.sp4 }}>
-        {/* An integration location holds no lots — the useful questions are
+        {/* An integration station holds no lots — the useful questions are
             about wiring and setup, so it gets its own panel entirely. */}
         {isIntegrationStation(station) ? (
           <StationIntegrationPanel station={station} />
@@ -136,7 +136,7 @@ export default function StationPanel({ stationId, onClose }: Props) {
 
           {!hasAdapter && (
             <div style={{ fontSize: 11, color: color.textDim, fontStyle: 'italic' }}>
-              No hardware adapter configured for this location
+              No hardware adapter configured for this station
             </div>
           )}
         </Section>
@@ -180,7 +180,7 @@ export default function StationPanel({ stationId, onClose }: Props) {
         >
           {cards.length === 0 ? (
             <div style={{ fontSize: 11, color: color.textDim }}>
-              No lots at this location — press + to create one
+              No lots at this station — press + to create one
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>

@@ -516,7 +516,7 @@ async def pull_for_merge(station_id: str, body: PullRequest,
     await _assert_station(session, station_uuid, ctx.company_id)
     incoming = await _incoming_routes(session, ctx.company_id, station_uuid)
     if len(incoming) < 1:
-        raise HTTPException(400, "This location has no upstream sources to pull from")
+        raise HTTPException(400, "This station has no upstream sources to pull from")
 
     # The pull walks ONE process's upstream chain. On a shared station prefer
     # the process that actually merges here (most feeds), deterministically.

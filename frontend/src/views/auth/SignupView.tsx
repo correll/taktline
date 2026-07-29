@@ -94,7 +94,7 @@ export default function SignupView() {
                 </span>
                 <span style={{ display: 'block', fontSize: 12.5, color: color.textSecondary, marginTop: 2 }}>
                   {stationCount > 0
-                    ? `${stationCount} location${stationCount !== 1 ? 's' : ''} and everything on the board moves to this account.`
+                    ? `${stationCount} station${stationCount !== 1 ? 's' : ''} and everything on the board moves to this account.`
                     : 'Everything on the board moves to this account.'}
                   {' '}Leave it unticked to start clean.
                 </span>

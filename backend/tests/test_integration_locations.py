@@ -322,5 +322,5 @@ def test_handoff_may_only_leave_the_end_of_the_flow(actor):
                                    "unload": ship["_id"], "quantity": 1})
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
-    assert "last location of this process" in detail, detail
+    assert "last station of this process" in detail, detail
     assert "still sends work on to Cell A" in detail, detail

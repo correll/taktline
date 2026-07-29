@@ -127,14 +127,14 @@ export default function StatisticsView() {
           <KpiTile label="Total Lots"    value={liveStats.totalLots}  />
           <KpiTile label="Total Units"   value={liveStats.totalUnits} />
           <KpiTile label="Flagged"       value={liveStats.flagged}    accent={liveStats.flagged > 0 ? color.statusWarning : undefined} />
-          <KpiTile label="Locations"     value={stationList.length}   />
+          <KpiTile label="Stations"     value={stationList.length}   />
           <KpiTile label="Processes"     value={Object.values(processes).length} />
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: size.sp6 }}>
 
           {/* Station queue depth */}
-          <Panel label="LOTS BY LOCATION">
+          <Panel label="LOTS BY STATION">
             {stationList.length === 0 ? (
               <Empty />
             ) : (
@@ -167,7 +167,7 @@ export default function StatisticsView() {
           </Panel>
 
           {/* Machine status summary */}
-          <Panel label="LOCATION STATUS">
+          <Panel label="STATION STATUS">
             {Object.values(machines).length === 0 ? (
               <Empty msg="No machines with adapters" />
             ) : (
@@ -210,8 +210,8 @@ export default function StatisticsView() {
             )}
           </Panel>
 
-          {/* Cycle-time / OEE by location */}
-          <Panel label="CYCLE TIME, LINE CYCLE TIME & OEE BY LOCATION" wide>
+          {/* Cycle-time / OEE by station */}
+          <Panel label="CYCLE TIME, LINE CYCLE TIME & OEE BY STATION" wide>
             {stationList.length === 0 ? (
               <Empty />
             ) : (
@@ -331,10 +331,10 @@ function CycleOeeTable({
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${color.border}` }}>
-            {['Location', 'Sessions', 'Units', 'Working time', 'Cycle time', 'Line cycle time', 'OEE'].map((h) => (
+            {['Station', 'Sessions', 'Units', 'Working time', 'Cycle time', 'Line cycle time', 'OEE'].map((h) => (
               <th key={h} style={{
                 ...colStyle,
-                textAlign:     h === 'Location' ? 'left' : 'right',
+                textAlign:     h === 'Station' ? 'left' : 'right',
                 fontSize:      9,
                 letterSpacing: '0.1em',
                 color:         color.textDim,

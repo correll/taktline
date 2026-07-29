@@ -5,9 +5,9 @@ import { ordersApi, type ProductionOrder, type OutboxEvent } from '../../api/int
 import { integrationProvider, roleLabel } from '../../domain/integrations'
 import { color, font, size } from '../../theme/tokens'
 
-/** What a selected integration location shows instead of lots.
+/** What a selected integration station shows instead of lots.
  *
- *  An ordinary location answers "what is here?" — this one has nothing here,
+ *  An ordinary station answers "what is here?" — this one has nothing here,
  *  ever. The useful questions are different: is it wired to the right place,
  *  what do I still have to fetch from the partner, and is anything actually
  *  flowing? The setup list is the part the product was missing entirely:
@@ -67,9 +67,9 @@ export default function StationIntegrationPanel({ station }: { station: Station 
 
       <p style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.6, marginTop: size.sp3 }}>
         {provider.blurb} <b style={{ color: color.textSecondary }}>Lots never sit here.</b> An order
-        from {provider.label} asks for one finished product, so a link out of this location points at
+        from {provider.label} asks for one finished product, so a link out of this station points at
         the place <i>that product is made</i> — creating the order there starts a pull, and the pull
-        orders every precursor back down to the material queues on its own. A link into this location
+        orders every precursor back down to the material queues on its own. A link into this station
         is the reverse: finished goods leave through it when someone sends them.
       </p>
 
@@ -77,9 +77,9 @@ export default function StationIntegrationPanel({ station }: { station: Station 
       <SectionLabel>WIRING</SectionLabel>
       {feeds.length === 0 && takes.length === 0 ? (
         <div style={{ fontSize: 11.5, color: color.warnText, lineHeight: 1.55 }}>
-          Not connected to anything yet. Draw a link from here to the location where the product you
-          order is made — for an assembled product that is the location it is assembled at, not the
-          queues its parts come from. For handoffs, draw one from your last location to here.
+          Not connected to anything yet. Draw a link from here to the station where the product you
+          order is made — for an assembled product that is the station it is assembled at, not the
+          queues its parts come from. For handoffs, draw one from your last station to here.
         </div>
       ) : (
         <>

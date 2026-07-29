@@ -39,15 +39,15 @@ function formatElapsed(totalSeconds: number): string {
 }
 
 // ─── Flow ─────────────────────────────────────────────────────────────────────
-// 1. pick-location  → pick your station
+// 1. pick-station  → pick your station
 // 2. pick-lot       → see lots at that station, tap one
 // 3. working        → lot selected + START button → timer running → STOP button
 // 4. done           → timer shows final time + MOVE button
 
-type Phase = 'pick-location' | 'pick-lot' | 'working' | 'done'
+type Phase = 'pick-station' | 'pick-lot' | 'working' | 'done'
 
 export default function OperatorView() {
-  const [phase,         setPhase]         = useState<Phase>('pick-location')
+  const [phase,         setPhase]         = useState<Phase>('pick-station')
   const [stationId,     setStationId]     = useState<string | null>(null)
   const [card,          setCard]          = useState<Card | null>(null)
   const [session,       setSession]       = useState<WorkSession | null>(null)
@@ -109,7 +109,7 @@ export default function OperatorView() {
   }, [scanned, upsertCard])
 
   const reset = useCallback(() => {
-    setPhase('pick-location')
+    setPhase('pick-station')
     setStationId(null)
     setCard(null)
     setSession(null)
@@ -263,13 +263,13 @@ export default function OperatorView() {
           }}>
           <ScanLine size={13} /> Scan
         </button>
-        {phase !== 'pick-location' && (
+        {phase !== 'pick-station' && (
           <button onClick={reset} style={{
             background: 'none',
             border: `1px solid ${color.border}`, borderRadius: size.radius,
             color: color.textSecondary, cursor: 'pointer', fontSize: 11, padding: '3px 10px',
           }}>
-            ← Locations
+            ← Stations
           </button>
         )}
       </div>
@@ -296,7 +296,7 @@ export default function OperatorView() {
         )}
         {scanned && <ScanConfirm scanned={scanned} onConfirm={confirmScan}
                                  onCancel={() => setScanned(null)} />}
-        {phase === 'pick-location' && (
+        {phase === 'pick-station' && (
           <LocationPicker onSelect={selectLocation} mergeNodeSet={mergeNodeSet} />
         )}
         {phase === 'pick-lot' && stationId && (
@@ -340,7 +340,7 @@ export default function OperatorView() {
   )
 }
 
-// ─── Phase 1: Pick a location ─────────────────────────────────────────────────
+// ─── Phase 1: Pick a station ─────────────────────────────────────────────────
 
 function LocationPicker({
   onSelect, mergeNodeSet,
@@ -384,14 +384,14 @@ function LocationPicker({
 
   if (list.length === 0) return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 300, gap: 12 }}>
-      <span style={{ fontFamily: font.mono, fontSize: 12, color: color.textDim, letterSpacing: '0.1em' }}>NO LOCATIONS CONFIGURED</span>
+      <span style={{ fontFamily: font.mono, fontSize: 12, color: color.textDim, letterSpacing: '0.1em' }}>NO STATIONS CONFIGURED</span>
     </div>
   )
 
   return (
     <div>
       <div style={{ fontSize: 11, fontFamily: font.mono, color: color.textDim, letterSpacing: '0.1em', marginBottom: size.sp4 }}>
-        SELECT YOUR LOCATION
+        SELECT YOUR STATION
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: size.sp3 }}>
         {list.map((s) => {
@@ -637,7 +637,7 @@ function LotPicker({
           }}>
             {isMergeStation
               ? 'No assemblies ready — waiting for precursors'
-              : 'No lots at this location'}
+              : 'No lots at this station'}
           </div>
         )}
       </div>
@@ -744,7 +744,7 @@ function LotPicker({
             fontSize: 9, fontFamily: font.mono, color: color.textDim,
             letterSpacing: '0.1em', marginBottom: size.sp2,
           }}>
-            AT FEEDING LOCATIONS — TAP TO GO THERE
+            AT FEEDING STATIONS — TAP TO GO THERE
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
             {feedingLots.map(({ card: c, feedStationId }) => {
@@ -1032,7 +1032,7 @@ function DonePanel({
     return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
   }, [branches, nextStation])
 
-  // Where this location hands finished goods to the outside world. The link is
+  // Where this station hands finished goods to the outside world. The link is
   // drawn on the map but carries no material: sending is an act someone
   // performs when the goods are actually ready to leave, not something that
   // happens because a card arrived somewhere.

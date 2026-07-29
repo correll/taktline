@@ -94,7 +94,7 @@ export function ManualContent() {
     <>
           <P>
             Taktline is a digital <B>Kanban / Manufacturing Execution System</B>. It models your
-            production as a <B>graph</B>: locations are nodes, transfers between them are edges, and
+            production as a <B>graph</B>: stations are nodes, transfers between them are edges, and
             physical work travels through the graph as <B>lot cards</B>. This manual uses a running
             example — assembling an <B>e-bike</B> — to explain the ideas.
           </P>
@@ -152,7 +152,7 @@ export function ManualContent() {
             sequence visible: which stations work adds value at, how material travels between them, and
             where it sits idle. On a real floor the stream spans machines, people, and buildings over
             days — far too much to see from any one spot. That's why mapping it, and getting live data
-            onto the map, is the first step of every lean effort: you cannot improve what you cannot
+            onto the floor plan, is the first step of every lean effort: you cannot improve what you cannot
             see. Once mapped, the stream tells you where to apply continuous improvement, where a
             sensor would pay off, and where (if anywhere) automation belongs — in that order.
           </P>
@@ -229,7 +229,7 @@ export function ManualContent() {
           </P>
           <H3>Map the value stream — literally</H3>
           <ul>
-            <LI>The <B>Map view</B> <i>is</i> your value stream map: stations on your real floor plan,
+            <LI>The <B>Floor plan view</B> <i>is</i> your value stream map: stations on your real floor plan,
               routes showing how work flows, drawn to scale. The <B>heatmap</B> shows where WIP
               concentrates — a red station is your bottleneck candidate.</LI>
             <LI>Because station positions are to scale, the <B>transport</B> statistic measures real
@@ -282,7 +282,7 @@ export function ManualContent() {
               week of real data the bottleneck is usually not where everyone believed it was.</LI>
             <LI>Make one small change at a time (<i>kata</i>), then watch the heatmap, takt and OEE
               respond. The statistics are your before/after evidence.</LI>
-            <LI>Use the Map view on a tablet during <B>genba walks</B> — the live picture in hand,
+            <LI>Use the Floor plan view on a tablet during <B>genba walks</B> — the live picture in hand,
               at the actual place.</LI>
             <LI>Considering a new machine or robot? Do lean first: the savings from layout and flow
               come free, and the value stream data then tells you exactly what the machine must do —
@@ -291,26 +291,26 @@ export function ManualContent() {
 
           <H2>Core concepts</H2>
           <ul>
-            <LI><B>Location (station)</B> — a place where work happens: a node in the graph. E.g.
+            <LI><B>Station (station)</B> — a place where work happens: a node in the graph. E.g.
               <i> Steel Inventory, Frame Welding, Bike Testing</i>.</LI>
-            <LI><B>Route</B> — a directed edge from one location to another. Its <B>quantity</B> is how
+            <LI><B>Route</B> — a directed edge from one station to another. Its <B>quantity</B> is how
               many upstream units are consumed per downstream unit (e.g. an assembly needs 3 of part B).</LI>
             <LI><B>Process</B> — a named collection of routes forming a <B>directed acyclic graph</B>.
               Cycles are rejected so the board can be laid out in flow order.</LI>
-            <LI><B>Queue / source</B> — a location with no incoming routes. New lots originate here from a
+            <LI><B>Queue / source</B> — a station with no incoming routes. New lots originate here from a
               lot template.</LI>
-            <LI><B>Merge station</B> — a location with two or more incoming routes. Precursor lots are
+            <LI><B>Merge station</B> — a station with two or more incoming routes. Precursor lots are
               consumed there and a new assembly lot is created; each route's weight is how many
               upstream units go into one assembly.</LI>
-            <LI><B>Split station</B> — the mirror image: a location with two or more outgoing routes,
+            <LI><B>Split station</B> — the mirror image: a station with two or more outgoing routes,
               where one unit becomes several pieces. A route's weight is how many pieces each unit
               yields (one steel bar cut into four tubes), so advancing a lot along it multiplies the
               card — and pulling four tubes orders just one bar.</LI>
             <LI><B>Warehouse</B> — a leaf with no outgoing routes: where finished goods end up.</LI>
-            <LI><B>Lot template</B> — the card design for a product, pinned to the source location that
+            <LI><B>Lot template</B> — the card design for a product, pinned to the source station that
               originates it.</LI>
             <LI><B>Lot card</B> — travels with a physical lot; holds a total quantity distributed across
-              <B> bins</B> (one per current location).</LI>
+              <B> bins</B> (one per current station).</LI>
             <LI><B>Work session</B> — an operator's timer at a station; feeds the <B>OEE</B> and
               <B> takt-time</B> statistics.</LI>
           </ul>
@@ -318,7 +318,7 @@ export function ManualContent() {
           <FigureMerge />
 
           <H2>Station icons</H2>
-          <P>When you create a location you can give it an icon so the map and board read at a glance.
+          <P>When you create a station you can give it an icon so the floor plan and board read at a glance.
              These are the built-in icons:</P>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: size.sp2, marginTop: size.sp3 }}>
             {STATION_ICONS.map(({ id, label, Icon }) => (
@@ -333,27 +333,27 @@ export function ManualContent() {
 
           <H2>Setting up a line</H2>
           <P>Configuration lives under <B>Settings</B> (admins only). Build a line in four moves:</P>
-          <H3>1 · Locations</H3>
-          <P>On <B>Settings → Locations</B>, add every place work happens. For the e-bike frame branch
+          <H3>1 · Stations</H3>
+          <P>On <B>Settings → Stations</B>, add every place work happens. For the e-bike frame branch
              that's <i>Steel Inventory → Tube Cutting → Frame Welding → Frame Painting</i>; the drivetrain
              branch is <i>Parts Inventory → Drivetrain Assembly → Drivetrain QC</i>.</P>
           <H3>2 · Process &amp; routes</H3>
           <P>On <B>Settings → Processes</B>, create a process and open <B>Routes</B> to connect the
-             locations in flow order. Point both branches at <i>Frame Integration</i> — with two incoming
+             stations in flow order. Point both branches at <i>Frame Integration</i> — with two incoming
              routes it becomes a <B>merge</B> that combines a frame and a drivetrain into an e-bike
              assembly. Continue <i>Frame Integration → Electrical Installation → Bike Testing → Final
              Packaging → Finished Goods Warehouse</i>.</P>
           <H3>3 · Templates</H3>
-          <P>On <B>Settings → Templates</B>, add a lot template for each product, pinned to the location
+          <P>On <B>Settings → Templates</B>, add a lot template for each product, pinned to the station
              that originates it (e.g. <i>E-Bike Frame</i> starting at Steel Inventory). Source queues use
              these to create new lots; the merge station uses the assembly template for its output.</P>
           <H3>4 · Map</H3>
-          <P>On <B>Settings → Map</B>, optionally upload a floor-plan image and set the scale (pixels per
-             meter/foot) so the Map view shows your stations on the real layout with a heatmap of activity.</P>
+          <P>On <B>Settings → Floor plan</B>, optionally upload a floor-plan image and set the scale (pixels per
+             meter/foot) so the Floor plan view shows your stations on the real layout with a heatmap of activity.</P>
 
           <H2>Operating the line</H2>
           <H3>Lots board</H3>
-          <P>The <B>Lots</B> view is your kanban board — one column per location, in flow order. Source
+          <P>The <B>Lots</B> view is your kanban board — one column per station, in flow order. Source
              queues have a <B>+ create lot</B> button; merge stations offer <B>⬇ pull precursors</B> and a
              <B> Merge</B> action when enough inputs are present. Admins can press <B>DRAG</B> to unlock the
              board and move lots between stations (dragging a merged assembly backward <B>un-merges</B> it
@@ -369,7 +369,7 @@ export function ManualContent() {
              your operators capture turns into insight.</P>
 
           <H2>Who can do what</H2>
-          <P><B>Admins</B> configure the line (locations, routes, templates, floor plan) and manage the
+          <P><B>Admins</B> configure the line (stations, routes, templates, floor plan) and manage the
              team. <B>Members</B> get a read-only board plus the Operator view — they can log work and
              advance lots, but not change the process. Invite teammates from <B>Settings → Members</B>.</P>
 

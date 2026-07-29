@@ -13,10 +13,10 @@ import IntegrationsTab from './IntegrationsTab'
 type Tab = 'stations' | 'processes' | 'templates' | 'map' | 'members' | 'integrations' | 'global'
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'stations',     label: 'Locations'    },
+  { id: 'stations',     label: 'Stations'    },
   { id: 'processes',    label: 'Processes'    },
   { id: 'templates',    label: 'Templates'    },
-  { id: 'map',          label: 'Map'          },
+  { id: 'map',          label: 'Floor plan'   },
   { id: 'members',      label: 'Members'      },
   { id: 'integrations', label: 'Integrations' },
   { id: 'global',       label: 'Global'       },
@@ -76,7 +76,11 @@ export default function SettingsView() {
       </div>
 
       {/* Tab content */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
+      {/* display:flex is what lets a tab's own overflow work: as a plain
+          block, the tab's height was its content height, the wrapper clipped
+          it, and inner overflowY:auto never engaged — the Map tab's panel
+          could not scroll at all on a small window. */}
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
         {tab === 'stations'  && <StationsTab  />}
         {tab === 'processes' && <ProcessesTab />}
         {tab === 'templates' && <TemplatesTab initialStationId={initialStation} />}

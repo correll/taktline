@@ -4,6 +4,8 @@ import * as PIXI from 'pixi.js'
 import type { Station, Route } from '../../models'
 import { color, shadow } from '../../theme/tokens'
 import { useCardsStore, useMapSettingsStore, useStationsStore, useProcessesStore, useThemeStore } from '../../store'
+import { client } from '../../api/client'
+import { useRole } from '../../auth/useRole'
 import StationNode, { type MapTool } from './StationNode'
 import MapStationEditModal from './MapStationEditModal'
 import RouteEdge from './RouteEdge'
@@ -22,8 +24,8 @@ function hexToPixi(hex: string | undefined): number | undefined {
 }
 
 export const DEFAULT_NODE_SIZE = 100
-// Largest a location may be drawn when the camera auto-fits a floor-plan-less
-// map. Only binds on a sparse map (one or two locations); once there are
+// Largest a station may be drawn when the camera auto-fits a floor-plan-less
+// map. Only binds on a sparse map (one or two stations); once there are
 // enough to fill the view the ordinary fit is smaller than this anyway.
 const MAX_FIT_NODE_PX = 100
 
@@ -127,6 +129,9 @@ export default function MapCanvas({
   const stationsRef  = useRef(stations); stationsRef.current = stations
   const routesRef    = useRef(routes);   routesRef.current = routes
   const didMoveRef   = useRef(false)
+  // Until the user pans or zooms, the camera belongs to the auto-fit; after
+  // that it is theirs and nothing may snatch it back.
+  const userMovedCameraRef = useRef(false)
 
   const cards     = useCardsStore((s) => s.cards)
   const mapConfig = useMapSettingsStore((s) => s.settings)
@@ -148,9 +153,18 @@ export default function MapCanvas({
     return () => obs.disconnect()
   }, [])
 
-  // Fit view on first load (once stations become non-empty)
+  // Fit on load — and RE-fit while the canvas is still being measured. The
+  // first fit runs against the 800×600 placeholder before ResizeObserver has
+  // reported the real size, and was never recomputed: the "initial view" was
+  // a mis-fit, and the ⌖ button (which fits correctly) then looked broken for
+  // landing somewhere else. The camera is only auto-corrected until the user
+  // pans or zooms; after that it is theirs.
+  const hasStations = Object.keys(stations).length > 0
+  const fitViewRef = useRef<() => void>(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fitView() }, [Object.keys(stations).length === 0 ? 0 : 1])
+  useEffect(() => {
+    if (hasStations && !userMovedCameraRef.current) fitViewRef.current()
+  }, [hasStations, canvasSize.w, canvasSize.h, floorPlanRect === null])
 
   // Floor plan display rect.
   // If mapWidthPx is saved (from the settings preview), use it directly — this makes
@@ -214,7 +228,7 @@ export default function MapCanvas({
     const rect = floorPlanRect
 
     let minX: number, minY: number, maxX: number, maxY: number
-    // Without a floor plan the content bounds are just the locations, so the
+    // Without a floor plan the content bounds are just the stations, so the
     // first one placed would fill ~42% of the viewport — the fit zooms until
     // that single node *is* the content. Note this is not a station-size
     // problem: nodeSize appears in both the bounds and the divisor and cancels
@@ -241,6 +255,7 @@ export default function MapCanvas({
       scale,
     })
   }, [canvasSize, stations, floorPlanRect, nodeSize])
+  fitViewRef.current = fitView
 
   // Pinch zoom. The wheel handler below covers mice and trackpads; on a phone
   // there is no wheel event at all, so without this the map simply cannot be
@@ -274,6 +289,7 @@ export default function MapCanvas({
     const onMove = (e: TouchEvent) => {
       if (e.touches.length !== 2 || !startDist) return
       e.preventDefault()
+      userMovedCameraRef.current = true
       const m = mid(e.touches)
       const rect = el.getBoundingClientRect()
       const mx = m.x - rect.left
@@ -310,6 +326,7 @@ export default function MapCanvas({
     if (!el) return
     const handler = (e: WheelEvent) => {
       e.preventDefault()
+      userMovedCameraRef.current = true
       const factor = e.deltaY < 0 ? 1.06 : 1 / 1.06
       setViewport((v) => {
         const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.scale * factor))
@@ -335,12 +352,12 @@ export default function MapCanvas({
   const handleCanvasClick = useCallback((sx: number, sy: number) => {
     const t = toolRef.current
     setCtxMenu(null)
-    if (t === 'location') {
+    if (t === 'station') {
       const w = toWorld(sx, sy)
       const half = nodeSizeRef.current / 2
       const n = Object.keys(stationsRef.current).length + 1
       createStation({
-        name: `Location ${n}`, description: '', adapterType: null, adapterConfig: {},
+        name: `Station ${n}`, description: '', adapterType: null, adapterConfig: {},
         color: null, icon: null,
         position: { x: Math.round(w.x - half), y: Math.round(w.y - half), width: 60, height: 60 },
       } as Omit<Station, '_id' | 'createdAt' | 'updatedAt'>)
@@ -384,7 +401,10 @@ export default function MapCanvas({
     if (!panRef.current) return
     const dx = e.clientX - panRef.current.startX
     const dy = e.clientY - panRef.current.startY
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didMoveRef.current = true
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      didMoveRef.current = true
+      userMovedCameraRef.current = true
+    }
     setViewport((v) => clampVP({ ...v, x: panRef.current!.vpX + dx, y: panRef.current!.vpY + dy }))
   }, [])
 
@@ -446,10 +466,10 @@ export default function MapCanvas({
   }, [routeDelete, deleteRoute])
 
   // Kept out of the heat ramp: storage (meant to fill up) and integration
-  // locations (the boundary of the business). Both would otherwise flatten the
+  // stations (the boundary of the business). Both would otherwise flatten the
   // scale for the stations that matter.
   //
-  // Storage is the location's own property, not its shape in the graph. It was
+  // Storage is the station's own property, not its shape in the graph. It was
   // inferred as "receives routes, sends none", which swallowed every leaf that
   // does real work — a final test bench, the last cell on a line — and hid a
   // queue building up exactly where it matters most.
@@ -490,7 +510,7 @@ export default function MapCanvas({
       })),
       Object.keys(stations)),
     [routes, stations])
-  // Storage and boundary locations are *meant* to fill up — a dock or a shelf
+  // Storage and boundary stations are *meant* to fill up — a dock or a shelf
   // accumulating finished goods is the system working, not a problem to route
   // around.
   const accumulationIds = React.useMemo(
@@ -511,7 +531,7 @@ export default function MapCanvas({
     () => processColorsFor(Object.keys(processes), themeMode),
     [processes, themeMode])
 
-  // Two processes routing between the same pair of locations draw one line
+  // Two processes routing between the same pair of stations draw one line
   // exactly on top of the other: the second is invisible, and so is the fact
   // that there are two. Shift them apart, centred on the true run, so the pair
   // reads as a pair — colour alone cannot help when the line is hidden.
@@ -521,7 +541,7 @@ export default function MapCanvas({
       // Keyed on the *pair*, not the direction. A directed key missed the case
       // where one process runs A→B and another runs B→A: two different keys,
       // one route each, no lane for either, and both drawn along the identical
-      // straight line between the two locations.
+      // straight line between the two stations.
       const key = [r.load, r.unload].sort().join('|')
       byPair.set(key, [...(byPair.get(key) ?? []), r._id])
     }
@@ -587,7 +607,7 @@ export default function MapCanvas({
           lineHeight: 1.5, textAlign: 'center',
         }}>
           This browser has no WebGL, so the floor plan, routes and heatmap can&rsquo;t be drawn.
-          Locations and lot counts still work. Enabling hardware acceleration — or allowing WebGL
+          Stations and lot counts still work. Enabling hardware acceleration — or allowing WebGL
           if a privacy extension blocks it — restores the full map.
         </div>
       )}
@@ -716,10 +736,17 @@ export default function MapCanvas({
           without the in-step verdict the rhythm is decoration. */}
       {cyclePulses.measured > 0 && <CycleLegend pulses={cyclePulses} />}
 
+      {/* The line as a file — export / import */}
+      <MapFileButton />
+
       {/* Fit / reset view button */}
       {!isEmpty && (
         <button
           onClick={fitView}
+          // The container captures every pointerdown to pan (setPointerCapture
+          // retargets the stream), which silently ate this button's click —
+          // it has been dead since the pan handler was added.
+          onPointerDown={(e) => e.stopPropagation()}
           title="Fit view"
           style={{
             position:     'absolute',
@@ -752,7 +779,7 @@ export default function MapCanvas({
         }}>
           <div style={{ fontSize: 40, opacity: 0.15 }}>⬡</div>
           <div style={{ color: color.textDim, fontSize: 13 }}>
-            No locations yet — add one with the location tool, or in Settings
+            No stations yet — add one with the station tool, or in Settings
           </div>
         </div>
       )}
@@ -771,7 +798,7 @@ export default function MapCanvas({
               </svg>
               {accumulations.length === 1
                 ? `${stations[accumulations[0].stationId]?.name ?? '—'} accumulates ${accumulations[0].surplus} unit${accumulations[0].surplus !== 1 ? 's' : ''} per cycle — ${accumulations[0].produced} arrive, ${accumulations[0].consumed} move on.`
-                : `${accumulations.length} locations accumulate work every cycle: ${accumulations.map((a) => `${stations[a.stationId]?.name ?? '—'} +${a.surplus}`).join(', ')}.`}
+                : `${accumulations.length} stations accumulate work every cycle: ${accumulations.map((a) => `${stations[a.stationId]?.name ?? '—'} +${a.surplus}`).join(', ')}.`}
               <span style={{ color: color.textSecondary }}>Route the surplus to a warehouse.</span>
             </div>
           )}
@@ -799,13 +826,13 @@ export default function MapCanvas({
           background: color.glass, borderRadius: 6, padding: '6px 12px', fontSize: 12,
           pointerEvents: 'none', fontFamily: 'Inter, system-ui, sans-serif',
           border: `1px solid ${tool === 'route' ? '#7C3AED66' : '#D85A3066'}`,
-          color: tool === 'route' ? 'var(--tk-hint-route)' : 'var(--tk-hint-location)',
+          color: tool === 'route' ? 'var(--tk-hint-route)' : 'var(--tk-hint-station)',
         }}>
-          {tool === 'location'
-            ? 'Click to add a location · drag one to move · right-click to edit or delete'
+          {tool === 'station'
+            ? 'Click to add a station · drag one to move · right-click to edit or delete'
             : routeFrom
-              ? 'Click a target location to connect · Esc or click the source to cancel'
-              : 'Click a source location to start a route · click a route to delete it'}
+              ? 'Click a target station to connect · Esc or click the source to cancel'
+              : 'Click a source station to start a route · click a route to delete it'}
         </div>
       )}
 
@@ -943,6 +970,99 @@ function FloorPlanSprite({
     />
   )
 }
+
+/** The line as a file, from the corner of the floor plan.
+ *
+ *  It lives here rather than in Settings because the file carries the whole
+ *  line — stations, processes, routes, products — not just this view's
+ *  configuration. Export downloads the current line; import replaces it, with
+ *  the server re-validating everything exactly like edits made in the editor.
+ *  Super-admin only, like the endpoints behind it. */
+function MapFileButton() {
+  const { isSuperAdmin } = useRole()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState<'export' | 'import' | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  if (!isSuperAdmin) return null
+
+  const doExport = async () => {
+    setBusy('export')
+    try {
+      const doc = await client.get('/map-io/export')
+      const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = 'taktline-map.json'
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch (e) { alert(String((e as Error)?.message ?? e)) }
+    finally { setBusy(null); setOpen(false) }
+  }
+
+  const doImport = async (file: File) => {
+    let doc: unknown
+    try { doc = JSON.parse(await file.text()) }
+    catch { alert('That file is not valid JSON.'); return }
+    if (!confirm('Import this map?\n\nThis REPLACES the current line: all stations, '
+                 + 'processes, routes, products and lots. The floor-plan image and '
+                 + 'statistics history are kept. This cannot be undone.')) return
+    setBusy('import')
+    try {
+      await client.post('/map-io/import', doc)
+      window.location.reload()
+    } catch (e) {
+      alert(String((e as Error)?.message ?? e).slice(0, 500))
+      setBusy(null)
+    }
+  }
+
+  const item: React.CSSProperties = {
+    display: 'block', width: '100%', textAlign: 'left', background: 'transparent',
+    border: 'none', color: color.glassText, fontSize: 12.5, padding: '7px 12px',
+    cursor: 'pointer', whiteSpace: 'nowrap',
+  }
+  return (
+    <div onPointerDown={(e) => e.stopPropagation()}
+         style={{ position: 'absolute', bottom: 56, right: 16 }}>
+      {open && (
+        <div style={{
+          position: 'absolute', bottom: 40, right: 0,
+          background: color.glass, border: `1px solid ${color.glassBorder}`,
+          borderRadius: 4, overflow: 'hidden', boxShadow: shadow.md,
+        }}>
+          <button style={item} disabled={busy !== null} onClick={doExport}>
+            {busy === 'export' ? 'Exporting…' : '⬇ Export JSON'}
+          </button>
+          <button style={item} disabled={busy !== null}
+                  onClick={() => fileRef.current?.click()}>
+            {busy === 'import' ? 'Importing…' : '⬆ Import JSON'}
+          </button>
+        </div>
+      )}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Save / load the line as a file"
+        style={{
+          width: 32, height: 32, background: color.glass,
+          border: `1px solid ${color.glassBorder}`, borderRadius: 4,
+          color: color.glassText, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+      </button>
+      <input ref={fileRef} type="file" accept=".json,application/json"
+             style={{ display: 'none' }}
+             onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f) }} />
+    </div>
+  )
+}
+
 
 // ─── Heatmap blob ─────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
-/** The integration partners a location can be bound to.
+/** The integration partners a station can be bound to.
  *
- *  An **integration location** is where work enters or leaves the business.
+ *  An **integration station** is where work enters or leaves the business.
  *  Until now that boundary was implicit in the graph's shape — any leaf with no
  *  incoming routes could originate lots, and *any* leaf with no outgoing routes
  *  completed orders — so you could not look at the map and see where work came
@@ -198,7 +198,7 @@ export const INTEGRATION_PROVIDERS: IntegrationProvider[] = [
         'Item SKUs must match the products you map.',
       ],
       caveats: [
-        'Sink only — a shipper cannot raise demand, so this location can never be wired as a source.',
+        'Sink only — a shipper cannot raise demand, so this station can never be wired as a source.',
       ],
     } },
 
@@ -226,7 +226,7 @@ export const INTEGRATION_PROVIDERS: IntegrationProvider[] = [
         'Nothing to connect — releases come from this app or a CSV upload.',
       ],
       caveats: [
-        'Completions for manual releases can only be delivered if the lot leaves through a partner’s location; otherwise they stay in the outbox as a record.',
+        'Completions for manual releases can only be delivered if the lot leaves through a partner’s station; otherwise they stay in the outbox as a record.',
       ],
     } },
 ]
@@ -237,8 +237,8 @@ export function integrationProvider(id: string | null | undefined): IntegrationP
   return id ? BY_ID.get(id) : undefined
 }
 
-/** True for a location that represents the business boundary rather than a
- *  place work happens. Such a location is kept out of the heatmap, out of the
+/** True for a station that represents the business boundary rather than a
+ *  place work happens. Such a station is kept out of the heatmap, out of the
  *  accumulation warnings and out of OEE/takt — nobody stands at an ERP. */
 export function isIntegrationStation(s: { integrationProvider?: string | null }): boolean {
   return !!s.integrationProvider

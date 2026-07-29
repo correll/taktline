@@ -425,7 +425,7 @@ async def _assert_units_stay_off_partner_nodes(session, company_id, station_ids)
     hit = ids & await _boundary_station_ids(session, company_id)
     if hit:
         st = await session.get(StationRow, next(iter(hit)))
-        name = st.name if st else "that location"
+        name = st.name if st else "that station"
         raise HTTPException(400,
             f"Lots never sit on {name} — it is the boundary to "
             f"{st.integrationProvider if st else 'a partner'}. Finished goods leave "
@@ -880,7 +880,7 @@ async def handoff_card(card_id: str, body: HandoffBody,
     if dest is None or dest.companyId != ctx.company_id:
         raise HTTPException(404, "Station not found")
     if not can_sink(dest.integrationProvider, dest.integrationRole):
-        raise HTTPException(400, "That location does not accept finished goods")
+        raise HTTPException(400, "That station does not accept finished goods")
 
     # The link has to be drawn: a lot can only leave through a partner this
     # location actually hands off to.
@@ -890,7 +890,7 @@ async def handoff_card(card_id: str, body: HandoffBody,
                                   RouteRow.unload == dest_uuid).limit(1)
     )).first()
     if link is None:
-        raise HTTPException(400, "No handoff link from this location to that integration")
+        raise HTTPException(400, "No handoff link from this station to that integration")
 
     bins = dict(row.bins or {})
     have = bins.get(body.fromStationId, {}).get("count", 0)

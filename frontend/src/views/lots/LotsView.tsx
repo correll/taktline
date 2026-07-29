@@ -370,7 +370,7 @@ export default function LotsView() {
           LOTS
         </span>
         <span style={{ fontSize: 11, color: color.textDim }}>
-          {totalCards} lot{totalCards !== 1 ? 's' : ''} · {columns.length} location{columns.length !== 1 ? 's' : ''}
+          {totalCards} lot{totalCards !== 1 ? 's' : ''} · {columns.length} station{columns.length !== 1 ? 's' : ''}
         </span>
 
         {/* Right-side controls */}
@@ -542,9 +542,9 @@ export default function LotsView() {
         }}>
           <span style={{ fontSize: 36, opacity: 0.15 }}>▤</span>
           <span style={{ fontFamily: font.mono, fontSize: 12, color: color.textDim, letterSpacing: '0.1em' }}>
-            NO LOCATIONS YET
+            NO STATIONS YET
           </span>
-          <span style={{ fontSize: 11, color: color.textDim }}>Add locations in Settings</span>
+          <span style={{ fontSize: 11, color: color.textDim }}>Add stations in Settings</span>
         </div>
       ) : splitRows ? (
         // ── Split mode: one row per source-node lane ───────────────────────

@@ -81,7 +81,7 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
           Move Lot
         </div>
         <div style={{ fontSize: 12, color: color.textSecondary }}>
-          Moving from location <strong style={{ color: color.textPrimary }}>{stations[fromStationId]?.name}</strong>
+          Moving from station <strong style={{ color: color.textPrimary }}>{stations[fromStationId]?.name}</strong>
           {' '}({fromCount} unit{fromCount !== 1 ? 's' : ''} available)
         </div>
 
@@ -90,14 +90,14 @@ export default function MoveLotModal({ card, fromStationId, onClose }: Props) {
             DESTINATION
           </span>
           <select value={toId} onChange={(e) => setToId(e.target.value)} style={inputStyle}>
-            <option value="">— select location —</option>
+            <option value="">— select station —</option>
             {destinations.map((s) => (
               <option key={s!._id} value={s!._id}>{s!.name}</option>
             ))}
           </select>
           {destinations.length === 0 && (
             <span style={{ fontSize: 10, color: color.statusWarning }}>
-              No outgoing routes from this location.
+              No outgoing routes from this station.
             </span>
           )}
         </label>

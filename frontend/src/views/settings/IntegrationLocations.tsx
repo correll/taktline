@@ -6,15 +6,15 @@ import {
   type IntegrationRole,
 } from '../../domain/integrations'
 
-/** Binding a partner to a location on the map.
+/** Binding a partner to a station on the map.
  *
  *  This is where the integration boundary stops being implicit. Before, the
- *  only thing that made a location a source was having no incoming routes, and
+ *  only thing that made a station a source was having no incoming routes, and
  *  the only thing that made it a sink was having no outgoing ones — so the map
  *  could not show you where work entered or left, and a company with a
  *  warehouse *and* a shipping desk had no way to say which one ships.
  *
- *  A bound location is an ordinary station in every other respect: it sits on
+ *  A bound station is an ordinary station in every other respect: it sits on
  *  the floor plan, you drag it where it belongs, and you draw routes to and
  *  from it. What the binding adds is meaning — a release seeds a source, and a
  *  completion at a sink is delivered to *that partner's* connector rather than
@@ -108,16 +108,16 @@ export default function IntegrationLocations() {
   return (
     <div>
       <p style={{ fontSize: 12, color: color.textDim, margin: `0 0 ${size.sp4}`, lineHeight: 1.6, maxWidth: 640 }}>
-        A location bound to a partner marks where work <b style={{ color: color.textSecondary }}>enters or
+        A station bound to a partner marks where work <b style={{ color: color.textSecondary }}>enters or
         leaves the business</b>. Add one, drag it where it belongs, then draw a link between it and the
-        location it exchanges with. <b style={{ color: color.textSecondary }}>Cards never sit on a
-        partner&rsquo;s node.</b> A link <i>from</i> an ERP points at the location where the product it
+        station it exchanges with. <b style={{ color: color.textSecondary }}>Cards never sit on a
+        partner&rsquo;s node.</b> A link <i>from</i> an ERP points at the station where the product it
         orders is <i>made</i> — an order there starts a pull, and the pull orders every precursor
         down to the material queues by itself. (A line can have many places material enters but only
         one finished product, which is why the link follows the product, not the material.) A link
-        <i>to</i> a partner is a handoff: the finished lot waits at your own location until someone
+        <i>to</i> a partner is a handoff: the finished lot waits at your own station until someone
         sends it. Because these links carry no material they are ignored by merges, splits, pulls and
-        the cycle check — and bound locations stay out of the heatmap, OEE and takt.
+        the cycle check — and bound stations stay out of the heatmap, OEE and takt.
       </p>
 
       {bound.length > 0 && (

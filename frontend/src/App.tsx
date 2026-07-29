@@ -222,7 +222,7 @@ function PhoneTopbar({ connection }: { connection: 'live' | 'reconnecting' | 'of
   }, [open])
 
   const links: Array<[string, string]> = [
-    ['/map', 'Map'], ['/lots', 'Lots'], ['/operator', 'Operator'], ['/statistics', 'Statistics'],
+    ['/map', 'Floor plan'], ['/lots', 'Lots'], ['/operator', 'Operator'], ['/statistics', 'Statistics'],
     ...(isSuperAdmin          ? [['/settings', 'Settings'] as [string, string]] : []),
     ...(user?.platformRole    ? [['/platform', 'Platform'] as [string, string]] : []),
   ]
@@ -363,7 +363,7 @@ function Topbar({ connection }: { connection: 'live' | 'reconnecting' | 'off' })
 
       <div style={{ width: 1, height: 20, background: color.border, margin: `0 ${size.sp2}` }} />
       <nav style={{ display: 'flex', gap: size.sp1 }}>
-        <NavLink to="/map"        data-tour="nav-map" style={navStyle}>Map</NavLink>
+        <NavLink to="/map"        data-tour="nav-map" style={navStyle}>Floor plan</NavLink>
         <NavLink to="/lots"       data-tour="nav-lots" style={navStyle}>Lots</NavLink>
         <NavLink to="/operator"   data-tour="nav-operator" style={navStyle}>Operator</NavLink>
         <NavLink to="/statistics" style={navStyle}>Statistics</NavLink>

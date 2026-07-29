@@ -68,7 +68,7 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
         let tid = templateId
         let procId = tid ? (templates[tid]?.processId ?? null) : null
         if (!tid) {
-          // No template here yet — provision a sensible default for this location.
+          // No template here yet — provision a sensible default for this station.
           const near = Object.values(routes).find((r) => r.load === stationId || r.unload === stationId)
           const t = await createTemplate({ name: station?.name || 'Lot', startStationId: stationId, processId: near?.processId ?? null })
           tid = t._id
@@ -155,7 +155,7 @@ export default function CreateLotModal({ stationId, onClose }: Props) {
                 color: '#C4B5FD', lineHeight: 1.5,
               }}>
                 Lots here are <b>pulled</b>, not created directly. This seeds
-                precursor lots in the source queues that feed this location —
+                precursor lots in the source queues that feed this station —
                 cascading all the way back to raw materials. No template needed.
               </div>
             )}

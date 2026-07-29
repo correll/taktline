@@ -272,7 +272,7 @@ function RouteRow({ route, label, selected, isMergeFeed, isSplitBranch, template
     }}>
       <span
         onClick={onEditEndpoints}
-        title="Click to change the from/to locations"
+        title="Click to change the from/to stations"
         style={{ flex: 1, fontSize: 12, color: color.textPrimary, fontFamily: font.mono, cursor: 'pointer' }}
       >
         {label}
@@ -349,12 +349,12 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
   const loadForEdit = (r: Route) => { setEditingId(r._id); setFromId(r.load); setToId(r.unload); setQty(r.quantity); setError(null) }
 
   const handleSubmit = async () => {
-    if (!fromId || !toId) { setError('Select both locations'); return }
+    if (!fromId || !toId) { setError('Select both stations'); return }
     if (fromId === toId)  { setError('From and To must differ'); return }
     if (qty < 1)          { setError('Weight must be at least 1'); return }
 
     const dup = processRoutes.find((r) => r.load === fromId && r.unload === toId && r._id !== editingId)
-    if (dup) { setError('A route between those locations already exists'); return }
+    if (dup) { setError('A route between those stations already exists'); return }
 
     // Cycle check ignores the edge currently being edited.
     const edges = processRoutes.filter((r) => r._id !== editingId).map((r) => ({ load: r.load, unload: r.unload }))
@@ -411,7 +411,7 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
               units consumed per assembly at a merge, pieces produced per unit at a split.
               A split branch can also name what it <i>yields</i>, so a disassembly can turn one
               product into several (battery → modules, busbars, cables). Click a route to change
-              its from/to locations.
+              its from/to stations.
             </div>
           </>
         )}
@@ -422,12 +422,12 @@ function RouteEditorModal({ process, onClose }: { process: Process; onClose: () 
         <FieldLabel>{editingId ? 'EDIT ROUTE' : 'ADD ROUTE'}</FieldLabel>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto', gap: size.sp2, alignItems: 'center' }}>
           <select value={fromId} onChange={(e) => setFromId(e.target.value)} style={inputStyle}>
-            <option value="">From location…</option>
+            <option value="">From station…</option>
             {stationList.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
           </select>
           <span style={{ color: color.textDim, fontFamily: font.mono }}>→</span>
           <select value={toId} onChange={(e) => setToId(e.target.value)} style={inputStyle}>
-            <option value="">To location…</option>
+            <option value="">To station…</option>
             {stationList.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
           </select>
           {formWeightEditable ? (

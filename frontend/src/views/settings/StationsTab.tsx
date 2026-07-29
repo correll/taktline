@@ -61,7 +61,7 @@ export default function StationsTab() {
   const [error, setError]       = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Station | null>(null)
 
-  // Place each new location 3 units (e.g. 3 ft) to the right of the most recent
+  // Place each new station 3 units (e.g. 3 ft) to the right of the most recent
   // one, so they line up along the flow instead of stacking on top of each other.
   const nextPosition = () => {
     const list = Object.values(stations)
@@ -135,9 +135,9 @@ export default function StationsTab() {
         flexShrink:   0,
       }}>
         <span style={{ flex: 1, fontSize: 11, color: color.textDim }}>
-          {list.length} location{list.length !== 1 ? 's' : ''}
+          {list.length} station{list.length !== 1 ? 's' : ''}
         </span>
-        <button data-tour="add-location" onClick={openCreate} style={primaryBtn()}>+ Add Location</button>
+        <button data-tour="add-station" onClick={openCreate} style={primaryBtn()}>+ Add Station</button>
       </div>
 
       {/* List */}
@@ -147,7 +147,7 @@ export default function StationsTab() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             height: 200, color: color.textDim, fontSize: 12, fontFamily: font.mono, letterSpacing: '0.08em',
           }}>
-            NO LOCATIONS — ADD ONE ABOVE
+            NO STATIONS — ADD ONE ABOVE
           </div>
         ) : (
           list.map((s) => (
@@ -166,7 +166,7 @@ export default function StationsTab() {
       {/* Create / Edit modal */}
       {(creating || editing) && (
         <Modal
-          title={editing ? `Edit — ${editing.name}` : 'New Location'}
+          title={editing ? `Edit — ${editing.name}` : 'New Station'}
           onClose={closeModal}
           width={480}
         >
@@ -301,7 +301,7 @@ export default function StationsTab() {
           <div style={{ display: 'flex', gap: size.sp2, justifyContent: 'flex-end' }}>
             <button onClick={closeModal}  style={secondaryBtn}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={primaryBtn(saving)}>
-              {saving ? 'Saving…' : (editing ? 'Save Changes' : 'Create Location')}
+              {saving ? 'Saving…' : (editing ? 'Save Changes' : 'Create Station')}
             </button>
           </div>
         </Modal>
@@ -316,7 +316,7 @@ export default function StationsTab() {
         <Modal title="Delete Station?" onClose={() => setConfirmDelete(null)} width={380}>
           <p style={{ fontSize: 13, color: color.textSecondary, margin: 0 }}>
             Delete <strong style={{ color: color.textPrimary }}>{confirmDelete.name}</strong>?
-            This cannot be undone. Lots at this location will lose their bin entry.
+            This cannot be undone. Lots at this station will lose their bin entry.
           </p>
           {affected.length > 0 && (
             <div style={{ marginTop: size.sp3, padding: `${size.sp2} ${size.sp3}`,

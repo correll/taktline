@@ -142,7 +142,7 @@ function StaticScene({ stations, edges, wip, worldW, worldH, node, showHeat, max
     <svg
       viewBox={`0 0 ${worldW} ${worldH}`}
       width="100%" height="100%" role="img"
-      aria-label="A production line: locations connected by routes, shaded where work is piling up."
+      aria-label="A production line: stations connected by routes, shaded where work is piling up."
       style={{ position: 'absolute', inset: 0, background: hex(CANVAS_BG[mode]) }}
     >
       {showHeat && stations.map((s) => {

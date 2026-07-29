@@ -56,6 +56,16 @@ The gap between cycle time and line cycle time is the waste, in seconds: work th
 
 Also collected: Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. open work time, number of transport events when lot cards travel from one location to another and overall transport in meters. 
 
+## UI vocabulary
+
+The UI says **station** (not "location") and **Floor plan** (not "Map") — the
+nav entry, the settings tab, tour, manual, statistics headings and backend
+error messages all follow. Internal names were already `station`; routes stay
+`/map`. "Heatmap" and "value stream map" are terms of art and keep their names.
+The line export/import lives behind the file icon in the floor plan's
+lower-right corner (super-admin), not in Settings — the file carries the whole
+line, not just that tab's configuration.
+
 # Engineering conventions
 
 ## Persistence layer (PostgreSQL + SQLAlchemy async)

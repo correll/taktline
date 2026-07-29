@@ -255,7 +255,7 @@ export default function IntegrationsTab() {
       </Section>
 
       {/* Where work enters and leaves — the boundary made explicit. */}
-      <Section title="Integration locations">
+      <Section title="Integration stations">
         <IntegrationLocations />
       </Section>
 

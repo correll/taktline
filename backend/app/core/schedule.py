@@ -61,3 +61,44 @@ def open_seconds(start_utc: datetime | None, end_utc: datetime | None,
                         total += (seg_end - seg_start).total_seconds()
         cur = nxt
     return total
+
+
+def shift_starts(start_utc: datetime, end_utc: datetime,
+                 schedule: list[list[int]] | None, tzname: str = "UTC") -> list[datetime]:
+    """Every moment in [start, end] where the plant *opens* — a closed quarter
+    followed by an open one.
+
+    This is what resets the line-cycle-time clock. Without it, the first lot of
+    a Monday would be charged with the whole weekend: work that could not have
+    been done is not delay, and a metric that says otherwise is one nobody will
+    trust twice.
+
+    Returned in UTC, ascending. The quarter immediately *before* the window is
+    inspected too, so a window that begins mid-shift is not mistaken for an
+    opening.
+    """
+    if not schedule or end_utc <= start_utc:
+        return []
+    tz = _tz(tzname)
+    cur = start_utc.astimezone(tz).replace(minute=0, second=0, microsecond=0)
+    end = end_utc.astimezone(tz)
+
+    def _open(dt: datetime) -> bool:
+        try:
+            mask = int(schedule[dt.weekday()][dt.hour])
+        except (IndexError, TypeError, ValueError):
+            return False
+        mask = max(0, min(FULL_HOUR, mask))
+        return bool(mask & (1 << (dt.minute // 15)))
+
+    out: list[datetime] = []
+    prev_open = _open(cur - timedelta(minutes=15))
+    guard = 0
+    while cur < end and guard < 24 * 4 * 500:
+        guard += 1
+        is_open = _open(cur)
+        if is_open and not prev_open and cur >= start_utc.astimezone(tz):
+            out.append(cur.astimezone(start_utc.tzinfo or ZoneInfo("UTC")))
+        prev_open = is_open
+        cur += timedelta(minutes=15)
+    return out

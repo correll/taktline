@@ -1,13 +1,13 @@
 import React from 'react'
 import { color, font, size } from '../../theme/tokens'
 
-/** Pace against the station's expected takt, for the operator.
+/** Pace against the station's expected cycle time, for the operator.
  *
  *  ── The constraint that shapes this ───────────────────────────────────────
- *  The target is the **station's** takt, never the individual's. Two things
+ *  The target is the **station's** cycle time, never the individual's. Two things
  *  follow, and both are deliberate:
  *
- *  - It is off unless a company switches it on (`globalSettings.showTaktArc`,
+ *  - It is off unless a company switches it on (`globalSettings.showCycleArc`,
  *    default false). Pace feedback shown to the person doing the work is the
  *    line between a useful signal and surveillance, and where that line sits
  *    is a local decision — in much of the EU, one a works council has to be
@@ -16,10 +16,10 @@ import { color, font, size } from '../../theme/tokens'
  *    read-out that disappears when the session ends.
  *
  *  Past 100% it turns to the starved colour rather than an alarm red: running
- *  over takt is information about the *line*, most often that this station is
+ *  over the station's own cycle time is information about the *line*, most often that this station is
  *  the constraint. It is not an accusation, and it must not look like one.
  *
- *  A station with no measured takt shows no arc. There is no target to be
+ *  A station with no measured cycle time shows no arc. There is no target to be
  *  behind, and inventing one would be the worst version of this feature.
  */
 
@@ -29,9 +29,9 @@ const SW  = 7
 const R   = (W - PAD * 2 - SW) / 2
 const H   = R + SW + 2
 
-export function TaktArc({ elapsedSec, expectedSec }: {
+export function CycleArc({ elapsedSec, expectedSec }: {
   elapsedSec:  number
-  /** Station takt × units in this session. */
+  /** Station cycle time × units in this session. */
   expectedSec: number
 }) {
   if (!(expectedSec > 0)) return null
@@ -64,7 +64,7 @@ export function TaktArc({ elapsedSec, expectedSec }: {
         fontFamily: font.mono, fontSize: 10, letterSpacing: '0.1em',
         color: over ? color.statusWarning : color.textDim, marginTop: -2,
       }}>
-        {Math.round(ratio * 100)}% OF STATION TAKT
+        {Math.round(ratio * 100)}% OF STATION CYCLE TIME
       </div>
       {over && (
         <div style={{ fontSize: 10.5, color: color.textDim, marginTop: 3, textAlign: 'center',
@@ -76,4 +76,4 @@ export function TaktArc({ elapsedSec, expectedSec }: {
   )
 }
 
-export default TaktArc
+export default CycleArc

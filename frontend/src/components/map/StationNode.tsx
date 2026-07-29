@@ -9,7 +9,7 @@ import type { Station } from '../../models'
 import type { Viewport } from './MapCanvas'
 import { useStationsStore } from '../../store'
 import { useRole } from '../../auth/useRole'
-import { pulseDelaySeconds } from '../../motion/takt'
+import { pulseDelaySeconds } from '../../motion/cycle'
 import { integrationProvider, roleLabel } from '../../domain/integrations'
 
 // ─── Icon registry ────────────────────────────────────────────────────────────
@@ -55,9 +55,9 @@ interface Props {
   tool:      MapTool
   routeArmed: boolean         // this node is the locked source of an in-progress route
   flashing?: boolean          // pulse to highlight an isolated-subgraph member
-  /** Measured takt, time-compressed, in ms. Undefined = not enough timing
+  /** Measured cycle time, time-compressed, in ms. Undefined = not enough timing
    *  data, so the node stays still rather than pulsing at an invented rate. */
-  taktPeriodMs?: number
+  cyclePeriodMs?: number
   /** For an integration node: which ways work crosses this boundary, read
    *  from the drawn links. 'pull' = it raises demand into the line (↓),
    *  'out' = finished goods leave through it (↑), 'both' = ⇵. */
@@ -68,7 +68,7 @@ interface Props {
 }
 
 export default function StationNode({
-  station, lotCount, selected, nodeSize, viewport, tool, routeArmed, flashing, taktPeriodMs,
+  station, lotCount, selected, nodeSize, viewport, tool, routeArmed, flashing, cyclePeriodMs,
   boundaryFlow, onSelect, onRouteAnchor, onContextMenu,
 }: Props) {
   const updateStation = useStationsStore((s) => s.update)
@@ -183,7 +183,7 @@ export default function StationNode({
         boxSizing:    'border-box',
       }}
     >
-      {/* Takt pulse — the station's measured beat, time-compressed.
+      {/* Cycle pulse — the station's measured beat, time-compressed.
           Deliberately low contrast: this runs on a wall display for a whole
           shift, so it has to be readable at a glance and invisible to someone
           working next to it. A node with too little timing data has no period
@@ -191,16 +191,16 @@ export default function StationNode({
           clock (see pulseDelaySeconds) so every station — and every tablet —
           shares one phase; without that, stations mounting milliseconds apart
           would drift and a balanced line would look ragged. */}
-      {taktPeriodMs != null && (
+      {cyclePeriodMs != null && (
         <div
           aria-hidden
-          className="tk-takt-pulse"
+          className="tk-cycle-pulse"
           style={{
             position: 'absolute', inset: 0,
             borderRadius: 'inherit',
             boxShadow: `inset 0 0 0 ${Math.max(1.5, screenSize * 0.028)}px ${stationColor}`,
-            animationDuration: `${taktPeriodMs}ms`,
-            animationDelay: `${pulseDelaySeconds(taktPeriodMs)}s`,
+            animationDuration: `${cyclePeriodMs}ms`,
+            animationDelay: `${pulseDelaySeconds(cyclePeriodMs)}s`,
             pointerEvents: 'none',
           }}
         />

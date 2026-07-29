@@ -9,6 +9,8 @@ class Process(TimestampedModel):
     routes: List[str] = []
     mapId: Optional[str] = None
     description: str = ""
+    # Desired takt: the interval the line is meant to hold (seconds).
+    desiredTaktSec: Optional[float] = None
 
 
 class ProcessCreate(BaseModel):
@@ -16,6 +18,7 @@ class ProcessCreate(BaseModel):
     routes: List[str] = []
     mapId: Optional[str] = None
     description: str = ""
+    desiredTaktSec: Optional[float] = None
 
 
 class ProcessUpdate(BaseModel):
@@ -23,3 +26,4 @@ class ProcessUpdate(BaseModel):
     routes: Optional[List[str]] = None
     mapId: Optional[str] = None
     description: Optional[str] = None
+    desiredTaktSec: Optional[float] = None

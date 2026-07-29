@@ -291,7 +291,7 @@ html, body {
   .tk-modal-card { padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px); }
 }
 
-/* ── Takt pulse ────────────────────────────────────────────────────────────
+/* ── Cycle pulse ────────────────────────────────────────────────────────────
    A station's measured beat, time-compressed. The opacity range is the whole
    design: 0.14 is barely there, 0.75 is a soft ring, and the ease-in-out
    between them is a heartbeat rather than a blink. This runs on a wall display
@@ -299,12 +299,12 @@ html, body {
    it is too strong. Period and phase are set inline per station (see
    StationNode); phase comes from the wall clock so every node shares one beat
    and "is this line in step?" becomes a question you can answer by looking. */
-@keyframes tk-takt-pulse {
+@keyframes tk-cycle-pulse {
   0%, 100% { opacity: 0.14; }
   50%      { opacity: 0.75; }
 }
-.tk-takt-pulse {
-  animation-name: tk-takt-pulse;
+.tk-cycle-pulse {
+  animation-name: tk-cycle-pulse;
   animation-timing-function: ease-in-out;
   animation-iteration-count: infinite;
 }
@@ -313,7 +313,7 @@ html, body {
    state without the movement — the ring settles at its own midpoint rather
    than vanishing, and lots still change column, just without travelling. */
 @media (prefers-reduced-motion: reduce) {
-  .tk-takt-pulse { animation: none; opacity: 0.28; }
+  .tk-cycle-pulse { animation: none; opacity: 0.28; }
 }
 
 /* ── The topbar between the phone bar and full width ───────────────────────

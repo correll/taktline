@@ -12,7 +12,7 @@ router = APIRouter(prefix="/global-settings", tags=["global-settings"])
 
 def _to_model(r: GlobalSettingsRow) -> GlobalSettings:
     return GlobalSettings(_id=str(r.id), timezone=r.timezone, workHours=r.workHours or [],
-                          showTaktArc=bool(r.showTaktArc))
+                          showCycleArc=bool(r.showCycleArc))
 
 
 async def _get_or_create(session: AsyncSession, company_id) -> GlobalSettingsRow:

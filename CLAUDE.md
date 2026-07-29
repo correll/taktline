@@ -28,7 +28,15 @@ Kanban view: the kanban view shows a flattened version of the process graph. wit
 
 Dashboards: if the browser window is in vertical orientation such as on a phone or ipad, a dashboard view is shown. The dashboard view shows all available locations and allows a user to "log in". The user then sees a single column with all the lot cards that are at this location. The user can select a lot card, chose the number of products that they work on and press start. Then, a timer starts recording the time, until the user presses stop.
 
-Statistics: the process collects timing based on lot and per product on each station. Relevant metrics are: Takt-Time, the average time per product at each station, Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. total time, number of transport events when lot cards travel from one location to another and overal transport in meters. 
+Statistics: the process collects timing based on lot and per product on each station. Three timing terms are deliberately kept apart, because conflating them is the most expensive confusion in the product:
+
+- **Takt time** — the beat the line is *meant* to hold: available time ÷ customer demand. A **target the user sets**, per process (`process.desiredTaktSec`, Settings → Processes → "Desired takt time"). Never measured, never inferred; null until someone sets it.
+- **Cycle time** — how long the work actually takes: what Start/Stop records, divided by the units in the lot (`cycleTimeSec`). This is what used to be called "takt time" in the UI and API, and the rename is complete — the map's beat is the **cycle pulse**, the operator's gauge is the **cycle arc** (`globalSettings.showCycleArc`).
+- **Line cycle time** — the actual exit rate: the interval between a station's departures, **per piece** (`lineCycleTimeSec`, `sessions._line_cycle_times`). The clock starts when work *could* have moved — a shift opening, from `core.schedule.shift_starts` — and re-anchors at every departure, so a lot finished after hours is charged to the next shift rather than to the night. Without that reset the first departure of a Monday carries the whole weekend and the number is worthless. A lot of ten leaving counts as ten pieces. 30-day lookback.
+
+The gap between cycle time and line cycle time is the waste, in seconds: work that takes 2 minutes but only ships every 9 is queueing, blocking or transport, and speeding up the operator wins nothing. The Statistics table shows both side by side and tints line cycle time amber when it exceeds cycle time by >50%.
+
+Also collected: Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. open work time, number of transport events when lot cards travel from one location to another and overall transport in meters. 
 
 # Engineering conventions
 

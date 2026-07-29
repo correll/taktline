@@ -8,8 +8,8 @@ import StationNode, { type MapTool } from './StationNode'
 import MapStationEditModal from './MapStationEditModal'
 import RouteEdge from './RouteEdge'
 import MotionLayer from './MotionLayer'
-import { useTaktPulses } from '../../motion/useTaktPulses'
-import type { TaktPulses } from '../../motion/takt'
+import { useCyclePulses } from '../../motion/useCyclePulses'
+import type { CyclePulses } from '../../motion/cycle'
 import { findAccumulations, warehouseNodes, type Accumulation } from '../../domain/graph'
 import { integrationProvider, isIntegrationStation } from '../../domain/integrations'
 
@@ -510,10 +510,10 @@ export default function MapCanvas({
     return flows
   }, [stations, routes])
 
-  // Each station's measured takt, compressed by one shared factor so the
+  // Each station's measured cycle time, compressed by one shared factor so the
   // ratios between them survive — that is what makes a bottleneck visible as
   // a slow heartbeat instead of a number in a table.
-  const taktPulses = useTaktPulses(!isEmpty)
+  const cyclePulses = useCyclePulses(!isEmpty)
 
   return (
     <div
@@ -613,7 +613,7 @@ export default function MapCanvas({
             routeArmed={routeFrom === station._id}
             flashing={(warnHover && isolated.flash.has(station._id))
                       || (accHover && accumulationIds.has(station._id))}
-            taktPeriodMs={taktPulses.periodMs[station._id]}
+            cyclePeriodMs={cyclePulses.periodMs[station._id]}
             boundaryFlow={boundaryFlows[station._id]}
             onSelect={() => onSelectStation(station._id)}
             onRouteAnchor={() => handleRouteAnchor(station._id)}
@@ -631,9 +631,9 @@ export default function MapCanvas({
         />
       )}
 
-      {/* Takt legend — without the factor, "3 seconds" is meaningless, and
+      {/* Cycle legend — without the factor, "3 seconds" is meaningless, and
           without the in-step verdict the rhythm is decoration. */}
-      {taktPulses.measured > 0 && <TaktLegend pulses={taktPulses} />}
+      {cyclePulses.measured > 0 && <CycleLegend pulses={cyclePulses} />}
 
       {/* Fit / reset view button */}
       {!isEmpty && (
@@ -898,10 +898,10 @@ function HeatBlob({
 /** What the pulsing means, in two lines.
  *
  *  The compression factor is not decoration: a station pulsing every 3 s is
- *  really running a 300 s takt, and without the ×100 on screen someone will
+ *  really running a 300 s cycle time, and without the ×100 on screen someone will
  *  eventually read the rhythm as the literal cycle time. The in-step verdict
- *  is judged on the true takts, never the clamped display periods. */
-function TaktLegend({ pulses }: { pulses: TaktPulses }) {
+ *  is judged on the true cycle times, never the clamped display periods. */
+function CycleLegend({ pulses }: { pulses: CyclePulses }) {
   const slowest = pulses.slowestSec
   const human = slowest == null ? null
     : slowest >= 60 ? `${(slowest / 60).toFixed(1)} min` : `${slowest.toFixed(0)} s`
@@ -914,7 +914,7 @@ function TaktLegend({ pulses }: { pulses: TaktPulses }) {
       fontFamily: '"JetBrains Mono", monospace', fontSize: 10,
       color: color.glassText, letterSpacing: '0.05em', lineHeight: 1.7, textAlign: 'right',
     }}>
-      <div>TAKT PULSE ×{pulses.compression}</div>
+      <div>CYCLE PULSE ×{pulses.compression}</div>
       <div style={{ opacity: 0.85 }}>
         {pulses.measured} measured · {pulses.synchronous ? 'IN STEP' : 'OUT OF STEP'}
         {human ? ` · slowest ${human}` : ''}

@@ -18,13 +18,21 @@ export default function ProcessesTab() {
   const [creating, setCreating]             = useState(false)
   const [name, setName]                     = useState('')
   const [description, setDescription]       = useState('')
+  // Desired takt: the beat this line is *meant* to hold. Entered in minutes
+  // because that is how demand arrives ("one every 4 minutes"); stored in
+  // seconds. Blank means no target — nothing is invented.
+  const [taktMin, setTaktMin]               = useState('')
   const [saving, setSaving]                 = useState(false)
   const [error, setError]                   = useState<string | null>(null)
   const [routeEditor, setRouteEditor]       = useState<Process | null>(null)
   const [confirmDelete, setConfirmDelete]   = useState<Process | null>(null)
 
   const openCreate = () => { setName(''); setDescription(''); setCreating(true); setError(null) }
-  const openEdit   = (p: Process) => { setName(p.name); setDescription(p.description); setEditTarget(p); setError(null) }
+  const openEdit   = (p: Process) => {
+    setName(p.name); setDescription(p.description)
+    setTaktMin(p.desiredTaktSec != null ? String(p.desiredTaktSec / 60) : '')
+    setEditTarget(p); setError(null)
+  }
   const closeModal = () => { setCreating(false); setEditTarget(null) }
 
   const handleSave = async () => {
@@ -32,9 +40,11 @@ export default function ProcessesTab() {
     setSaving(true); setError(null)
     try {
       if (editTarget) {
-        await updateProcess(editTarget._id, { name: name.trim(), description: description.trim() })
+        await updateProcess(editTarget._id, { name: name.trim(), description: description.trim(),
+                                              desiredTaktSec: parseTakt(taktMin) })
       } else {
-        await createProcess({ name: name.trim(), description: description.trim() })
+        await createProcess({ name: name.trim(), description: description.trim(),
+                              desiredTaktSec: parseTakt(taktMin) })
       }
       closeModal()
     } catch (e) {
@@ -135,6 +145,20 @@ export default function ProcessesTab() {
             <FieldLabel>DESCRIPTION</FieldLabel>
             <input value={description} onChange={(e) => setDescription(e.target.value)} style={inputStyle} />
           </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, letterSpacing: '0.08em' }}>
+              DESIRED TAKT TIME (MINUTES)
+            </span>
+            <input value={taktMin} onChange={(e) => setTaktMin(e.target.value)}
+                   placeholder="e.g. 4" inputMode="decimal" style={inputStyle} />
+            <span style={{ fontSize: 10.5, color: color.textDim, lineHeight: 1.5, marginTop: 2 }}>
+              The beat this line must hold to meet demand: available time ÷ customer demand.
+              A <b style={{ color: color.textSecondary }}>target you choose</b>, not something
+              measured — compare it against the cycle times in Statistics. Leave blank if you
+              have no target.
+            </span>
+          </label>
           <ErrorMsg msg={error} />
           <div style={{ display: 'flex', gap: size.sp2, justifyContent: 'flex-end' }}>
             <button onClick={closeModal} style={secondaryBtn}>Cancel</button>
@@ -167,6 +191,13 @@ export default function ProcessesTab() {
 }
 
 // ─── Quantity stepper (edge weight) with up/down arrows ──────────────────────
+
+/** Minutes → seconds, or null for "no target". Refuses to guess: a blank or
+ *  unparseable box means no takt, never zero. */
+function parseTakt(v: string): number | null {
+  const n = parseFloat(v.trim())
+  return Number.isFinite(n) && n > 0 ? n * 60 : null
+}
 
 function QtyStepper({ value, onChange, min = 1, title }: {
   value: number; onChange: (n: number) => void; min?: number; title?: string

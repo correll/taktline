@@ -19,6 +19,7 @@ def _to_process(r: ProcessRow) -> Process:
         routes=r.routes or [],
         mapId=r.mapId,
         description=r.description,
+        desiredTaktSec=r.desiredTaktSec,
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
     )

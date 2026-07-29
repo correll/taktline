@@ -207,7 +207,7 @@ const STEPS = [
   {
     Icon: TrendingUp,
     title: 'Start maximizing your flow',
-    body: 'Check the board each morning instead of walking the floor asking. The heatmap, takt time and OEE show where work piles up — and what each job really cost you.',
+    body: 'Check the board each morning instead of walking the floor asking. The heatmap, cycle time and OEE show where work piles up — and what each job really cost you.',
   },
 ]
 
@@ -258,7 +258,7 @@ const FEATURES = [
   { Icon: Receipt,   title: 'Know what a job really costs',
     body: 'Every lot carries its own timing, so you quote from what the work actually took — not a guess. Nobody argues you down on price when you have the numbers.' },
   { Icon: Gauge,     title: 'And yes — it finds the bottleneck',
-    body: 'A violet heatmap shows where work piles up, with takt time and OEE per station. Usually a one-time revelation; then it just keeps you honest.' },
+    body: 'A violet heatmap shows where work piles up, with cycle time and OEE per station. Usually a one-time revelation; then it just keeps you honest.' },
 ]
 
 function Features() {

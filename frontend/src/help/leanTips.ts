@@ -61,6 +61,8 @@ export const LEAN_TIPS: LeanTip[] = [
   { category: 'Lead time',     text: 'Little’s law: lead time ≈ WIP ÷ production rate. Halve the WIP in your line and lead time halves — without anyone working faster.', featured: 2 },
   { category: 'Lead time',     text: 'Three levers shorten lead time: remove waste from the process, raise the bottleneck’s rate, and cut WIP with pull. Work them in that order.' },
   { category: 'Takt',          text: 'Takt time = available time ÷ customer demand — the beat your line must hold to meet demand exactly. Producing to takt is itself a pull system: the beat admits work at the rate the customer consumes it, no faster. A line is balanced when every station’s cycle time sits close to takt.' },
+  { category: 'Takt',          text: 'Three different numbers, constantly confused. Takt time is the beat you need (available time ÷ demand) — a target you set. Cycle time is how long the work actually takes — what Start/Stop measures. Line cycle time is how often a piece really leaves. Cycle time under takt but line cycle time over it means the work is fine and the flow is not.' },
+  { category: 'Takt',          text: 'The gap between cycle time and line cycle time is your waste, in seconds. If a station works a piece in 2 minutes but only ships one every 9, the missing 7 are queueing, blocking or transport — speeding up the operator wins nothing.' },
   { category: 'Takt',          text: 'Balance to demand, not to capacity. A station running faster than takt — the pace customer demand sets — isn’t being productive; it’s stacking inventory in front of the next station.' },
   { category: 'Takt',          text: 'To balance a line: lift the slowest station with lean improvements, slow the fastest only if it saves real money, and split or merge stations when gaps stay wide.' },
   { category: 'OEE',           text: 'OEE — Overall Equipment Effectiveness, actual output ÷ theoretical maximum — means nothing as a single number, because “theoretical maximum” is defined differently everywhere. It’s the change that talks: a sudden drop says “look here” — downtime, starvation, or quality.' },
@@ -72,7 +74,7 @@ export const LEAN_TIPS: LeanTip[] = [
   { category: 'Digital lean',  text: 'Digitize the whole process before digitizing one machine: data without an order attached is hard to turn into customer value.' },
   { category: 'Digital lean',  text: 'Lean first, then automate. Layout and flow improvements are free — and they define what a robot must actually do before you buy one.' },
   { category: 'Digital lean',  text: 'A machine that saves labor but disrupts flow is a net loss. Judge equipment by its effect on the value stream, not its spec sheet.' },
-  { category: 'Digital lean',  text: 'Real-time data turns weeks of clipboard studies into hours: watch takt, OEE, and the heatmap respond the same day you change something.' },
+  { category: 'Digital lean',  text: 'Real-time data turns weeks of clipboard studies into hours: watch cycle time, OEE, and the heatmap respond the same day you change something.' },
 
   // ── Classic lean practice (beyond the book) ────────────────────────────────
   { category: '5S',            text: '5S: Sort, Set in order, Shine, Standardize, Sustain. A workplace where everything has a visible home makes waste — and missing tools — obvious at a glance.' },

@@ -1,9 +1,9 @@
 import type { SessionStats } from '../api/sessions.api'
 
-/** Turning measured takt times into a visible rhythm.
+/** Turning measured cycle times into a visible rhythm.
  *
  *  ── Why one shared divisor and not a per-station clamp ────────────────────
- *  Real takt times are tens to hundreds of seconds, so clamping each station
+ *  Real cycle times are tens to hundreds of seconds, so clamping each station
  *  independently into a 1.2–6s window would map *every* station to 6s: a line
  *  where one station takes twice as long as the next would pulse in perfect
  *  unison, which is precisely the opposite of what the display is for. The
@@ -12,7 +12,7 @@ import type { SessionStats } from '../api/sessions.api'
  *
  *  So: pick one compression factor from the data, apply it to every station,
  *  and clamp only as a backstop for genuine outliers. A station at twice the
- *  takt of its neighbour then visibly pulses at half its rate — the bottleneck
+ *  cycle time of its neighbour then visibly pulses at half its rate — the bottleneck
  *  is the slow heartbeat, findable from across the shop floor without reading
  *  a number. The factor is reported so nobody mistakes 3 seconds for 3 seconds.
  *
@@ -22,7 +22,7 @@ import type { SessionStats } from '../api/sessions.api'
  *  an invented rate is a number someone will eventually plan against.
  */
 
-/** Below this a "takt time" is one or two jobs and sampling noise, not a beat. */
+/** Below this a "cycle time" is one or two jobs and sampling noise, not a beat. */
 const MIN_SESSIONS = 3
 const MIN_UNITS    = 3
 
@@ -47,10 +47,10 @@ function median(xs: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
 
-export interface TaktPulses {
+export interface CyclePulses {
   /** stationId → pulse period in ms. Absent = not enough data, do not pulse. */
   periodMs:    Record<string, number>
-  /** How much faster than reality, e.g. 100 → one pulse per 100 s of takt. */
+  /** How much faster than reality, e.g. 100 → one pulse per 100 s of cycle time. */
   compression: number
   /** True when every measured station shares essentially one beat. */
   synchronous: boolean
@@ -62,7 +62,7 @@ export interface TaktPulses {
   slowestSec:  number | null
 }
 
-export const EMPTY_PULSES: TaktPulses = {
+export const EMPTY_PULSES: CyclePulses = {
   periodMs: {}, compression: 1, synchronous: false, clamped: 0, measured: 0, slowestSec: null,
 }
 
@@ -70,23 +70,23 @@ export const EMPTY_PULSES: TaktPulses = {
  *  ordinary measurement scatter without excusing a real imbalance. */
 const SYNC_TOLERANCE = 1.15
 
-export function computeTaktPulses(stats: SessionStats[]): TaktPulses {
+export function computeCyclePulses(stats: SessionStats[]): CyclePulses {
   const usable = stats.filter((s) =>
-    s.taktTimeSec != null && s.taktTimeSec > 0 &&
+    s.cycleTimeSec != null && s.cycleTimeSec > 0 &&
     s.sessionCount >= MIN_SESSIONS && s.totalUnits >= MIN_UNITS &&
-    // A warehouse stores rather than works: its "takt" is how fast things were
-    // put on a shelf, which is not a beat the line has to hold.
+    // A warehouse stores rather than works: its "cycle time" would be how fast
+    // things were put on a shelf, which is not a beat the line has to hold.
     !s.isWarehouse)
 
   if (usable.length === 0) return EMPTY_PULSES
 
-  const takts = usable.map((s) => s.taktTimeSec as number)
-  const compression = niceFactor(median(takts) * 1000 / TARGET_MID_MS)
+  const cycles = usable.map((s) => s.cycleTimeSec as number)
+  const compression = niceFactor(median(cycles) * 1000 / TARGET_MID_MS)
 
   const periodMs: Record<string, number> = {}
   let clamped = 0
   for (const s of usable) {
-    const raw = (s.taktTimeSec as number) * 1000 / compression
+    const raw = (s.cycleTimeSec as number) * 1000 / compression
     const bounded = Math.min(MAX_PERIOD_MS, Math.max(MIN_PERIOD_MS, raw))
     if (Math.abs(bounded - raw) > 1) clamped++
     periodMs[s.stationId] = bounded
@@ -94,7 +94,7 @@ export function computeTaktPulses(stats: SessionStats[]): TaktPulses {
 
   // Judge synchronicity on the *true* takts, not the clamped periods — the
   // clamp is a display bound and must never make a ragged line look tidy.
-  const lo = Math.min(...takts), hi = Math.max(...takts)
+  const lo = Math.min(...cycles), hi = Math.max(...cycles)
   return {
     periodMs, compression,
     synchronous: usable.length > 1 && hi / lo <= SYNC_TOLERANCE,

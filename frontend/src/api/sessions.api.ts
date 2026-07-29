@@ -16,7 +16,11 @@ export interface SessionStats {
   sessionCount:    number
   totalUnits:      number
   totalWorkingSec: number
-  taktTimeSec:     number | null
+  /** Seconds of work per unit — what start/stop actually measured. */
+  cycleTimeSec:    number | null
+  /** Seconds between departures per piece — the station's actual exit rate.
+   *  Null until there are two departures to measure between. */
+  lineCycleTimeSec: number | null
   oee:             number | null
   isWarehouse?:    boolean          // storage, not a work station — no OEE
 }

@@ -51,6 +51,10 @@ export interface Process {
   routes: ID[]
   mapId: ID | null
   description: string
+  /** The beat this line is meant to hold, in seconds: available time ÷ demand.
+   *  A target someone sets — null until they do. Compare against measured
+   *  cycle time; never confuse the two. */
+  desiredTaktSec: number | null
   createdAt: string
   updatedAt: string
 }

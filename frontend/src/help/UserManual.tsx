@@ -191,6 +191,36 @@ export function ManualContent() {
             station's cycle time is close to takt.
           </P>
 
+          <H3>Takt time, cycle time and line cycle time</H3>
+          <P>
+            These three get muddled constantly, and the confusion is expensive: they answer different
+            questions, and only one of them is something you choose.
+          </P>
+          <ul>
+            <LI><B>Takt time — the beat you need.</B> Available working time ÷ customer demand. If you
+              work 8 hours and need 120 units, takt is 4 minutes: one unit must leave every 4 minutes.
+              It is a <i>target you set</i>, never a measurement — it comes from your customer, not
+              your floor. Set it per process in <B>Settings → Processes → Desired takt time</B>.</LI>
+            <LI><B>Cycle time — how long the work takes.</B> The time an operator actually spends on a
+              unit at a station: exactly what Taktline records between <B>Start</B> and <B>Stop</B>,
+              divided by the units in the lot. Measured, per station, and the number to compare
+              against takt. A station whose cycle time exceeds takt cannot keep up, no matter how well
+              it is run.</LI>
+            <LI><B>Line cycle time — how often a piece actually leaves.</B> The real exit rate: the
+              interval between departures from a station, per piece. The clock starts when work
+              <i>could</i> have moved — the beginning of the shift — and restarts at each departure,
+              so a lot finished after hours is charged to the next shift rather than to the night. A
+              lot of ten leaving counts as ten pieces, not one.</LI>
+          </ul>
+          <P>
+            The gap between cycle time and line cycle time is where the waste lives. If a station takes
+            2 minutes of work but a piece only leaves every 9 minutes, the other 7 minutes are queueing,
+            blocking, transport or waiting — none of it work, all of it lead time. Speeding up the
+            operator would win you nothing; the constraint is elsewhere. And if line cycle time is
+            longer than takt anywhere in the flow, you are not meeting demand, whatever the cycle times
+            say.
+          </P>
+
           <H2>Getting lean with Taktline</H2>
           <P>
             Taktline is a <B>digital lean</B> tool: it gives you the bird's-eye, real-time view of your
@@ -211,9 +241,14 @@ export function ManualContent() {
           </ul>
           <H3>See waste in the statistics</H3>
           <ul>
-            <LI><B>Takt time per station</B> — compare each station's average time-per-unit against the
-              takt your demand requires; the slowest station sets your whole line's production rate.
-              Speed that one up first (waste <B>W</B>).</LI>
+            <LI><B>Cycle time per station</B> — each station's average working time per unit. Compare
+              it against the takt your demand requires; the slowest station sets your whole line's
+              production rate, so speed that one up first (waste <B>W</B>).</LI>
+            <LI><B>Line cycle time per station</B> — how often a piece really leaves, measured from the
+              start of the shift and re-anchored at every departure. When it is much larger than the
+              cycle time beside it, the station is waiting rather than working, and the fix is upstream
+              or in transport — not in the operator's hands (wastes <B>W</B>, <B>T</B> and
+              <B> I</B>).</LI>
             <LI><B>OEE</B> (measured against your configured <B>work hours</B>, so nights and weekends
               don't distort it) — a very high OEE means the station is a bottleneck with work queueing;
               a very low one means it's starved by an upstream constraint. Never optimize OEE for its

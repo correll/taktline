@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from datetime import timedelta
 from typing import List, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,12 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
 from ..db.tables import (
     WorkSession as SessionRow, Station as StationRow, Card as CardRow,
-    GlobalSettings as GlobalSettingsRow, Route as RouteRow,
+    CardEvent as CardEventRow, GlobalSettings as GlobalSettingsRow, Route as RouteRow,
 )
 from ..deps.auth import CompanyContext, get_active_company
 from ..models.session import WorkSession, SessionCreate, SessionEnd
 from ..models.common import utcnow
-from ..core.schedule import default_work_hours, open_seconds
+from ..core.schedule import default_work_hours, open_seconds, shift_starts
 
 
 async def _work_schedule(session, company_id):
@@ -152,7 +153,7 @@ async def delete_session(session_id: str, ctx: CompanyContext = Depends(get_acti
 
 
 async def _warehouse_ids(session, company_id) -> set:
-    """Locations where nothing is *worked on*, so OEE and takt would be
+    """Locations where nothing is *worked on*, so OEE and cycle time would be
     meaningless: a warehouse (receives routes but sends none — finished goods
     land there on purpose, and its OEE would measure storage time), and any
     location bound to an integration partner, which represents work entering or
@@ -171,7 +172,73 @@ async def _warehouse_ids(session, company_id) -> set:
     return (has_in - has_out) | bound
 
 
-# ─── All-stations OEE / takt-time summary ────────────────────────────────────
+
+# ─── Line cycle time ─────────────────────────────────────────────────────────
+
+# How far back to look for departures. Long enough to be stable across a slow
+# week, short enough that a year-old pilot run cannot skew today's number.
+_LINE_CYCLE_LOOKBACK_DAYS = 30
+
+
+async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
+    """Seconds per piece between a station's departures — its actual exit rate.
+
+    Cycle time answers "how long does the work take"; this answers "how often
+    does a piece actually leave", which is the number that moves when the line
+    is starved, blocked or waiting for a forklift. The gap between the two is
+    the waste.
+
+    The clock starts when work *could* have left — the start of the shift — and
+    is re-anchored to each departure, so what is measured is the interval a lot
+    waited before moving, not how long it sat over a weekend. Every shift
+    opening resets it, which is what lets a lot finished after hours still be
+    counted against the shift that follows rather than against the night.
+
+    Divided by units: moving a lot of ten is ten pieces leaving, not one.
+    """
+    now = utcnow()
+    since = now - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS)
+    rows = (await session.execute(
+        select(CardEventRow.fromStation, CardEventRow.timestamp, CardEventRow.quantity)
+        .where(CardEventRow.companyId == company_id,
+               CardEventRow.type == "moved",
+               CardEventRow.fromStation.isnot(None),
+               CardEventRow.timestamp >= since)
+        .order_by(CardEventRow.timestamp.asc())
+    )).all()
+    if not rows:
+        return {}
+
+    opens = shift_starts(since, now, schedule, tzname)
+
+    per_station: dict[str, list] = {}
+    for from_station, ts, qty in rows:
+        if ts is None:
+            continue
+        per_station.setdefault(str(from_station), []).append((ts, max(1, qty or 1)))
+
+    out: dict[str, float] = {}
+    for station_id, departures in per_station.items():
+        intervals: list[float] = []
+        anchor = None
+        oi = 0
+        for ts, qty in departures:
+            # Re-anchor to the most recent shift opening at or before this
+            # departure: work that could not have been done is not delay.
+            while oi < len(opens) and opens[oi] <= ts:
+                if anchor is None or opens[oi] > anchor:
+                    anchor = opens[oi]
+                oi += 1
+            if anchor is not None and ts > anchor:
+                intervals.append((ts - anchor).total_seconds() / qty)
+            # The departure starts the clock for whatever leaves next.
+            anchor = ts
+        if intervals:
+            out[station_id] = sum(intervals) / len(intervals)
+    return out
+
+
+# ─── All-stations OEE / cycle-time summary ───────────────────────────────────
 
 @router.get("/stats")
 async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
@@ -191,18 +258,20 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
     rows = (await session.execute(stmt)).all()
     schedule, tzname = await _work_schedule(session, ctx.company_id)
     warehouses = await _warehouse_ids(session, ctx.company_id)
+    line_cycles = await _line_cycle_times(session, ctx.company_id, schedule, tzname)
     results = []
     for d in rows:
         total_units = d.totalUnits or 0
         total_working = d.totalWorking or 0.0
-        takt = total_working / total_units if total_units > 0 else None
+        cycle = total_working / total_units if total_units > 0 else None
         is_warehouse = d.stationId in warehouses
         results.append({
             "stationId": str(d.stationId),
             "sessionCount": d.sessionCount,
             "totalUnits": total_units,
             "totalWorkingSec": total_working,
-            "taktTimeSec": takt,
+            "cycleTimeSec": cycle,
+            "lineCycleTimeSec": line_cycles.get(str(d.stationId)),
             # A warehouse stores, it does not run — OEE would be meaningless.
             "oee": None if is_warehouse else _oee(total_working, d.firstStart, d.lastEnd,
                                                   schedule, tzname),
@@ -211,7 +280,7 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
     return results
 
 
-# ─── Per-station OEE and takt-time ───────────────────────────────────────────
+# ─── Per-station OEE and cycle time ──────────────────────────────────────────
 
 @router.get("/stats/{station_id}")
 async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(get_active_company),
@@ -219,7 +288,7 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
     def empty(is_warehouse: bool = False):
         return {
             "stationId": station_id, "sessionCount": 0, "totalUnits": 0,
-            "totalWorkingSec": 0.0, "taktTimeSec": None, "oee": None,
+            "totalWorkingSec": 0.0, "cycleTimeSec": None, "lineCycleTimeSec": None, "oee": None,
             "isWarehouse": is_warehouse,
         }
     sid = parse_uuid(station_id)
@@ -241,18 +310,21 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
 
     total_units = sum(r.quantity for r in rows)
     total_working = sum((r.durationSec or 0) for r in rows)
-    takt_time = total_working / total_units if total_units > 0 else None
+    cycle_time = total_working / total_units if total_units > 0 else None
     starts = [r.startedAt for r in rows if r.startedAt]
     ends = [r.endedAt for r in rows if r.endedAt]
     is_warehouse = sid in await _warehouse_ids(session, ctx.company_id)
+    schedule, tzname = await _work_schedule(session, ctx.company_id)
+    line_cycle = (await _line_cycle_times(session, ctx.company_id, schedule, tzname)).get(station_id)
     if starts and ends and not is_warehouse:
-        schedule, tzname = await _work_schedule(session, ctx.company_id)
         oee = _oee(total_working, min(starts), max(ends), schedule, tzname)
     else:
         oee = None   # a warehouse stores rather than runs
 
     return {
         "stationId": station_id, "sessionCount": len(rows), "totalUnits": total_units,
-        "totalWorkingSec": total_working, "taktTimeSec": takt_time, "oee": oee,
+        "totalWorkingSec": total_working, "cycleTimeSec": cycle_time,
+        "lineCycleTimeSec": line_cycle,
+        "oee": oee,
         "isWarehouse": is_warehouse,
     }

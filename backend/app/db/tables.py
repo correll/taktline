@@ -320,6 +320,10 @@ class Process(Base):
     routes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     mapId: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # The beat this process is *meant* to hold: available time ÷ customer
+    # demand. A target, not a measurement — the thing cycle time is compared
+    # against. None until someone sets it; nothing invents one.
+    desiredTaktSec: Mapped[float | None] = mapped_column(Float, nullable=True)
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
 
@@ -513,11 +517,11 @@ class GlobalSettings(Base):
     # 7×24 grid of 0/1 (day 0 = Monday) — the hours the plant is meant to run.
     # Drives OEE (working time ÷ open time). Defaults to Mon–Fri 9–5.
     workHours: Mapped[list] = mapped_column(JSONB, nullable=False, default=_default_work_hours)
-    # Show the operator a progress arc against the *station's* expected takt.
+    # Show the operator a progress arc against the *station's* measured cycle time.
     # Off by default and per company on purpose: pace feedback shown to the
     # person doing the work is the line between useful and surveillance, so
     # switching it on has to be a deliberate, local decision.
-    showTaktArc: Mapped[bool] = mapped_column(Boolean, nullable=False,
+    showCycleArc: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                               server_default=text("false"), default=False)
 
 

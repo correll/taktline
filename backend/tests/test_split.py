@@ -220,7 +220,7 @@ def test_warehouse_is_excluded_from_oee():
     assert stats[work["_id"]]["oee"] is not None          # a real station still reports
     assert stats[wh["_id"]]["isWarehouse"] is True
     assert stats[wh["_id"]]["oee"] is None                # the warehouse does not
-    assert stats[wh["_id"]]["taktTimeSec"] is not None    # throughput still measured
+    assert stats[wh["_id"]]["cycleTimeSec"] is not None    # cycle time still measured
 
     one = a.req("GET", f"/sessions/stats/{wh['_id']}").json()
     assert one["isWarehouse"] is True and one["oee"] is None

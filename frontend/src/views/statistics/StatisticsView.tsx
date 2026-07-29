@@ -210,12 +210,12 @@ export default function StatisticsView() {
             )}
           </Panel>
 
-          {/* Takt-time / OEE by location */}
-          <Panel label="TAKT TIME & OEE BY LOCATION" wide>
+          {/* Cycle-time / OEE by location */}
+          <Panel label="CYCLE TIME, LINE CYCLE TIME & OEE BY LOCATION" wide>
             {stationList.length === 0 ? (
               <Empty />
             ) : (
-              <TaktOeeTable stations={stationList} statsMap={sessionStatsMap} />
+              <CycleOeeTable stations={stationList} statsMap={sessionStatsMap} />
             )}
           </Panel>
 
@@ -305,7 +305,7 @@ function MachineStatusGrid({ machines }: { machines: Record<string, import('../.
   )
 }
 
-function TaktOeeTable({
+function CycleOeeTable({
   stations,
   statsMap,
 }: {
@@ -331,7 +331,7 @@ function TaktOeeTable({
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${color.border}` }}>
-            {['Location', 'Sessions', 'Units', 'Working time', 'Takt time', 'OEE'].map((h) => (
+            {['Location', 'Sessions', 'Units', 'Working time', 'Cycle time', 'Line cycle time', 'OEE'].map((h) => (
               <th key={h} style={{
                 ...colStyle,
                 textAlign:     h === 'Location' ? 'left' : 'right',
@@ -346,10 +346,10 @@ function TaktOeeTable({
         <tbody>
           {stations.map((s) => {
             const st = statsMap[s._id]
-            const takt = st?.taktTimeSec != null
-              ? st.taktTimeSec >= 60
-                ? `${(st.taktTimeSec / 60).toFixed(1)} min`
-                : `${st.taktTimeSec.toFixed(1)} s`
+            const cycle = st?.cycleTimeSec != null
+              ? st.cycleTimeSec >= 60
+                ? `${(st.cycleTimeSec / 60).toFixed(1)} min`
+                : `${st.cycleTimeSec.toFixed(1)} s`
               : '—'
             // A warehouse stores rather than runs, so it reports no OEE by
             // design — say so instead of showing a bare dash.
@@ -358,6 +358,18 @@ function TaktOeeTable({
               : st?.oee != null
                 ? `${(st.oee * 100).toFixed(1)}%`
                 : '—'
+            // The actual exit rate: how often a piece really leaves. Cycle time
+            // is how long the work takes; the gap between them is the waiting.
+            const lineCycle = st?.lineCycleTimeSec != null
+              ? st.lineCycleTimeSec >= 60
+                ? `${(st.lineCycleTimeSec / 60).toFixed(1)} min`
+                : `${st.lineCycleTimeSec.toFixed(1)} s`
+              : '—'
+            // Flagged only when the line rate is materially slower than the work
+            // itself — that difference is queueing, blocking or transport, and
+            // it is the number worth chasing.
+            const starved = st?.lineCycleTimeSec != null && st?.cycleTimeSec != null
+              && st.cycleTimeSec > 0 && st.lineCycleTimeSec > st.cycleTimeSec * 1.5
             const workMin = st ? `${(st.totalWorkingSec / 60).toFixed(0)} min` : '—'
             const oeeColor = st?.isWarehouse ? color.textDim
               : st?.oee != null
@@ -375,7 +387,12 @@ function TaktOeeTable({
                 <td style={{ ...colStyle, color: color.textSecondary }}>{st?.sessionCount ?? '—'}</td>
                 <td style={{ ...colStyle, color: color.textSecondary }}>{st?.totalUnits    ?? '—'}</td>
                 <td style={{ ...colStyle, color: color.textSecondary }}>{workMin}</td>
-                <td style={{ ...colStyle, color: color.textSecondary }}>{takt}</td>
+                <td style={{ ...colStyle, color: color.textSecondary }}>{cycle}</td>
+                <td style={{ ...colStyle, color: starved ? color.statusWarning : color.textSecondary }}
+                    title={starved ? 'Pieces leave much slower than the work takes — waiting, not working'
+                                   : undefined}>
+                  {lineCycle}
+                </td>
                 <td style={{ ...colStyle, color: oeeColor, fontWeight: st?.oee != null ? 700 : 400 }}>{oee}</td>
               </tr>
             )

@@ -10,7 +10,7 @@ import { mergeNodes } from '../../domain/graph'
 import { mergeApi, type MergePreview } from '../../api/merge.api'
 import { cardsApi } from '../../api/cards.api'
 import LotCard, { lotLabel } from '../../components/lots/LotCard'
-import TaktArc from '../../components/operator/TaktArc'
+import CycleArc from '../../components/operator/CycleArc'
 import { integrationProvider } from '../../domain/integrations'
 import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 const ScanSheet = React.lazy(() => import('../../components/scan/ScanSheet'))
@@ -895,18 +895,18 @@ function WorkingPanel({
   const tmpl     = card ? templates[card.lotTemplateId] : null
   const timeStr  = formatElapsed(elapsed)
 
-  // Pace feedback against the *station's* measured takt — opt-in per company,
-  // and absent entirely when the station has no measured takt to compare to.
-  const showTaktArc = useGlobalSettingsStore((g) => g.settings.showTaktArc)
-  const [stationTakt, setStationTakt] = useState<number | null>(null)
+  // Pace feedback against the *station's* measured cycle time — opt-in per company,
+  // and absent entirely when the station has no measured cycle time to compare to.
+  const showCycleArc = useGlobalSettingsStore((g) => g.settings.showCycleArc)
+  const [stationCycle, setStationCycle] = useState<number | null>(null)
   useEffect(() => {
-    if (!showTaktArc) { setStationTakt(null); return }
+    if (!showCycleArc) { setStationCycle(null); return }
     let alive = true
     sessionsApi.stationStats(stationId)
-      .then((st) => { if (alive) setStationTakt(st.taktTimeSec) })
-      .catch(() => { if (alive) setStationTakt(null) })
+      .then((st) => { if (alive) setStationCycle(st.cycleTimeSec) })
+      .catch(() => { if (alive) setStationCycle(null) })
     return () => { alive = false }
-  }, [showTaktArc, stationId])
+  }, [showCycleArc, stationId])
 
   const doStop = async () => { setStopping(true); try { await onStop() } finally { setStopping(false) } }
 
@@ -938,9 +938,9 @@ function WorkingPanel({
         <div style={{ fontSize: 10, color: color.textDim, marginTop: 8, fontFamily: font.mono, letterSpacing: '0.12em' }}>
           ELAPSED TIME
         </div>
-        {showTaktArc && stationTakt != null && stationTakt > 0 && (
+        {showCycleArc && stationCycle != null && stationCycle > 0 && (
           <div style={{ marginTop: size.sp4 }}>
-            <TaktArc elapsedSec={elapsed} expectedSec={stationTakt * Math.max(1, quantity)} />
+            <CycleArc elapsedSec={elapsed} expectedSec={stationCycle * Math.max(1, quantity)} />
           </div>
         )}
       </div>

@@ -483,6 +483,9 @@ function LotPicker({
   const [mergeError,  setMergeError]  = useState<string | null>(null)
   const [selectedPre, setSelectedPre] = useState<Set<string>>(new Set())
   const [preview,     setPreview]     = useState<MergePreview | null>(null)
+  // Which line the worker is assembling, when several merge at this bench.
+  // Null = let the server pick the one that can actually be built now.
+  const [mergeProc,   setMergeProc]   = useState<string | null>(null)
 
   const station = stations[stationId]
   const lots    = Object.values(cards).filter((c) => (c.bins[stationId]?.count ?? 0) > 0)
@@ -498,14 +501,14 @@ function LotPicker({
 
   useEffect(() => {
     if (!isMergeStation) return
-    mergeApi.preview(stationId).then(applyPreview).catch(() => {})
-  }, [stationId, isMergeStation, applyPreview])
+    mergeApi.preview(stationId, mergeProc ?? undefined).then(applyPreview).catch(() => {})
+  }, [stationId, isMergeStation, mergeProc, applyPreview])
 
   const doMerge = async (cardIds?: string[]) => {
     setMerging(true)
     setMergeError(null)
     try {
-      await mergeApi.perform(stationId, cardIds)
+      await mergeApi.perform(stationId, cardIds, mergeProc ?? undefined)
       setSelectedPre(new Set())
       // Refetch templates too — the merge may have auto-provisioned the assembly
       // template server-side; without it in the store the new assembly card
@@ -662,9 +665,30 @@ function LotPicker({
           }}>
             PRECURSORS HERE — SELECT, THEN MERGE
           </div>
+          {/* Which line is being assembled. Two chemistries can share a bench,
+              and the recipe is meaningless without saying whose it is. */}
+          {preview && preview.processes.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: size.sp2 }}>
+              {preview.processes.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setMergeProc(p.id)}
+                  style={{
+                    flex: 1, padding: `${size.sp2} ${size.sp3}`, borderRadius: size.radius,
+                    background: preview.processId === p.id ? '#8B5CF622' : 'transparent',
+                    border: `1px solid ${preview.processId === p.id ? '#8B5CF6' : color.border}`,
+                    color: preview.processId === p.id ? color.textPrimary : color.textSecondary,
+                    fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          )}
           {preview && preview.requirements.length > 0 && (
             <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, marginBottom: size.sp2 }}>
-              1 assembly needs {preview.requirements
+              1 {preview.assemblyTemplateName ?? 'assembly'} needs {preview.requirements
                 .map((r) => `${r.requiredPerAssembly} × ${stations[r.sourceStationId]?.name ?? '?'}`)
                 .join('  +  ')}
             </div>

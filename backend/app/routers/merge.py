@@ -273,6 +273,26 @@ async def _available_units(session, company_id, station_id: str, template_ids: l
     return sum(_bin_count(c, station_id) for c in cards)
 
 
+async def _resolve_unguided_process(session, company_id, station_id: str,
+                                    all_incoming: list[RouteRow]):
+    """Which line an unguided merge means, when the worker has named none.
+
+    Checks **every** line that merges here and prefers one that can actually
+    assemble right now; only if none can does it fall back to the deterministic
+    order. A shared bench is usually mid-build on one line and empty on the
+    other, so answering with the tie-break winner describes a merge nobody can
+    perform: the operator view read the wrong chemistry's recipe off it and
+    reported that nothing could be merged while a complete set sat on the
+    bench. The preview and the merge must answer this the same way, or the
+    screen and the button disagree.
+    """
+    for pid, rs in _merge_candidates(all_incoming):
+        reqs = await _build_requirements(session, company_id, station_id, rs)
+        if reqs and min(r.canMake for r in reqs) >= 1:
+            return pid, rs
+    return _merge_process(all_incoming)
+
+
 async def _proposed_cards(session, company_id, station_id: str, incoming: list[RouteRow],
                           assemblies: int) -> dict:
     """Which lot cards an unguided merge would draw from, per route.
@@ -348,7 +368,11 @@ async def get_merge_preview(station_id: str, processId: Optional[str] = None,
     ]
 
     wanted = parse_uuid(processId) if processId else None
-    process_id, incoming = _merge_process(all_incoming, wanted)
+    if wanted is not None:
+        process_id, incoming = _merge_process(all_incoming, wanted)
+    else:
+        process_id, incoming = await _resolve_unguided_process(
+            session, ctx.company_id, station_id, all_incoming)
 
     if process_id is None:
         return MergePreview(isMergeStation=False, hasAssemblyTemplate=False,
@@ -410,16 +434,13 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
                 raise HTTPException(400, "Selected cards span two processes — a merge "
                                          "assembles within one value stream.")
 
-    process_id, incoming = _merge_process(all_incoming, wanted_process)
-
-    # AUTO on a shared bench: prefer a process that can actually assemble now,
-    # in the same deterministic order the preview reports.
-    if process_id is not None and wanted_process is None and selected is None:
-        for pid, rs in _merge_candidates(all_incoming):
-            reqs = await _build_requirements(session, ctx.company_id, station_id, rs)
-            if reqs and min(r.canMake for r in reqs) >= 1:
-                process_id, incoming = pid, rs
-                break
+    if wanted_process is None and selected is None:
+        # Unguided: the same rule the preview answers with, so the screen and
+        # the button never describe different merges.
+        process_id, incoming = await _resolve_unguided_process(
+            session, ctx.company_id, station_id, all_incoming)
+    else:
+        process_id, incoming = _merge_process(all_incoming, wanted_process)
 
     if process_id is None:
         raise HTTPException(400, "Not a merge station (fewer than 2 incoming routes)"

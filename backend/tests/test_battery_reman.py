@@ -287,6 +287,32 @@ def test_preview_scopes_to_one_process_and_ignores_the_erp_link(actor):
         assert q["assembliesPossible"] == 1
 
 
+def test_an_unguided_preview_finds_the_line_that_can_actually_assemble(actor):
+    """A shared bench is usually mid-build on one line and empty on the other.
+    The preview must check EVERY line and answer with one that can be built,
+    not the tie-break winner — the operator view reads its recipe off this, and
+    reported "nothing to merge" while a complete LFP set sat on the bench.
+    Preview and merge have to agree, or the screen contradicts the button."""
+    a = actor(); bootstrap_admin(a)
+    g = _build(a)
+    # Stage ONLY LFP; NMC (the tie-break winner) is left with nothing.
+    _order(a, g, g.lfp, 1, "LFP-1")
+    mods, bus = _teardown(a, g, g.lfp, "LFP-1")
+    _advance(a, mods["_id"], g.modtest, g.reasm, 6)
+    _advance(a, bus["_id"], g.busbar, g.reasm, 1)
+
+    p = a.req("GET", f"/merge/{g.reasm}").json()
+    assert p["processId"] == g.lfp["proc"], "the preview described the empty line"
+    assert p["assemblyTemplateName"] == "Reman LFP"
+    assert p["assembliesPossible"] == 1
+
+    # The unguided merge agrees with what the screen just promised.
+    r = a.req("POST", f"/merge/{g.reasm}")
+    assert r.status_code == 201, r.text
+    made = a.req("GET", f"/cards/{r.json()['createdCardId']}").json()
+    assert made["lotTemplateId"] == g.lfp["reman"]
+
+
 def test_the_proposal_is_exactly_what_an_unguided_merge_consumes(actor):
     """The modal opens on the preview's proposed cards and merges THOSE, so the
     proposal has to be the same merge the station would have done by itself —

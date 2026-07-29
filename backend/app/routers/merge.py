@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.connection import SESSION_SCOPE, get_session, parse_uuid, require_uuid
 from ..db.tables import (
-    ProductionOrder as OrderRow,
+    ProductionOrder as OrderRow, Process as ProcessRow,
     Route as RouteRow, LotTemplate as LotTemplateRow,
     Card as CardRow, Station as StationRow,
 )
@@ -25,6 +25,18 @@ class RequirementInfo(BaseModel):
     requiredPerAssembly: int
     availableUnits: int
     canMake: int
+    # Which products count as this branch's precursor. Authoritative: it honours
+    # a declared branch product and the branch's own process, so a client never
+    # has to re-derive the matching (and offer a sibling line's lots by mistake).
+    precursorTemplateIds: List[str] = []
+
+
+class MergeProcessInfo(BaseModel):
+    """A process that merges at this station — the pickable lines when a bench
+    is shared."""
+    id: str
+    name: str
+    feeds: int
 
 
 class MergePreview(BaseModel):
@@ -34,6 +46,10 @@ class MergePreview(BaseModel):
     assemblyTemplateName: Optional[str] = None
     assembliesPossible: int
     requirements: List[RequirementInfo]
+    # Which line this preview describes, and every line that merges here. A
+    # shared bench assembles one process at a time, so the client can say which.
+    processId: Optional[str] = None
+    processes: List[MergeProcessInfo] = []
 
 
 class MergeResult(BaseModel):
@@ -267,6 +283,7 @@ async def _build_requirements(session, company_id, station_id: str, incoming: li
             requiredPerAssembly=route_qty,
             availableUnits=available,
             canMake=available // route_qty,
+            precursorTemplateIds=[str(t) for t in tmpl_ids],
         ))
     return result
 
@@ -274,16 +291,39 @@ async def _build_requirements(session, company_id, station_id: str, incoming: li
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/{station_id}", response_model=MergePreview)
-async def get_merge_preview(station_id: str, ctx: CompanyContext = Depends(get_active_company),
+async def get_merge_preview(station_id: str, processId: Optional[str] = None,
+                            ctx: CompanyContext = Depends(get_active_company),
                             session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """What one assembly needs here, and how many are possible.
+
+    Scoped to ONE process: a bench two lines share has each line's recipe, and
+    showing them together describes a merge that does not exist. `processId`
+    names the line (the modal's picker); without it the deterministic order
+    applies. Every line that merges here is listed either way, so a client can
+    offer the choice.
+    """
     station_uuid = require_uuid(station_id, "Station not found")
     await _assert_station(session, station_uuid, ctx.company_id)
-    process_id, incoming = _merge_process(
-        await _incoming_routes(session, ctx.company_id, station_uuid))
+    all_incoming = await _incoming_routes(session, ctx.company_id, station_uuid)
+    candidates = _merge_candidates(all_incoming)
+
+    proc_rows = {}
+    if candidates:
+        proc_rows = {p.id: p for p in (await session.execute(
+            select(ProcessRow).where(ProcessRow.id.in_([pid for pid, _ in candidates]))
+        )).scalars().all()}
+    process_list = [
+        MergeProcessInfo(id=str(pid), name=(proc_rows[pid].name if pid in proc_rows else "Process"),
+                         feeds=len(rs))
+        for pid, rs in candidates
+    ]
+
+    wanted = parse_uuid(processId) if processId else None
+    process_id, incoming = _merge_process(all_incoming, wanted)
 
     if process_id is None:
         return MergePreview(isMergeStation=False, hasAssemblyTemplate=False,
-                            assembliesPossible=0, requirements=[])
+                            assembliesPossible=0, requirements=[], processes=process_list)
 
     assembly_tmpl = await _assembly_template(session, ctx.company_id, station_uuid, process_id)
     requirements = await _build_requirements(session, ctx.company_id, station_id, incoming)
@@ -296,6 +336,8 @@ async def get_merge_preview(station_id: str, ctx: CompanyContext = Depends(get_a
         assemblyTemplateName=assembly_tmpl.name if assembly_tmpl else None,
         assembliesPossible=assemblies,
         requirements=requirements,
+        processId=str(process_id),
+        processes=process_list,
     )
 
 

@@ -6,6 +6,15 @@ export interface RequirementInfo {
   requiredPerAssembly: number
   availableUnits: number
   canMake: number
+  /** Which products count as this branch's precursor — authoritative, so a
+   *  client never re-derives the matching and offers a sibling line's lots. */
+  precursorTemplateIds: string[]
+}
+
+export interface MergeProcessInfo {
+  id: string
+  name: string
+  feeds: number
 }
 
 export interface MergePreview {
@@ -15,6 +24,9 @@ export interface MergePreview {
   assemblyTemplateName: string | null
   assembliesPossible: number
   requirements: RequirementInfo[]
+  /** The line this preview describes, and every line that merges here. */
+  processId: string | null
+  processes: MergeProcessInfo[]
 }
 
 export interface MergeResult {
@@ -36,13 +48,16 @@ export interface PullResult {
 }
 
 export const mergeApi = {
-  preview: (stationId: string): Promise<MergePreview> =>
-    client.get(`/merge/${stationId}`),
+  preview: (stationId: string, processId?: string): Promise<MergePreview> =>
+    client.get(`/merge/${stationId}`, processId ? { params: { processId } } : undefined),
 
   // No cardIds → auto mode (consume any available precursors);
   // with cardIds → consume only from the worker-selected lot cards.
-  perform: (stationId: string, cardIds?: string[]): Promise<MergeResult> =>
-    client.post(`/merge/${stationId}`, cardIds && cardIds.length ? { cardIds } : {}),
+  perform: (stationId: string, cardIds?: string[], processId?: string): Promise<MergeResult> =>
+    client.post(`/merge/${stationId}`, {
+      ...(cardIds && cardIds.length ? { cardIds } : {}),
+      ...(processId ? { processId } : {}),
+    }),
 
   pull: (stationId: string, quantity: number, processId?: string): Promise<PullResult> =>
     client.post(`/merge/${stationId}/pull`,

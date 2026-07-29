@@ -16,7 +16,6 @@ interface Props {
  * branch, or press AUTO to let the system pick. */
 export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
   const templates = useProcessesStore((s) => s.lotTemplates)
-  const routes    = useProcessesStore((s) => s.routes)
   const stations  = useStationsStore((s) => s.stations)
   const cards     = useCardsStore((s) => s.cards)
   const fetchAll  = useCardsStore((s) => s.fetchAll)
@@ -26,26 +25,37 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
   const [preview,  setPreview]  = useState<MergePreview | null>(null)
   const [merging,  setMerging]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
+  // Which line is being assembled, when several merge at this bench.
+  const [procId,   setProcId]   = useState<string | null>(null)
 
   useEffect(() => {
-    mergeApi.preview(stationId).then(setPreview).catch(() => {})
-  }, [stationId])
+    mergeApi.preview(stationId, procId ?? undefined).then((p) => {
+      setPreview(p)
+      setProcId((cur) => cur ?? p.processId)
+    }).catch(() => {})
+  }, [stationId, procId])
 
   const station = stations[stationId]
 
-  // One group per feeding branch: the route's source station + the candidate
-  // cards here whose template originates at that source.
+  // One group per feeding branch, straight from the preview — which is the
+  // authority on what this merge consumes. Deriving the branches from the raw
+  // route list instead showed every process's feeds at once (each source twice
+  // on a two-chemistry bench) and a group for the ERP's demand link, which
+  // hands this station nothing: "no lots from Odoo here yet", forever.
   const branches = useMemo(() => {
-    const incoming = Object.values(routes).filter((r) => r.unload === stationId)
-    return incoming.map((r) => {
-      const source = stations[r.load]
-      const candidates = Object.values(cards).filter((c) => {
-        if ((c.bins[stationId]?.count ?? 0) <= 0) return false
-        return templates[c.lotTemplateId]?.startStationId === r.load
-      })
-      return { route: r, source, candidates, need: Math.max(1, r.quantity) }
+    if (!preview) return []
+    return preview.requirements.map((req) => {
+      const allowed = new Set(req.precursorTemplateIds)
+      const candidates = Object.values(cards).filter((c) =>
+        (c.bins[stationId]?.count ?? 0) > 0 && allowed.has(c.lotTemplateId))
+      return {
+        key:    req.routeId,
+        source: stations[req.sourceStationId],
+        candidates,
+        need:   Math.max(1, req.requiredPerAssembly),
+      }
     })
-  }, [routes, stations, cards, templates, stationId])
+  }, [preview, cards, stations, stationId])
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -67,7 +77,8 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
     setMerging(true)
     setError(null)
     try {
-      await mergeApi.perform(stationId, auto ? undefined : [...selected])
+      await mergeApi.perform(stationId, auto ? undefined : [...selected],
+                             procId ?? undefined)
       await Promise.all([fetchAll(), fetchProcesses()])
       onMerged?.()
       onClose()
@@ -95,20 +106,49 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
           Merge — <span style={{ color: color.textSecondary }}>{station?.name ?? stationId}</span>
         </div>
 
+        {/* Which line is being assembled. A shared bench holds one recipe per
+            process, and they are different assemblies — so this is a choice,
+            not a detail. Changing it refetches the preview and clears any
+            selection made against the other line's groups. */}
+        {preview && preview.processes.length > 1 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp1 }}>
+            <span style={{ fontSize: 10, fontFamily: font.mono, letterSpacing: '0.08em', color: color.textDim }}>
+              ASSEMBLING
+            </span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {preview.processes.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { setSelected(new Set()); setProcId(p.id) }}
+                  style={{
+                    flex: 1, minWidth: 90, padding: '7px 10px', borderRadius: 5, cursor: 'pointer',
+                    background: preview.processId === p.id ? `${PURPLE}33` : 'transparent',
+                    border: `1px solid ${preview.processId === p.id ? PURPLE : color.border}`,
+                    color: preview.processId === p.id ? color.textPrimary : color.textSecondary,
+                    fontSize: 12.5, fontWeight: 600,
+                  }}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {preview && preview.requirements.length > 0 && (
           <div style={{ fontSize: 11, color: color.textDim, fontFamily: font.mono }}>
-            1 assembly needs {preview.requirements
+            1 {preview.assemblyTemplateName ?? 'assembly'} needs {preview.requirements
               .map((r) => `${r.requiredPerAssembly} × ${stations[r.sourceStationId]?.name ?? '?'}`)
               .join('  +  ')}
           </div>
         )}
 
         {/* One selectable group per feeding branch */}
-        {branches.map(({ route, source, candidates, need }) => {
+        {branches.map(({ key, source, candidates, need }) => {
           const got = candidates.reduce((sum, c) => sum + (selected.has(c._id) ? (c.bins[stationId]?.count ?? 0) : 0), 0)
           const ok  = got >= need
           return (
-            <div key={route._id}>
+            <div key={key}>
               <div style={{
                 display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
                 marginBottom: size.sp1,

@@ -256,6 +256,37 @@ def test_set_aside_to_spares_relocates_and_never_mints(actor):
     assert _at(a, spares) == 2                      # one of each chemistry
 
 
+# ─── The merge preview describes ONE line, and only material feeds ───────────
+
+def test_preview_scopes_to_one_process_and_ignores_the_erp_link(actor):
+    """Reassembly is fed by both chemistries AND by Odoo's demand link. The
+    preview must describe one line's recipe — two requirements, not four, and
+    never one for the ERP, which hands this station nothing. It also names the
+    precursor products per branch, so a client never has to guess them."""
+    a = actor(); bootstrap_admin(a)
+    g = _build(a)
+    _stage_both_lines(a, g)
+
+    p = a.req("GET", f"/merge/{g.reasm}").json()
+    assert p["isMergeStation"] is True
+    assert len(p["requirements"]) == 2, "the preview merged two lines into one recipe"
+    assert {r["sourceStationId"] for r in p["requirements"]} == {g.modtest, g.busbar}
+    assert g.odoo not in {r["sourceStationId"] for r in p["requirements"]}
+    assert {pr["name"] for pr in p["processes"]} == {"NMC", "LFP"}, p["processes"]
+
+    # Each line is reachable, with its own weights and its own precursors.
+    for line, name, mods, bus in ((g.nmc, "NMC", 3, 2), (g.lfp, "LFP", 6, 1)):
+        q = a.req("GET", f"/merge/{g.reasm}?processId={line['proc']}").json()
+        assert q["processId"] == line["proc"]
+        assert q["assemblyTemplateName"] == f"Reman {name}"
+        by_src = {r["sourceStationId"]: r for r in q["requirements"]}
+        assert by_src[g.modtest]["requiredPerAssembly"] == mods
+        assert by_src[g.busbar]["requiredPerAssembly"] == bus
+        assert by_src[g.modtest]["precursorTemplateIds"] == [line["module"]]
+        assert by_src[g.busbar]["precursorTemplateIds"] == [line["busbar"]]
+        assert q["assembliesPossible"] == 1
+
+
 # ─── Pulling at a shared station names its process ───────────────────────────
 
 def test_pull_at_a_shared_station_honours_the_named_process(actor):

@@ -398,14 +398,18 @@ export default function MapCanvas({
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     // A pinch cancels panRef, so this returns early for the rest of the
     // gesture instead of dragging the map along with the zoom.
-    if (!panRef.current) return
-    const dx = e.clientX - panRef.current.startX
-    const dy = e.clientY - panRef.current.startY
+    const pan = panRef.current
+    if (!pan) return
+    const dx = e.clientX - pan.startX
+    const dy = e.clientY - pan.startY
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
       didMoveRef.current = true
       userMovedCameraRef.current = true
     }
-    setViewport((v) => clampVP({ ...v, x: panRef.current!.vpX + dx, y: panRef.current!.vpY + dy }))
+    // The updater must close over the snapshot, not read the ref: React runs
+    // it during the next render, by which point a pointerup or pinch-start in
+    // the same batch may already have nulled panRef.
+    setViewport((v) => clampVP({ ...v, x: pan.vpX + dx, y: pan.vpY + dy }))
   }, [])
 
   // While drawing a route, follow the cursor at the window level — the PixiJS

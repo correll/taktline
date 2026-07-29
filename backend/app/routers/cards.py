@@ -535,12 +535,155 @@ class MoveBody(BaseModel):
     quantity:      int = 1
 
 
+async def _unsplit_back(session, company_id, row: CardRow, from_id: str, to_id: str,
+                        quantity: int):
+    """Moving pieces back onto the location they were cut from re-forms the lot.
+
+    A split is not a move, it is a transformation: one bar becomes four tubes
+    *and* an offcut, all at once. Dragging the tubes back therefore cannot be a
+    plain move — it has to undo the transformation, which means two things a
+    bare move got wrong.
+
+    It divided nothing: four tubes went back as **four bars**, because the
+    branch weight was ignored on the way back though it was applied on the way
+    out. And it left the offcut standing on its own branch, still wearing the
+    lot code of a bar that now exists again. Advance that bar and you get four
+    more tubes and a second offcut — every round trip minting material out of
+    nothing, which is exactly what a Kanban system exists to make impossible.
+
+    So: the pieces on *every* branch are consumed in the ratio the weights
+    describe, and one source lot is re-formed. Returns None when this is not a
+    move back into a split, leaving the ordinary path to handle it.
+    """
+    to_uuid, from_uuid = parse_uuid(to_id), parse_uuid(from_id)
+    if to_uuid is None or from_uuid is None:
+        return None
+    branches = await _outgoing_routes_for_split(session, company_id, to_uuid, row.processId)
+    if len(branches) < 2:
+        return None
+    mine = next((r for r in branches if r.unload == from_uuid), None)
+    if mine is None:
+        return None                       # not coming back down one of the branches
+
+    weight = max(1, mine.quantity or 1)
+    if quantity % weight != 0:
+        raise HTTPException(400,
+            f"{quantity} does not re-form whole units: this branch yields {weight} per unit, "
+            f"so move back a multiple of {weight}.")
+    units = quantity // weight
+
+    # Every sibling branch has to give back its share, or the ratio is broken
+    # and the leftovers become material that was never made.
+    consumed: list[tuple[CardRow, int]] = []
+    for branch in branches:
+        if branch.unload == from_uuid:
+            continue
+        need = units * max(1, branch.quantity or 1)
+        pool = (await session.execute(
+            select(CardRow).where(CardRow.companyId == company_id,
+                                  CardRow.processId == row.processId)
+            .with_for_update()
+        )).scalars().all()
+        # Twins first: the pieces carrying this lot's code are the ones that
+        # came off the same source unit. Only then anything else on the branch.
+        at_branch = [c for c in pool if (c.bins or {}).get(str(branch.unload), {}).get("count", 0) > 0]
+        at_branch.sort(key=lambda c: (c.lotNum != row.lotNum, c.createdAt or utcnow()))
+        remaining = need
+        for cand in at_branch:
+            if remaining <= 0:
+                break
+            have = (cand.bins or {}).get(str(branch.unload), {}).get("count", 0)
+            take = min(have, remaining)
+            consumed.append((cand, take))
+            remaining -= take
+        if remaining > 0:
+            station = await session.get(StationRow, branch.unload)
+            raise HTTPException(400,
+                f"Re-forming {units} unit{'s' if units != 1 else ''} needs {need} at "
+                f"{station.name if station else 'the other branch'}, and only {need - remaining} "
+                f"{'is' if need - remaining == 1 else 'are'} there. The pieces a split produced "
+                "have to go back together.")
+
+    # Take this branch's pieces off the card that was dragged.
+    _take_units(row, from_id, quantity)
+    if not (row.bins or {}):
+        await session.delete(row)
+        _emit_card_delete(session, company_id, str(row.id))
+    else:
+        row.updatedAt = utcnow()
+        _emit_card_update(session, company_id, row)
+
+    for cand, take in consumed:
+        _take_units(cand, str(_branch_station_of(branches, cand)), take)
+        if not (cand.bins or {}):
+            await session.delete(cand)
+            _emit_card_delete(session, company_id, str(cand.id))
+        else:
+            cand.updatedAt = utcnow()
+            _emit_card_update(session, company_id, cand)
+
+    tmpl = await _ensure_origination_template(session, company_id, to_uuid, row.processId)
+    reformed = CardRow(
+        companyId=company_id, lotTemplateId=tmpl.id, processId=row.processId,
+        lotNum=row.lotNum or _gen_lot_code(), totalQuantity=units,
+        bins={to_id: {"count": units}},
+        fields=dict(row.fields or {}), flagged=False, description="",
+        status="idle", orderId=row.orderId,
+    )
+    session.add(reformed)
+    await session.flush()
+    _record_event(session, company_id, str(reformed.id), "created",
+                  fromStation=from_id, toStation=to_id, quantity=units, note="unsplit")
+    _emit_card_update(session, company_id, reformed)
+    return _to_card(reformed)
+
+
+def _take_units(card: CardRow, station_id: str, n: int) -> None:
+    bins = dict(card.bins or {})
+    left = bins.get(station_id, {}).get("count", 0) - n
+    if left <= 0:
+        bins.pop(station_id, None)
+    else:
+        bins[station_id] = {"count": left}
+    card.bins = bins
+    card.totalQuantity = max(1, card.totalQuantity - n)
+
+
+def _branch_station_of(branches, card: CardRow):
+    """Which branch station this card is standing on."""
+    for b in branches:
+        if (card.bins or {}).get(str(b.unload), {}).get("count", 0) > 0:
+            return b.unload
+    return None
+
+
+async def _outgoing_routes_for_split(session, company_id, station_uuid, process_id):
+    """Production routes out of a station, within its process — boundary links
+    to an integration are not branches of anything."""
+    rows = (await session.execute(
+        select(RouteRow).where(RouteRow.companyId == company_id,
+                               RouteRow.load == station_uuid,
+                               RouteRow.processId == process_id)
+    )).scalars().all()
+    bound = set((await session.execute(
+        select(StationRow.id).where(StationRow.companyId == company_id,
+                                    StationRow.integrationProvider.isnot(None))
+    )).scalars().all())
+    return [r for r in rows if r.unload not in bound]
+
+
+
 @router.post("/{card_id}/move", response_model=Card)
 async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(require_super_admin),
                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Super-admin lot-board drag: unconstrained move of units between any two
     bins (forward or backward along the graph — backward can trigger unmerge)."""
     row = await _get_owned(session, card_id, ctx, for_update=True)
+    # Coming back down a split branch undoes the split rather than moving units.
+    reformed = await _unsplit_back(session, ctx.company_id, row, body.fromStationId,
+                                   body.toStationId, body.quantity)
+    if reformed is not None:
+        return reformed
     branches = await _split_branches(session, ctx.company_id, row, body.fromStationId,
                                      body.toStationId)
     if branches is not None:

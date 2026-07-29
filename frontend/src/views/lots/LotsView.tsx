@@ -132,9 +132,28 @@ export default function LotsView() {
     try { return (localStorage.getItem('lots-sort-dir') as 'asc' | 'desc') || 'asc' } catch { return 'asc' }
   })
 
-  const triggerLockFlash = useCallback(() => {
+  // Which card was just refused. The flash used to happen only on the DRAG
+  // button in the toolbar — often a long way from the card someone actually
+  // tried to move, so the refusal read as "the card wiggled and nothing
+  // happened" rather than "the board is locked". Flash both.
+  const [lockedCardId, setLockedCardId] = useState<string | null>(null)
+  const triggerLockFlash = useCallback((cardId?: string) => {
     setLockFlash(true)
-    setTimeout(() => setLockFlash(false), 550)
+    if (cardId) setLockedCardId(cardId)
+    setTimeout(() => { setLockFlash(false); setLockedCardId(null) }, 550)
+  }, [])
+
+  // A drop that unmounts the dragged card (a move, an unsplit) can swallow the
+  // dragend that would clear this, leaving the board believing a drag is still
+  // in progress. Belt and braces: the window always hears the end of a drag.
+  useEffect(() => {
+    const clear = () => setDragging(null)
+    window.addEventListener('dragend', clear)
+    window.addEventListener('drop', clear)
+    return () => {
+      window.removeEventListener('dragend', clear)
+      window.removeEventListener('drop', clear)
+    }
   }, [])
 
   const validDropTargets = useMemo(
@@ -311,7 +330,7 @@ export default function LotsView() {
     const isDropTarget = validDropTargets.has(stationId)
     const props = {
       stationId, station, lots, templates, routes, canEdit, canManageLots, onLockedDrag: triggerLockFlash,
-      unlocked: canEdit && unlocked, isDragging: dragging !== null, isDropTarget,
+      unlocked: canEdit && unlocked, isDragging: dragging !== null, isDropTarget, lockedCardId,
       onDragStart: (cardId: string) => setDragging({ cardId, fromStationId: stationId }),
       onDragEnd:   () => setDragging(null),
       onDrop:      () => handleDrop(stationId),
@@ -660,6 +679,7 @@ interface ColumnProps {
   onMoveLot:    (card: Card) => void
   // Drag-and-drop
   unlocked:     boolean
+  lockedCardId: string | null
   isDragging:   boolean
   isDropTarget: boolean
   onDragStart:  (cardId: string) => void
@@ -671,7 +691,7 @@ interface ColumnProps {
   sortDir:      'asc' | 'desc'
   canEdit:      boolean   // super-admin: drag / move / unmerge
   canManageLots: boolean  // admin+: create lots, pull precursors, merge
-  onLockedDrag: () => void
+  onLockedDrag: (cardId?: string) => void
 }
 
 // ─── Drop-zone styling helper ─────────────────────────────────────────────────
@@ -700,7 +720,7 @@ interface KanbanColumnProps extends ColumnProps {
 function KanbanColumn({
   stationId, station, lots, templates, routes,
   onCreateLot, onOpenDetail, onMoveLot,
-  unlocked, isDragging, isDropTarget, onDragStart, onDragEnd, onDrop,
+  unlocked, isDragging, isDropTarget, lockedCardId, onDragStart, onDragEnd, onDrop,
   cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag,
 }: KanbanColumnProps) {
   const [hovering,   setHovering]   = useState(false)
@@ -782,9 +802,10 @@ function KanbanColumn({
           <div
             key={card._id}
             data-lot-id={card._id}
+            className={lockedCardId === card._id ? 'lock-flash' : undefined}
             draggable={canEdit}
             onDragStart={(e) => {
-              if (!unlocked) { e.preventDefault(); onLockedDrag(); return }
+              if (!unlocked) { e.preventDefault(); onLockedDrag(card._id); return }
               e.dataTransfer.effectAllowed = 'move'
               e.dataTransfer.setData('text/plain', card._id)
               onDragStart(card._id)
@@ -944,7 +965,7 @@ interface MergeColumnProps extends ColumnProps {
 
 function MergeColumn({
   stationId, station, lots, templates, routes, onCreateLot, onOpenDetail, onMoveLot,
-  unlocked, isDragging, isDropTarget, onDragStart, onDragEnd, onDrop,
+  unlocked, isDragging, isDropTarget, lockedCardId, onDragStart, onDragEnd, onDrop,
   cardLimit, sortBy, sortDir, canEdit, canManageLots, onLockedDrag,
 }: MergeColumnProps) {
   const navigate    = useNavigate()
@@ -1098,9 +1119,10 @@ function MergeColumn({
           <div
             key={card._id}
             data-lot-id={card._id}
+            className={lockedCardId === card._id ? 'lock-flash' : undefined}
             draggable={canEdit}
             onDragStart={(e) => {
-              if (!unlocked) { e.preventDefault(); onLockedDrag(); return }
+              if (!unlocked) { e.preventDefault(); onLockedDrag(card._id); return }
               e.dataTransfer.effectAllowed = 'move'
               e.dataTransfer.setData('text/plain', card._id)
               onDragStart(card._id)

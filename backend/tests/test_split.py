@@ -363,3 +363,90 @@ def test_output_product_rejected_on_an_unbranched_route():
     r = a.req("POST", "/routes/", {"processId": p, "load": x["_id"], "unload": y["_id"],
                                    "quantity": 1, "outputTemplateId": t["_id"]})
     assert r.status_code == 400 and "split" in r.text
+
+
+# ─── Moving back down a split branch re-forms the lot ────────────────────────
+
+def _one_bar_split(a: Actor):
+    """One bar advanced through the split → 4 tubes + 1 scrap."""
+    bar, tube, scrap, proc = _line(a)
+    tmpl = a.req("POST", "/lot-templates/", {"name": "Bar", "processId": proc["_id"],
+                                             "startStationId": bar["_id"]}).json()
+    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": proc["_id"],
+                                     "totalQuantity": 1,
+                                     "bins": {bar["_id"]: {"count": 1}}}).json()
+    r = a.req("POST", f"/cards/{card['_id']}/advance",
+              {"fromStationId": bar["_id"], "toStationId": tube["_id"], "quantity": 1})
+    assert r.status_code == 200, r.text
+    return bar["_id"], tube["_id"], scrap["_id"]
+
+
+def _at(a: Actor, station: str) -> int:
+    return sum(c["bins"].get(station, {}).get("count", 0)
+               for c in a.req("GET", "/cards/").json())
+
+
+def _piece_at(a: Actor, station: str):
+    return next(c for c in a.req("GET", "/cards/").json() if c["bins"].get(station))
+
+
+def test_moving_pieces_back_reforms_one_source_lot(actor):
+    """The bug this exists for: a bare move sent four tubes back as four BARS
+    and left the scrap standing. Advance those bars and you get four more tubes
+    and a second scrap — material created out of nothing on every round trip,
+    which is precisely what a Kanban system must make impossible."""
+    a = actor(); bootstrap_admin(a)
+    bar, tube, scrap = _one_bar_split(a)
+    assert (_at(a, tube), _at(a, scrap), _at(a, bar)) == (4, 1, 0)
+
+    piece = _piece_at(a, tube)
+    r = a.req("POST", f"/cards/{piece['_id']}/move",
+              {"fromStationId": tube, "toStationId": bar, "quantity": 4})
+    assert r.status_code == 200, r.text
+
+    assert _at(a, bar) == 1, "four tubes re-form ONE bar, not four"
+    assert _at(a, scrap) == 0, "the scrap goes back with its twins"
+    assert _at(a, tube) == 0
+
+
+def test_a_partial_move_back_is_refused_rather_than_rounded(actor):
+    """Three tubes are not a whole bar. Rounding would either invent material
+    or silently destroy it; refusing says which."""
+    a = actor(); bootstrap_admin(a)
+    bar, tube, scrap = _one_bar_split(a)
+    piece = _piece_at(a, tube)
+    r = a.req("POST", f"/cards/{piece['_id']}/move",
+              {"fromStationId": tube, "toStationId": bar, "quantity": 3})
+    assert r.status_code == 400, r.text
+    assert "multiple of 4" in r.json()["detail"], r.text
+    assert (_at(a, tube), _at(a, scrap)) == (4, 1), "nothing moved"
+
+
+def test_moving_back_without_the_twins_is_refused(actor):
+    """If the scrap has already gone elsewhere the pieces cannot be re-formed —
+    and pretending otherwise is how the extra unit appears."""
+    a = actor(); bootstrap_admin(a)
+    bar, tube, scrap = _one_bar_split(a)
+    a.req("DELETE", f"/cards/{_piece_at(a, scrap)['_id']}")
+    piece = _piece_at(a, tube)
+    r = a.req("POST", f"/cards/{piece['_id']}/move",
+              {"fromStationId": tube, "toStationId": bar, "quantity": 4})
+    assert r.status_code == 400, r.text
+    assert "have to go back together" in r.json()["detail"], r.text
+
+
+def test_the_round_trip_conserves_units(actor):
+    """Split, re-form, split again — still one bar's worth, never more."""
+    a = actor(); bootstrap_admin(a)
+    bar, tube, scrap = _one_bar_split(a)
+    for _ in range(3):
+        piece = _piece_at(a, tube)
+        assert a.req("POST", f"/cards/{piece['_id']}/move",
+                     {"fromStationId": tube, "toStationId": bar,
+                      "quantity": 4}).status_code == 200
+        assert (_at(a, bar), _at(a, tube), _at(a, scrap)) == (1, 0, 0)
+        src = _piece_at(a, bar)
+        assert a.req("POST", f"/cards/{src['_id']}/advance",
+                     {"fromStationId": bar, "toStationId": tube,
+                      "quantity": 1}).status_code == 200
+        assert (_at(a, tube), _at(a, scrap)) == (4, 1)

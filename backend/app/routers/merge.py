@@ -29,6 +29,9 @@ class RequirementInfo(BaseModel):
     # a declared branch product and the branch's own process, so a client never
     # has to re-derive the matching (and offer a sibling line's lots by mistake).
     precursorTemplateIds: List[str] = []
+    # The lot cards an unguided merge would draw from — the modal's opening
+    # selection, so the worker adjusts a proposal instead of guessing.
+    proposedCardIds: List[str] = []
 
 
 class MergeProcessInfo(BaseModel):
@@ -270,6 +273,32 @@ async def _available_units(session, company_id, station_id: str, template_ids: l
     return sum(_bin_count(c, station_id) for c in cards)
 
 
+async def _proposed_cards(session, company_id, station_id: str, incoming: list[RouteRow],
+                          assemblies: int) -> dict:
+    """Which lot cards an unguided merge would draw from, per route.
+
+    The same cards, in the same order, that ``perform_merge`` consumes —
+    smallest bin first, so partial lots are cleared before whole ones are
+    broken into. The modal opens with these ticked, which is what turns "press
+    AUTO and hope" into a proposal a worker can read and adjust.
+    """
+    out: dict = {}
+    for route in incoming:
+        route_qty = max(1, route.quantity)
+        tmpl_ids = await _precursor_template_ids(session, company_id, route)
+        cards = await _cards_with_bin(session, company_id, station_id, tmpl_ids)
+        cards.sort(key=lambda c: _bin_count(c, station_id))
+        need = assemblies * route_qty
+        picked: list[str] = []
+        for card in cards:
+            if need <= 0:
+                break
+            picked.append(str(card.id))
+            need -= min(_bin_count(card, station_id), need)
+        out[str(route.id)] = picked
+    return out
+
+
 async def _build_requirements(session, company_id, station_id: str, incoming: list[RouteRow],
                               card_ids: Optional[set] = None) -> list[RequirementInfo]:
     result: list[RequirementInfo] = []
@@ -328,6 +357,10 @@ async def get_merge_preview(station_id: str, processId: Optional[str] = None,
     assembly_tmpl = await _assembly_template(session, ctx.company_id, station_uuid, process_id)
     requirements = await _build_requirements(session, ctx.company_id, station_id, incoming)
     assemblies = min((r.canMake for r in requirements), default=0)
+    if assemblies >= 1:
+        proposal = await _proposed_cards(session, ctx.company_id, station_id, incoming, assemblies)
+        for r in requirements:
+            r.proposedCardIds = proposal.get(r.routeId, [])
 
     return MergePreview(
         isMergeStation=True,

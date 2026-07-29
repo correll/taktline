@@ -287,6 +287,31 @@ def test_preview_scopes_to_one_process_and_ignores_the_erp_link(actor):
         assert q["assembliesPossible"] == 1
 
 
+def test_the_proposal_is_exactly_what_an_unguided_merge_consumes(actor):
+    """The modal opens on the preview's proposed cards and merges THOSE, so the
+    proposal has to be the same merge the station would have done by itself —
+    same assemblies, same cards consumed. Otherwise 'just press MERGE' quietly
+    means something else than the AUTO button it replaced."""
+    a = actor(); bootstrap_admin(a)
+    g = _build(a)
+    _stage_both_lines(a, g)
+
+    p = a.req("GET", f"/merge/{g.reasm}?processId={g.nmc['proc']}").json()
+    proposed = [cid for r in p["requirements"] for cid in r["proposedCardIds"]]
+    assert proposed, "the preview proposed nothing while an assembly was possible"
+
+    r = a.req("POST", f"/merge/{g.reasm}", {"cardIds": proposed})
+    assert r.status_code == 201, r.text
+    assert r.json()["assemblies"] == p["assembliesPossible"]
+    made = a.req("GET", f"/cards/{r.json()['createdCardId']}").json()
+    assert made["lotTemplateId"] == g.nmc["reman"]
+
+    # With nothing left to assemble the proposal is empty, not stale.
+    after = a.req("GET", f"/merge/{g.reasm}?processId={g.nmc['proc']}").json()
+    assert after["assembliesPossible"] == 0
+    assert all(rq["proposedCardIds"] == [] for rq in after["requirements"])
+
+
 # ─── Pulling at a shared station names its process ───────────────────────────
 
 def test_pull_at_a_shared_station_honours_the_named_process(actor):

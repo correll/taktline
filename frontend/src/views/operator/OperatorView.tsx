@@ -487,13 +487,19 @@ function LotPicker({
   const station = stations[stationId]
   const lots    = Object.values(cards).filter((c) => (c.bins[stationId]?.count ?? 0) > 0)
 
-  // Merging is deliberate: the worker selects the precursor lot cards and
-  // presses MERGE (or AUTO to let the system pick). On entry we only load the
-  // preview, which tells the worker the recipe (units needed per branch).
+  // Merging is deliberate, but it opens as a proposal: the preview names the
+  // lots this station would consume on its own and they arrive pre-selected,
+  // so the worker confirms or adjusts rather than choosing between a blind
+  // AUTO and rebuilding the recipe by hand.
+  const applyPreview = useCallback((p: MergePreview) => {
+    setPreview(p)
+    setSelectedPre(new Set(p.requirements.flatMap((r) => r.proposedCardIds)))
+  }, [])
+
   useEffect(() => {
     if (!isMergeStation) return
-    mergeApi.preview(stationId).then(setPreview).catch(() => {})
-  }, [stationId, isMergeStation])
+    mergeApi.preview(stationId).then(applyPreview).catch(() => {})
+  }, [stationId, isMergeStation, applyPreview])
 
   const doMerge = async (cardIds?: string[]) => {
     setMerging(true)
@@ -505,7 +511,7 @@ function LotPicker({
       // template server-side; without it in the store the new assembly card
       // couldn't be classified and the station looked empty.
       await Promise.all([fetchAll(), fetchProcesses()])
-      mergeApi.preview(stationId).then(setPreview).catch(() => {})
+      mergeApi.preview(stationId).then(applyPreview).catch(() => {})
     } catch (e: unknown) {
       setMergeError(String(e))
     } finally {
@@ -707,7 +713,7 @@ function LotPicker({
             })}
           </div>
 
-          {/* MERGE selected / AUTO */}
+          {/* MERGE the selection — which opens as the station's own proposal */}
           <div style={{ display: 'flex', gap: size.sp2, marginTop: size.sp3 }}>
             <button
               onClick={() => doMerge([...selectedPre])}
@@ -722,21 +728,6 @@ function LotPicker({
               }}
             >
               {merging ? 'MERGING…' : `MERGE${selectedPre.size > 0 ? ` (${selectedPre.size})` : ''}`}
-            </button>
-            <button
-              onClick={() => doMerge()}
-              disabled={merging}
-              title="Merge automatically from any available precursors"
-              style={{
-                padding: `${size.sp3} ${size.sp5}`,
-                background: 'transparent',
-                border: '1px solid #8B5CF660', borderRadius: size.radiusMd,
-                color: '#8B5CF6', fontFamily: font.mono, fontSize: 14, fontWeight: 700,
-                letterSpacing: '0.08em',
-                cursor: merging ? 'not-allowed' : 'pointer',
-              }}
-            >
-              AUTO
             </button>
           </div>
         </div>

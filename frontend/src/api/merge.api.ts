@@ -9,6 +9,8 @@ export interface RequirementInfo {
   /** Which products count as this branch's precursor — authoritative, so a
    *  client never re-derives the matching and offers a sibling line's lots. */
   precursorTemplateIds: string[]
+  /** The lot cards an unguided merge would draw from: the opening selection. */
+  proposedCardIds: string[]
 }
 
 export interface MergeProcessInfo {

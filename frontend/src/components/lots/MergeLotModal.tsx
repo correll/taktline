@@ -32,6 +32,10 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
     mergeApi.preview(stationId, procId ?? undefined).then((p) => {
       setPreview(p)
       setProcId((cur) => cur ?? p.processId)
+      // Open on the merge this station would perform on its own, rather than
+      // an empty form: the worker reads a proposal and adjusts it, instead of
+      // choosing between a blind AUTO and rebuilding the recipe by hand.
+      setSelected(new Set(p.requirements.flatMap((r) => r.proposedCardIds)))
     }).catch(() => {})
   }, [stationId, procId])
 
@@ -57,6 +61,13 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
     })
   }, [preview, cards, stations, stationId])
 
+  const proposedIds = useMemo(
+    () => (preview?.requirements ?? []).flatMap((r) => r.proposedCardIds),
+    [preview])
+  const atProposal = proposedIds.length === selected.size
+    && proposedIds.every((id) => selected.has(id))
+  const resetToProposal = () => setSelected(new Set(proposedIds))
+
   const toggle = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -73,12 +84,13 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
     ? Math.min(...branches.map((b) => Math.floor(selectedUnits(b) / b.need)))
     : 0
 
-  const doMerge = async (auto: boolean) => {
+  // Always the worker's selection — which opens as the proposal, so pressing
+  // MERGE unchanged does exactly what the old AUTO did.
+  const doMerge = async () => {
     setMerging(true)
     setError(null)
     try {
-      await mergeApi.perform(stationId, auto ? undefined : [...selected],
-                             procId ?? undefined)
+      await mergeApi.perform(stationId, [...selected], procId ?? undefined)
       await Promise.all([fetchAll(), fetchProcesses()])
       onMerged?.()
       onClose()
@@ -229,21 +241,22 @@ export default function MergeLotModal({ stationId, onClose, onMerged }: Props) {
             Cancel
           </button>
           <button
-            onClick={() => doMerge(true)}
-            disabled={merging}
-            title="Merge automatically from any available precursors"
+            onClick={resetToProposal}
+            disabled={merging || proposedIds.length === 0 || atProposal}
+            title="Go back to the lots this station would consume by default"
             style={{
               marginLeft: 'auto',
-              background: 'transparent', border: `1px solid ${PURPLE}60`,
-              borderRadius: size.radius, color: PURPLE,
-              padding: '7px 14px', fontSize: 12, fontFamily: font.mono, fontWeight: 700,
-              cursor: merging ? 'not-allowed' : 'pointer',
+              background: 'transparent',
+              border: `1px solid ${atProposal ? color.border : `${PURPLE}60`}`,
+              borderRadius: size.radius,
+              color: atProposal ? color.textDim : PURPLE,
+              padding: '7px 14px', fontSize: 12, cursor: atProposal ? 'default' : 'pointer',
             }}
           >
-            AUTO
+            Reset
           </button>
           <button
-            onClick={() => doMerge(false)}
+            onClick={doMerge}
             disabled={merging || selectionCanMake < 1}
             title={selectionCanMake < 1 ? 'Select enough lots from every branch first' : undefined}
             style={{

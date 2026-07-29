@@ -62,10 +62,31 @@ export function sourceNodes(edges: Edge[]): Set<string> {
 }
 
 // Station IDs with 2+ incoming edges (valid merge / assembly stations).
-export function mergeNodes(edges: Edge[]): Set<string> {
-  const inDeg = new Map<string, number>()
-  for (const e of edges) inDeg.set(e.unload, (inDeg.get(e.unload) ?? 0) + 1)
-  return new Set([...inDeg.entries()].filter(([, d]) => d >= 2).map(([id]) => id))
+/** Locations where two or more feeds converge **within one process**.
+ *
+ *  The scoping is the whole point. A bench two lines happen to share has two
+ *  incoming routes in total but one per process, and it assembles nothing —
+ *  counting across processes rendered it as a merge column on the board and
+ *  offered a merge the backend would rightly refuse. Alternative routing is
+ *  modelled as a second process for the same reason, so it would have been
+ *  mis-read too.
+ *
+ *  Edges without a processId are all treated as one graph, which keeps the
+ *  helper usable for the single-process figures in the manual.
+ */
+export function mergeNodes(edges: (Edge & { processId?: string })[]): Set<string> {
+  const perProcess = new Map<string, Map<string, number>>()
+  for (const e of edges) {
+    const key = e.processId ?? ''
+    const inDeg = perProcess.get(key) ?? new Map<string, number>()
+    inDeg.set(e.unload, (inDeg.get(e.unload) ?? 0) + 1)
+    perProcess.set(key, inDeg)
+  }
+  const merges = new Set<string>()
+  for (const inDeg of perProcess.values()) {
+    for (const [id, d] of inDeg) if (d >= 2) merges.add(id)
+  }
+  return merges
 }
 
 // Kahn's topological sort. Returns ordered station IDs, sources first.

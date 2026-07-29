@@ -216,7 +216,7 @@ export default function LotsView() {
   // ─── Merge nodes ──────────────────────────────────────────────────────────
 
   const mergeNodeSet = useMemo(
-    () => mergeNodes(Object.values(routes) as { load: string; unload: string }[]),
+    () => mergeNodes(Object.values(routes)),
     [routes],
   )
 

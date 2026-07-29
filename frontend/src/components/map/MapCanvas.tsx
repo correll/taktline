@@ -12,6 +12,7 @@ import { useCyclePulses } from '../../motion/useCyclePulses'
 import type { CyclePulses } from '../../motion/cycle'
 import { findAccumulations, type Accumulation } from '../../domain/graph'
 import { integrationProvider, isIntegrationStation } from '../../domain/integrations'
+import { processColor, processColorInt } from '../../domain/processColors'
 import { hasWebGL } from '../demo/webgl'
 
 /** Pixi needs numeric colours; the partner registry stores CSS hex. */
@@ -503,6 +504,26 @@ export default function MapCanvas({
   // (which equals the settings-preview CSS display width, the frame ppu was calibrated in).
   const ppu = mapConfig?.pixelsPerUnit ?? DEFAULT_NODE_SIZE
 
+  // Two processes routing between the same pair of locations draw one line
+  // exactly on top of the other: the second is invisible, and so is the fact
+  // that there are two. Shift them apart, centred on the true run, so the pair
+  // reads as a pair — colour alone cannot help when the line is hidden.
+  const routeLanes = React.useMemo(() => {
+    const byPair = new Map<string, string[]>()
+    for (const r of Object.values(routes)) {
+      const key = `${r.load}->${r.unload}`
+      byPair.set(key, [...(byPair.get(key) ?? []), r._id])
+    }
+    const gap = Math.max(6, nodeSize * 0.11)
+    const lanes: Record<string, number> = {}
+    for (const ids of byPair.values()) {
+      // Stable order, so a line does not hop sides when routes are refetched.
+      const ordered = [...ids].sort()
+      ordered.forEach((id, i) => { lanes[id] = (i - (ordered.length - 1) / 2) * gap })
+    }
+    return lanes
+  }, [routes, nodeSize])
+
   // Which way work crosses each integration boundary, read from the drawn
   // links: an outgoing route places orders that pull work through (↓), an incoming one
   // receives finished goods (↑). Drives the arrows on the partner's mark.
@@ -593,12 +614,14 @@ export default function MapCanvas({
             })}
 
             {routeList.map((route) => {
-              // Either end bound to a partner → a boundary link, not flow.
+              // Either end bound to a partner → a boundary link, not flow, and
+              // it wears the partner's colour rather than its process's.
               const bound = [stations[route.load], stations[route.unload]]
                 .find((s) => s && isIntegrationStation(s))
-              const tint = bound
+              const boundaryTint = bound
                 ? hexToPixi(integrationProvider(bound.integrationProvider)?.color)
                 : undefined
+              const lane = routeLanes[route._id]
               return (
                 <RouteEdge
                   key={route._id}
@@ -606,7 +629,9 @@ export default function MapCanvas({
                   fromStation={stations[route.load]}
                   toStation={stations[route.unload]}
                   nodeSize={nodeSize}
-                  boundaryTint={tint}
+                  boundaryTint={boundaryTint}
+                  tint={processColorInt(route.processId, themeMode)}
+                  offsetPx={lane}
                 />
               )
             })}
@@ -654,6 +679,26 @@ export default function MapCanvas({
           pixelsPerUnit={ppu}
           unit={mapConfig.unit}
         />
+      )}
+
+      {/* Which colour is which line. The palette repeats past three processes,
+          so the name is the identity and the colour is the shortcut. */}
+      {Object.keys(processes).length > 1 && (
+        <div style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 30,
+          background: color.glass, border: `1px solid ${color.glassBorder}`,
+          borderRadius: 4, padding: '6px 10px', pointerEvents: 'none',
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          {Object.values(processes).map((p) => (
+            <div key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 6,
+                                      fontSize: 11, color: color.glassText }}>
+              <span style={{ width: 14, height: 3, borderRadius: 2, flexShrink: 0,
+                             background: processColor(p._id, themeMode) }} />
+              {p.name}
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Cycle legend — without the factor, "3 seconds" is meaningless, and

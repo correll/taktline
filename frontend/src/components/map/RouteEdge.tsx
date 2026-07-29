@@ -32,6 +32,14 @@ interface Props {
    *  in the partner's colour with a longer, sparser dash to read as a
    *  different kind of connection, not another step in the flow. */
   boundaryTint?: number
+  /** The colour of the process this route belongs to. */
+  tint?: number
+  /** Perpendicular shift in world px. Two processes routing between the same
+   *  pair of locations would otherwise be drawn one exactly on top of the
+   *  other, so the second line — and the fact that there are two — would be
+   *  invisible. Shifting them apart is the only cue that survives, since a
+   *  colour you cannot see tells you nothing. */
+  offsetPx?: number
 }
 
 function drawDashedLine(
@@ -60,7 +68,8 @@ function drawDashedLine(
   }
 }
 
-export default function RouteEdge({ route, fromStation, toStation, nodeSize, boundaryTint }: Props) {
+export default function RouteEdge({ route, fromStation, toStation, nodeSize,
+                                   boundaryTint, tint, offsetPx = 0 }: Props) {
   const gRef    = useRef<PIXI.Graphics>(null)
   const offset  = useRef(0)
   const themeMode = useThemeStore((s) => s.mode)
@@ -71,8 +80,15 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize, bou
   const showBadge  = quantity !== 1
   const badgeR     = Math.max(9, nodeSize * 0.13)
   const half       = nodeSize / 2
-  const midX = fromStation && toStation ? (fromStation.position.x + toStation.position.x) / 2 + half : 0
-  const midY = fromStation && toStation ? (fromStation.position.y + toStation.position.y) / 2 + half : 0
+  let midX = fromStation && toStation ? (fromStation.position.x + toStation.position.x) / 2 + half : 0
+  let midY = fromStation && toStation ? (fromStation.position.y + toStation.position.y) / 2 + half : 0
+  if (offsetPx && fromStation && toStation) {
+    const dx = toStation.position.x - fromStation.position.x
+    const dy = toStation.position.y - fromStation.position.y
+    const len = Math.hypot(dx, dy) || 1
+    midX += (-dy / len) * offsetPx
+    midY += (dx / len) * offsetPx
+  }
 
   const redraw = useCallback(() => {
     const g = gRef.current
@@ -80,14 +96,22 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize, bou
     g.clear()
     const dash = boundaryTint != null ? DASH * 0.45 : DASH
 
-    const x1 = fromStation.position.x + half
-    const y1 = fromStation.position.y + half
-    const x2 = toStation.position.x   + half
-    const y2 = toStation.position.y   + half
+    let x1 = fromStation.position.x + half
+    let y1 = fromStation.position.y + half
+    let x2 = toStation.position.x   + half
+    let y2 = toStation.position.y   + half
+    if (offsetPx) {
+      const dx = x2 - x1, dy = y2 - y1
+      const len = Math.hypot(dx, dy) || 1
+      const nx = -dy / len, ny = dx / len      // unit normal to the run
+      x1 += nx * offsetPx; y1 += ny * offsetPx
+      x2 += nx * offsetPx; y2 += ny * offsetPx
+    }
 
     const angle = Math.atan2(y2 - y1, x2 - x1)
     const base = EDGE_COLORS[themeMode]
-    const colors = boundaryTint != null ? { ...base, line: boundaryTint } : base
+    const line = boundaryTint ?? tint
+    const colors = line != null ? { ...base, line } : base
 
     // Pull the line end back by arrowhead length so it doesn't overlap
     const ax = x2 - Math.cos(angle) * ARROW_LEN
@@ -116,7 +140,8 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize, bou
       g.drawCircle((x1 + x2) / 2, (y1 + y2) / 2, badgeR)
       g.endFill()
     }
-  }, [fromStation, toStation, nodeSize, half, showBadge, badgeR, themeMode, boundaryTint])
+  }, [fromStation, toStation, nodeSize, half, showBadge, badgeR, themeMode,
+      boundaryTint, tint, offsetPx])
 
   // Initial draw
   useEffect(() => { redraw() }, [redraw])

@@ -61,7 +61,7 @@ export default function OperatorView() {
   const upsertCard  = useCardsStore((s) => s.upsert)
 
   const mergeNodeSet = useMemo(
-    () => mergeNodes(Object.values(routes) as { load: string; unload: string }[]),
+    () => mergeNodes(Object.values(routes)),
     [routes],
   )
 

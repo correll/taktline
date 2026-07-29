@@ -202,10 +202,13 @@ def test_diamond_flows_end_to_end():
 
 def test_warehouse_is_excluded_from_oee():
     """A warehouse stores rather than runs, so OEE there would measure shelf
-    time. It is reported as null and flagged."""
+    time. It is reported as null and flagged — but only because it is *marked*
+    as storage; see the test below for why the shape of the graph is not
+    enough to know."""
     a = Actor(); bootstrap_admin(a)
-    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
-    work, wh = st("welding"), st("warehouse")
+    st = lambda n, storage=False: a.req(
+        "POST", "/stations/", {**STATION, "name": n, "isStorage": storage}).json()
+    work, wh = st("welding"), st("warehouse", storage=True)
     p = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
     a.req("POST", "/routes/", {"processId": p, "load": work["_id"],
                                "unload": wh["_id"], "quantity": 1})
@@ -450,3 +453,41 @@ def test_the_round_trip_conserves_units(actor):
                      {"fromStationId": bar, "toStationId": tube,
                       "quantity": 1}).status_code == 200
         assert (_at(a, tube), _at(a, scrap)) == (4, 1)
+
+
+def test_a_leaf_that_does_work_is_not_a_warehouse(actor):
+    """The bug this exists for: storage used to be inferred as "receives
+    routes, sends none", so a final test bench — a leaf where real work happens
+    — was silently treated as a shelf. It vanished from the heatmap and
+    reported no OEE, hiding a queue exactly where one matters most."""
+    a = actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()
+    weld, final_test = st("welding"), st("final test")
+    p = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
+    a.req("POST", "/routes/", {"processId": p, "load": weld["_id"],
+                               "unload": final_test["_id"], "quantity": 1})
+    for station in (weld, final_test):
+        s = a.req("POST", "/sessions/", {"stationId": station["_id"], "cardId": None,
+                                         "quantity": 2}).json()
+        assert a.req("POST", f"/sessions/{s['_id']}/end", {"quantity": 2}).status_code == 200
+
+    stats = {s["stationId"]: s for s in a.req("GET", "/sessions/stats").json()}
+    assert stats[final_test["_id"]]["isWarehouse"] is False, "a leaf is not automatically storage"
+    assert stats[final_test["_id"]]["oee"] is not None, "work at the end of a line still counts"
+
+
+def test_storage_can_be_declared_anywhere(actor):
+    """And the mirror: a location mid-graph used as a buffer can be declared
+    storage even though it has outgoing routes."""
+    a = actor(); bootstrap_admin(a)
+    st = lambda n, storage=False: a.req(
+        "POST", "/stations/", {**STATION, "name": n, "isStorage": storage}).json()
+    buf, out = st("buffer", storage=True), st("assembly")
+    p = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
+    a.req("POST", "/routes/", {"processId": p, "load": buf["_id"],
+                               "unload": out["_id"], "quantity": 1})
+    s = a.req("POST", "/sessions/", {"stationId": buf["_id"], "cardId": None, "quantity": 1}).json()
+    a.req("POST", f"/sessions/{s['_id']}/end", {"quantity": 1})
+    stats = {x["stationId"]: x for x in a.req("GET", "/sessions/stats").json()}
+    assert stats[buf["_id"]]["isWarehouse"] is True
+    assert stats[buf["_id"]]["oee"] is None

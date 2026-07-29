@@ -22,6 +22,8 @@ class Station(TimestampedModel):
     # Where work enters/leaves the business. None on an ordinary work location.
     integrationProvider: Optional[str] = None   # 'odoo' | 'shopify' | 'shipstation' | …
     integrationRole: Optional[str] = None       # 'source' | 'sink' | 'both'
+    # Storage, not work: excluded from the heatmap, OEE and accumulation warnings.
+    isStorage: bool = False
 
 
 class StationCreate(BaseModel):
@@ -34,6 +36,7 @@ class StationCreate(BaseModel):
     icon: Optional[str] = None
     integrationProvider: Optional[str] = None
     integrationRole: Optional[str] = None
+    isStorage: bool = False
 
 
 class StationUpdate(BaseModel):
@@ -46,3 +49,4 @@ class StationUpdate(BaseModel):
     icon: Optional[str] = None
     integrationProvider: Optional[str] = None
     integrationRole: Optional[str] = None
+    isStorage: Optional[bool] = None

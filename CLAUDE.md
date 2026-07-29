@@ -30,7 +30,9 @@ Edge weight: a weight only means something where the graph branches. On a **merg
 
 Accumulation warning: the map compares, per process and per cycle, how many units the weights deliver to a location against how many the next step consumes. Where more arrives than leaves — loc1 --(x3)--> loc2 --> loc4 delivers three but the merge takes one — the map names the location and the surplus so the extra can be routed to a warehouse. Merge stations (their inputs are consumed there) and warehouses (meant to fill up) are never flagged.
 
-Warehouses: a location with incoming routes and none outgoing. Finished goods land there by design, so warehouses are excluded from the heatmap (including its scale, which they would otherwise flatten) and report no OEE — storage time is not utilisation. Takt time and throughput are still measured.
+Warehouses / storage: a location **declared** as storage (`station.isStorage`, a checkbox on the location). Finished goods rest there by design, so it is excluded from the heatmap (including its scale, which it would otherwise flatten), from accumulation warnings, and reports no OEE — shelf time is not utilisation. Cycle time and throughput are still measured.
+
+This used to be *inferred* from the graph — "receives routes but sends none" — which quietly swallowed every leaf where real work happens: a final test bench, a paint booth, the last cell on a line all vanished from the heatmap, hiding a queue exactly where one matters most. Storage is a fact about the location, not its shape, so it is now declared. The migration marks every location that was a leaf at upgrade time, so no existing heatmap changes; leaves added afterwards default to being work locations. It can also be declared mid-graph, for a buffer that has outgoing routes but is still a shelf.
 
 Map view: the map view shows all the locations and the process graph overlaid on a PNG image of a factory floor. A "heatmap" shows how busy individual stations are. The map is either in meters or in feet and the user can specify how many pixels correspond to a unit. A scale in the lower left corner indicates the actual scale. 
 

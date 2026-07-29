@@ -12,13 +12,14 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
   const [name, setName] = useState(station?.name ?? '')
   const [icon, setIcon] = useState<string | null>(station?.icon ?? null)
   const [col,  setCol]  = useState<string | null>(station?.color ?? null)
+  const [storage, setStorage] = useState<boolean>(station?.isStorage ?? false)
   const [saving, setSaving] = useState(false)
   if (!station) return null
 
   const save = async () => {
     if (!name.trim()) return
     setSaving(true)
-    try { await updateStation(stationId, { name: name.trim(), icon, color: col }); onClose() }
+    try { await updateStation(stationId, { name: name.trim(), icon, color: col, isStorage: storage }); onClose() }
     finally { setSaving(false) }
   }
 
@@ -35,6 +36,19 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus style={INPUT}
                  onFocus={(e) => e.target.select()}
                  onKeyDown={(e) => { if (e.key === 'Enter') save() }} />
+        </label>
+
+        {/* Storage is declared, not inferred. A final test bench is a leaf too,
+            and hiding it from the heatmap loses the queue that matters most. */}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={storage} onChange={(e) => setStorage(e.target.checked)}
+                 style={{ marginTop: 2, width: 15, height: 15, flexShrink: 0, cursor: 'pointer' }} />
+          <span style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.5 }}>
+            <b style={{ color: color.textSecondary }}>Storage, not work</b> — finished goods rest
+            here by design. Kept out of the heatmap (which it would otherwise flatten), reports no
+            OEE or cycle time, and never flagged for accumulating. Leave this off for anywhere work
+            actually happens, including the last location on a line.
+          </span>
         </label>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>

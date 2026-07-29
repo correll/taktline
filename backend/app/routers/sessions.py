@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import timedelta
 from typing import List, Optional
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
@@ -154,23 +154,23 @@ async def delete_session(session_id: str, ctx: CompanyContext = Depends(get_acti
 
 async def _warehouse_ids(session, company_id) -> set:
     """Locations where nothing is *worked on*, so OEE and cycle time would be
-    meaningless: a warehouse (receives routes but sends none — finished goods
-    land there on purpose, and its OEE would measure storage time), and any
-    location bound to an integration partner, which represents work entering or
-    leaving the business rather than a place someone stands."""
-    rows = (await session.execute(
-        select(RouteRow.load, RouteRow.unload).where(RouteRow.companyId == company_id)
-    )).all()
-    has_in, has_out = set(), set()
-    for load, unload in rows:
-        has_out.add(load)
-        has_in.add(unload)
-    bound = set((await session.execute(
-        select(StationRow.id).where(StationRow.companyId == company_id,
-                                    StationRow.integrationProvider.isnot(None))
-    )).scalars().all())
-    return (has_in - has_out) | bound
+    meaningless: storage (finished goods rest there by design, and its OEE
+    would measure shelf time) and any location bound to an integration partner,
+    which is the boundary of the business rather than a place someone stands.
 
+    Storage is now a property of the location, not a shape in the graph. It
+    used to be inferred as "receives routes but sends none", which quietly
+    swallowed every leaf that does real work — a final test bench, a paint
+    booth, the last cell on a line — and made them invisible on the heatmap,
+    which is exactly where a queue building up matters most.
+    """
+    rows = (await session.execute(
+        select(StationRow.id).where(
+            StationRow.companyId == company_id,
+            or_(StationRow.isStorage.is_(True),
+                StationRow.integrationProvider.isnot(None)))
+    )).scalars().all()
+    return set(rows)
 
 
 # ─── Line cycle time ─────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ def _to_station(r: StationRow) -> Station:
         icon=r.icon,
         integrationProvider=r.integrationProvider,
         integrationRole=r.integrationRole,
+        isStorage=bool(r.isStorage),
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
     )

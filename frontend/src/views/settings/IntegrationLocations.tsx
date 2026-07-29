@@ -96,6 +96,7 @@ export default function IntegrationLocations() {
         color: null, icon: null,
         integrationProvider: providerId,
         integrationRole: role,
+        isStorage: false,   // a boundary, not a shelf — excluded for its own reason
         position: placement(role),
       })
       setName('')

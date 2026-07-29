@@ -217,6 +217,16 @@ class Station(Base):
     # from the graph shape.
     integrationProvider: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     integrationRole: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Storage rather than work: finished goods rest here by design, so it is
+    # kept out of the heatmap (which it would otherwise flatten), reports no
+    # OEE, and is never flagged for accumulating.
+    #
+    # Explicit rather than inferred from the graph. "No outgoing routes" is not
+    # the same question: a final test bench or a paint booth at the end of a
+    # line is a leaf where real work happens, and inferring made it invisible
+    # on the heatmap — exactly where a queue building up matters most.
+    isStorage: Mapped[bool] = mapped_column(Boolean, nullable=False,
+                                            server_default=text("false"), default=False)
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
 

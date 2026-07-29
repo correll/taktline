@@ -10,7 +10,7 @@ import RouteEdge from './RouteEdge'
 import MotionLayer from './MotionLayer'
 import { useCyclePulses } from '../../motion/useCyclePulses'
 import type { CyclePulses } from '../../motion/cycle'
-import { findAccumulations, warehouseNodes, type Accumulation } from '../../domain/graph'
+import { findAccumulations, type Accumulation } from '../../domain/graph'
 import { integrationProvider, isIntegrationStation } from '../../domain/integrations'
 
 /** Pixi needs numeric colours; the partner registry stores CSS hex. */
@@ -443,16 +443,21 @@ export default function MapCanvas({
     setRouteDelete(null)
   }, [routeDelete, deleteRoute])
 
-  // WIP ratios for heatmap.
-  // Integration locations count as warehouses here for the same reason real
-  // ones do: work sitting in a goods-in dock or waiting to ship is not work
-  // piling up at a machine, and letting either into the ramp flattens the
-  // scale for every station that matters.
+  // Kept out of the heat ramp: storage (meant to fill up) and integration
+  // locations (the boundary of the business). Both would otherwise flatten the
+  // scale for the stations that matter.
+  //
+  // Storage is the location's own property, not its shape in the graph. It was
+  // inferred as "receives routes, sends none", which swallowed every leaf that
+  // does real work — a final test bench, the last cell on a line — and hid a
+  // queue building up exactly where it matters most.
   const warehouses = React.useMemo(() => {
-    const set = warehouseNodes(Object.values(routes).map((r) => ({ load: r.load, unload: r.unload })))
-    for (const s of Object.values(stations)) if (isIntegrationStation(s)) set.add(s._id)
+    const set = new Set<string>()
+    for (const s of Object.values(stations)) {
+      if (s.isStorage || isIntegrationStation(s)) set.add(s._id)
+    }
     return set
-  }, [routes, stations])
+  }, [stations])
 
   const wipRatios = React.useMemo(() => {
     const wipMap: Record<string, number> = {}
@@ -483,12 +488,13 @@ export default function MapCanvas({
       })),
       Object.keys(stations)),
     [routes, stations])
-  // A bound location is *meant* to fill up — a dock accumulating finished goods
-  // is the system working, not a problem to route around.
+  // Storage and boundary locations are *meant* to fill up — a dock or a shelf
+  // accumulating finished goods is the system working, not a problem to route
+  // around.
   const accumulationIds = React.useMemo(
     () => new Set(accumulations
       .map((a) => a.stationId)
-      .filter((id) => !(stations[id] && isIntegrationStation(stations[id])))),
+      .filter((id) => !(stations[id] && (stations[id].isStorage || isIntegrationStation(stations[id]))))),
     [accumulations, stations])
   const isolatedNames = isolated.procIds.map((id) => processes[id]?.name).filter(Boolean) as string[]
 

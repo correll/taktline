@@ -147,13 +147,23 @@ async def _check_boundary_placement(session, company_id, load_uuid, unload_uuid)
             select(RouteRow.unload).where(RouteRow.companyId == company_id,
                                           RouteRow.load == load_uuid)
         )).scalars().all()
-        onward = [d for d in outgoing if d not in bound]
-        if onward:
-            nxt = await session.get(StationRow, onward[0])
+        # Ship-or-stock is a legitimate end of a flow: the same QA bench may
+        # send a finished pack to the warehouse shelf or out the door. What the
+        # rule exists to stop is a shipper hanging mid-line, taking parts that
+        # still have WORK to come — so only onward routes to a *work* location
+        # count against it. Storage is not work to come.
+        onward_work = []
+        for d in outgoing:
+            if d in bound:
+                continue
+            dst = await session.get(StationRow, d)
+            if dst is not None and not dst.isStorage:
+                onward_work.append(dst)
+        if onward_work:
             raise HTTPException(400,
-                f"Finished goods leave through {unload.name}, so connect it to the last location "
-                f"in the flow. {load.name if load else 'That location'} still sends work on to "
-                f"{nxt.name if nxt else 'another location'}.")
+                f"Finished goods leave through {unload.name}, so connect it after the last "
+                f"work step. {load.name if load else 'That location'} still sends work on to "
+                f"{onward_work[0].name}.")
 
 
 @router.get("/", response_model=List[Route])

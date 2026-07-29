@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.connection import SESSION_SCOPE, get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, parse_uuid, require_uuid
 from ..db.tables import (
     ProductionOrder as OrderRow,
     Route as RouteRow, LotTemplate as LotTemplateRow,
@@ -45,6 +45,9 @@ class MergePerformBody(BaseModel):
     # None/empty → auto mode: consume from any precursor cards at the station.
     # Non-empty → manual mode: consume only from these selected cards.
     cardIds: Optional[List[str]] = None
+    # Which process's merge to run, when two share this bench. Usually inferred
+    # from cardIds; explicit for AUTO on a shared bench.
+    processId: Optional[str] = None
 
 
 class PullRequest(BaseModel):
@@ -112,21 +115,39 @@ async def _incoming_routes(session, company_id, station_uuid, process_id=None) -
     return [r for r in rows if r.load not in boundary]
 
 
-def _merge_process(incoming: list[RouteRow]):
-    """The process whose merge lives at this station: the one with 2+ feeds.
-
-    A station shared by several processes only assembles within one of them
-    (either/or routing passes through, it does not merge). Should a factory ever
-    point two different processes' merges at one physical bench, the choice is
-    made deterministic — most feeds first, then process id — so preview and
-    perform always agree."""
+def _merge_candidates(incoming: list[RouteRow]):
+    """Every process with a merge at this station (2+ feeds), in deterministic
+    order — most feeds first, then process id."""
     by_proc: dict = {}
     for r in incoming:
         by_proc.setdefault(r.processId, []).append(r)
     qualifying = [(pid, rs) for pid, rs in by_proc.items() if len(rs) >= 2]
+    qualifying.sort(key=lambda x: (-len(x[1]), str(x[0])))
+    return qualifying
+
+
+def _merge_process(incoming: list[RouteRow], process_id=None):
+    """The process whose merge lives at this station.
+
+    A station shared by several processes only assembles within one of them
+    (either/or routing passes through, it does not merge). When two processes
+    both merge at one bench, ``process_id`` — from the worker's selected cards,
+    or an explicit request — picks which; without it the choice falls to the
+    deterministic order.
+
+    Resolution used to ignore both, which made the losing process's merge
+    unreachable: with two merges tied at one bench the same process won every
+    call, a worker's selected cards from the other line 400'd "not enough among
+    the selected", and AUTO consumed the winner's material while the worker
+    stood at the bench to assemble the loser's."""
+    qualifying = _merge_candidates(incoming)
+    if process_id is not None:
+        for pid, rs in qualifying:
+            if pid == process_id:
+                return pid, rs
+        return None, []
     if not qualifying:
         return None, []
-    qualifying.sort(key=lambda x: (-len(x[1]), str(x[0])))
     return qualifying[0]
 
 
@@ -288,16 +309,43 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     # Take the per-station merge lock BEFORE reading availability, so a
     # concurrent duplicate merge waits and then sees the already-consumed state.
     await _station_lock(session, ctx.company_id, station_id)
-    process_id, incoming = _merge_process(
-        await _incoming_routes(session, ctx.company_id, station_uuid))
+    all_incoming = await _incoming_routes(session, ctx.company_id, station_uuid)
 
-    if process_id is None:
-        raise HTTPException(400, "Not a merge station (fewer than 2 incoming routes)")
-
-    # Manual mode: restrict planning AND consumption to the selected cards.
+    # Manual mode: restrict planning AND consumption to the selected cards —
+    # and let the selection say WHICH process's merge the worker means.
     selected: Optional[set] = None
+    wanted_process = None
+    if body is not None and body.processId:
+        wanted_process = parse_uuid(body.processId)
     if body is not None and body.cardIds:
         selected = {require_uuid(cid, "Card not found") for cid in body.cardIds}
+        if wanted_process is None:
+            procs = set()
+            for cid in selected:
+                card = await session.get(CardRow, cid)
+                if card is not None and card.companyId == ctx.company_id:
+                    procs.add(card.processId)
+            if len(procs) == 1:
+                wanted_process = next(iter(procs))
+            elif len(procs) > 1:
+                raise HTTPException(400, "Selected cards span two processes — a merge "
+                                         "assembles within one value stream.")
+
+    process_id, incoming = _merge_process(all_incoming, wanted_process)
+
+    # AUTO on a shared bench: prefer a process that can actually assemble now,
+    # in the same deterministic order the preview reports.
+    if process_id is not None and wanted_process is None and selected is None:
+        for pid, rs in _merge_candidates(all_incoming):
+            reqs = await _build_requirements(session, ctx.company_id, station_id, rs)
+            if reqs and min(r.canMake for r in reqs) >= 1:
+                process_id, incoming = pid, rs
+                break
+
+    if process_id is None:
+        raise HTTPException(400, "Not a merge station (fewer than 2 incoming routes)"
+                                 if wanted_process is None else
+                                 "That process has no merge at this station")
 
     # Provision a default assembly template if the admin never made one — the
     # merge should just work.

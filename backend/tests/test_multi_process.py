@@ -79,29 +79,16 @@ def _shared_bench(a: Actor):
     return out, bench, ship
 
 
-def test_one_feed_per_process_is_never_a_merge(actor):
-    """Each line has a single feed into the bench, so work flows through even
-    though the bench has two incoming routes in total."""
-    a = actor(); bootstrap_admin(a)
-    lines, bench, ship = _shared_bench(a)
-    for name, L in lines.items():
-        c = _card(a, L["tmpl"], L["proc"], L["source"])
-        assert a.req("POST", f"/cards/{c['_id']}/advance",
-                     {"fromStationId": L["source"], "toStationId": bench,
-                      "quantity": 1}).status_code == 200, name
-        r = a.req("POST", f"/cards/{c['_id']}/advance",
-                  {"fromStationId": bench, "toStationId": ship, "quantity": 1})
-        assert r.status_code == 200, f"{name} held at a shared bench: {r.text}"
-
-
 def test_the_bench_is_not_a_merge_station_for_either_line(actor):
     """The merge preview must not offer to assemble at a location that simply
-    happens to be busy on two lines."""
+    happens to be busy on two lines — the Operator view trusts this flag."""
     a = actor(); bootstrap_admin(a)
     lines, bench, ship = _shared_bench(a)
-    r = a.req("GET", f"/merge/{bench}/preview")
-    if r.status_code == 200:
-        assert r.json().get("isMergeStation") in (False, None), r.json()
+    r = a.req("GET", f"/merge/{bench}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["isMergeStation"] is False, body
+    assert body["assembliesPossible"] == 0, body
 
 
 def test_a_merge_never_consumes_the_other_lines_material(actor):

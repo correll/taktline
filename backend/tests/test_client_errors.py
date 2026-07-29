@@ -111,3 +111,31 @@ def test_dismissing_is_staff_only(actor):
     a = actor(); bootstrap_admin(a)
     a.req("POST", "/client-errors/", {**REPORT, "message": "not yours"})
     assert a.req("DELETE", "/platform/client-errors").status_code == 404
+
+
+def test_reports_older_than_the_window_are_swept_on_write(actor, owner):
+    """Retention is enforced at write time rather than by a scheduled job —
+    which only works if the write actually sweeps. Age a row past 30 days and
+    the next report must take it with it."""
+    import asyncio
+    from datetime import timedelta
+    from sqlalchemy import select, update
+    from app.db.connection import SessionLocal
+    from app.db.tables import ClientError
+    from app.models.common import utcnow
+
+    a = actor(); bootstrap_admin(a)
+    a.req("POST", "/client-errors/", {**REPORT, "message": "ancient crash"})
+
+    async def age():
+        async with SessionLocal() as s:
+            await s.execute(update(ClientError)
+                            .where(ClientError.message == "ancient crash")
+                            .values(createdAt=utcnow() - timedelta(days=31)))
+            await s.commit()
+    asyncio.run(age())
+
+    a.req("POST", "/client-errors/", {**REPORT, "message": "fresh crash"})
+    msgs = [x["message"] for x in owner.req("GET", "/platform/client-errors/list").json()]
+    assert "fresh crash" in msgs
+    assert "ancient crash" not in msgs, "the 31-day-old report survived the sweep"

@@ -28,6 +28,8 @@ Precursors may not leave a merge station unmerged. `cards._assert_not_unmerged_p
 
 The gate is judged purely on **the topology of the card's own process**: within one process, two feeds converging on a location *is* a merge, because that is what a merge is. A shared paint booth is not a counter-example — it is two *processes* sharing a location, and each has a single feed, so process scoping already lets work through. It briefly also required that a product template start there, excused as protecting the booth; it protected nothing and left a hole exactly where the product is newest, since until someone named the assembly every precursor could walk out of the station meant to consume it.
 
+When two processes both merge at one bench, resolution is no longer blind: the worker's **selected cards name the process** (a selection spanning two processes is refused), an explicit `processId` may be passed, and AUTO prefers — in the deterministic order — a process that can actually assemble now. Before this, the tie-winner won every call: the losing line's merge was unreachable, its worker's selection 400'd, and AUTO consumed the winner's material.
+
 Merging: some products are made from precursors. These result from merging two or or more precursor products. In this case, the precursor product lot cards are discarded (or optionally put back into the queue), and a new lot card is created. Only locations at ßwhich multiple branches come together can serve as originating stations for such lot cards. Conversely, such lot cards can not be created directly, and attempting to do so will create precursor lot cards in the queues that lead up to this location.
 
 Edge weight: a weight only means something where the graph branches. On a **merge feed** (a route into a station with 2+ incoming routes) it is how many precursor units one assembly consumes — a final assembly might need one of product A, three of product B and 10 of product C. On a **split branch** (a route out of a station with 2+ outgoing routes) it is the mirror image: how many pieces one upstream unit becomes, so advancing a lot along it multiplies the card (one steel bar cut into four tubes) and pulling four tubes orders exactly one bar. Elsewhere a lot moves 1:1 and the weight is forced to 1. 
@@ -48,7 +50,7 @@ Statistics: the process collects timing based on lot and per product on each sta
 
 - **Takt time** — the beat the line is *meant* to hold: available time ÷ customer demand. A **target the user sets**, per process (`process.desiredTaktSec`, Settings → Processes → "Desired takt time"). Never measured, never inferred; null until someone sets it.
 - **Cycle time** — how long the work actually takes: what Start/Stop records, divided by the units in the lot (`cycleTimeSec`). This is what used to be called "takt time" in the UI and API, and the rename is complete — the map's beat is the **cycle pulse**, the operator's gauge is the **cycle arc** (`globalSettings.showCycleArc`).
-- **Line cycle time** — the actual exit rate: the interval between a station's departures, **per piece** (`lineCycleTimeSec`, `sessions._line_cycle_times`). The clock starts when work *could* have moved — a shift opening, from `core.schedule.shift_starts` — and re-anchors at every departure, so a lot finished after hours is charged to the next shift rather than to the night. Without that reset the first departure of a Monday carries the whole weekend and the number is worthless. A lot of ten leaving counts as ten pieces. 30-day lookback.
+- **Line cycle time** — the actual exit rate: the interval between a station's departures, **per piece** (`lineCycleTimeSec`, `sessions._line_cycle_times`). The clock starts when work *could* have moved — a shift opening, from `core.schedule.shift_starts` — and re-anchors at every departure, so a lot finished after hours is charged to the next shift rather than to the night. Without that reset the first departure of a Monday carries the whole weekend and the number is worthless. A lot of ten leaving counts as ten pieces. Departures include the per-branch events a **split** records — pieces leaving a teardown are the departures that matter most in a reman shop — and the metric is computed even for stations **without any work session**, since it is built from departures, not sessions. 30-day lookback.
 
 The gap between cycle time and line cycle time is the waste, in seconds: work that takes 2 minutes but only ships every 9 is queueing, blocking or transport, and speeding up the operator wins nothing. The Statistics table shows both side by side and tints line cycle time amber when it exceeds cycle time by >50%.
 
@@ -91,7 +93,7 @@ A station may now be **bound to a partner** (`stations.integrationProvider` +
 registry with brand colours and letter marks `domain/integrations.ts`), created
 from Settings → Integrations → *Integration locations*.
 
-**Integration nodes never hold cards.** This is the whole model:
+**Integration nodes never hold cards.** This is the whole model, and it is now *enforced* at every endpoint that places units (`cards._assert_units_stay_off_partner_nodes`: create, update-bins, move, advance) — a handoff link is a real route row, so `/advance` used to walk finished goods onto the ShipStation node, where they credited the order as an unbound leaf and bypassed the handoff. A handoff link is also excluded from split detection, or one production route plus one handoff read as a split and minted a phantom piece onto the node. Moving *out* of a bound station stays possible as the rescue path.
 
 - An **edge touching a bound station is a boundary link, not material flow**,
   and is excluded from every piece of graph reasoning — `_incoming_routes` and
@@ -167,8 +169,7 @@ where *material enters*, which was wrong: a line can have many material entry
 points and only one finished product, so pointing the ERP at an entry point
 picks an arbitrary branch and says nothing about what was ordered. The check is
 skipped while a company has no products defined, so a line can be drawn before
-its products are named. Handoffs are the mirror — a link into an integration
-may only come from a location that sends work nowhere else.
+its products are named. Handoffs are the mirror — a link into an integration may only come from a location whose onward production routes lead nowhere or to **storage**: ship-or-stock (QA → Warehouse *or* → ShipStation) is a legitimate end of a flow, and what the rule stops is a shipper mid-line taking parts that still have *work* to come.
 
 **Setup information is in the app**, not in a wiki: `domain/integrations.ts`
 carries a per-provider `setup` spec — every value to fetch from the partner,

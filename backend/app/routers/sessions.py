@@ -198,10 +198,16 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
     """
     now = utcnow()
     since = now - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS)
+    # A departure is any event that carries a fromStation: a plain move, and
+    # also the 'created' events a split or an un-split records per branch —
+    # pieces leaving a teardown ARE departures, and in a remanufacturing shop
+    # they are the ones that matter most. (Creation events without a
+    # fromStation — a release, a merge — are births, not departures, and stay
+    # excluded by the isnot(None) filter.)
     rows = (await session.execute(
         select(CardEventRow.fromStation, CardEventRow.timestamp, CardEventRow.quantity)
         .where(CardEventRow.companyId == company_id,
-               CardEventRow.type == "moved",
+               CardEventRow.type.in_(("moved", "created")),
                CardEventRow.fromStation.isnot(None),
                CardEventRow.timestamp >= since)
         .order_by(CardEventRow.timestamp.asc())
@@ -285,10 +291,11 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
 @router.get("/stats/{station_id}")
 async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(get_active_company),
                                 session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
-    def empty(is_warehouse: bool = False):
+    def empty(is_warehouse: bool = False, line_cycle=None):
         return {
             "stationId": station_id, "sessionCount": 0, "totalUnits": 0,
-            "totalWorkingSec": 0.0, "cycleTimeSec": None, "lineCycleTimeSec": None, "oee": None,
+            "totalWorkingSec": 0.0, "cycleTimeSec": None,
+            "lineCycleTimeSec": line_cycle, "oee": None,
             "isWarehouse": is_warehouse,
         }
     sid = parse_uuid(station_id)
@@ -306,7 +313,15 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
         # it yet: a warehouse with no sessions is still a warehouse, and an
         # integration dock is never a work station. Reporting False here made
         # both look like ordinary stations until their first session.
-        return empty(sid in await _warehouse_ids(session, ctx.company_id))
+        #
+        # Line cycle time is measured from departures, not sessions — a
+        # teardown station may ship pieces all day without anyone pressing
+        # Start there — so it is computed even when no session ever ran. The
+        # early return used to skip it, which read as "no exit rate" at
+        # exactly the stations whose exit rate is the product.
+        schedule0, tz0 = await _work_schedule(session, ctx.company_id)
+        lc = (await _line_cycle_times(session, ctx.company_id, schedule0, tz0)).get(station_id)
+        return empty(sid in await _warehouse_ids(session, ctx.company_id), line_cycle=lc)
 
     total_units = sum(r.quantity for r in rows)
     total_working = sum((r.durationSec or 0) for r in rows)

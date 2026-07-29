@@ -102,13 +102,17 @@ def test_a_release_raises_demand_at_the_queue_not_on_the_partners_node(actor):
 def test_a_demand_link_does_not_make_the_queue_look_made_here(actor):
     """The regression this guards: an incoming edge from Odoo would otherwise
     read as an upstream feed, and the pull would walk back and try to seed the
-    ERP itself instead of minting at the queue."""
+    ERP itself instead of minting at the queue.
+
+    (An earlier version of this test called `/merge/{id}/preview` — a path that
+    does not exist — and guarded its assertion behind `if status == 200`, so it
+    passed while checking nothing. The preview is `GET /merge/{id}`, and a
+    guard that skips the assertion is a test that skips the test.)"""
     a = actor(); bootstrap_admin(a)
     odoo, intake, cell, ship, proc, tmpl = _line(a)
-    # Intake is still a leaf queue as far as the graph is concerned.
-    r = a.req("GET", f"/merge/{intake['_id']}/preview")
-    if r.status_code == 200:
-        assert r.json().get("isMergeStation") in (False, None), r.json()
+    r = a.req("GET", f"/merge/{intake['_id']}")
+    assert r.status_code == 200, r.text
+    assert r.json()["isMergeStation"] is False, r.json()
 
 
 # ─── Sink: the completion reaches the partner it left through ────────────────
@@ -318,5 +322,5 @@ def test_handoff_may_only_leave_the_end_of_the_flow(actor):
                                    "unload": ship["_id"], "quantity": 1})
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
-    assert "last location in the flow" in detail, detail
+    assert "after the last work step" in detail, detail
     assert "still sends work on to Cell A" in detail, detail

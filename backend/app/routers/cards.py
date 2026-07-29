@@ -20,8 +20,8 @@ from ..models.card import Card, CardCreate, CardUpdate, LotStatus
 from ..models.card_event import CardEvent, EventType
 from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
-from .merge import (_assembly_template, _ensure_origination_template, _gen_lot_code,
-                    _incoming_routes, _leaf_sources, _precursor_template_ids)
+from .merge import (_assembly_template, _boundary_station_ids, _ensure_origination_template,
+                    _gen_lot_code, _incoming_routes, _leaf_sources, _precursor_template_ids)
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -128,6 +128,7 @@ async def create_card(body: CardCreate, ctx: CompanyContext = Depends(require_ad
         raise HTTPException(400, "Card references a template or process outside this company")
     data["lotTemplateId"] = tmpl_id
     data["processId"] = proc_id
+    await _assert_units_stay_off_partner_nodes(session, ctx.company_id, data.get("bins", {}).keys())
     row = CardRow(**data, companyId=ctx.company_id)
     session.add(row)
     try:
@@ -155,6 +156,8 @@ async def get_card(card_id: str, ctx: CompanyContext = Depends(get_active_compan
 async def update_card(card_id: str, body: CardUpdate, ctx: CompanyContext = Depends(require_super_admin),
                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, card_id, ctx)
+    if body.bins is not None:
+        await _assert_units_stay_off_partner_nodes(session, ctx.company_id, body.bins.keys())
     old_bins = dict(row.bins or {})
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     for k, v in patch.items():
@@ -237,6 +240,11 @@ async def _split_branches(session, company_id, row: CardRow, from_id: str, to_id
             RouteRow.processId == row.processId,
         )
     )).scalars().all())
+    # A handoff link to an integration node is not a production branch. Counting
+    # it made one production route + one handoff read as a split, and advancing
+    # minted a piece onto the partner's node.
+    bound = await _boundary_station_ids(session, company_id)
+    branches = [b for b in branches if b.unload not in bound]
     if len(branches) < 2 or not any(b.unload == to_uuid for b in branches):
         return None
     # Piece check — resolve each branch's product read-only (never provisioning:
@@ -395,6 +403,31 @@ async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_
     if to_count == 0:
         await plugin_registry.notify_lot_arrive(to_id, card_id, card.model_dump(mode="json"))
     return card
+
+
+async def _assert_units_stay_off_partner_nodes(session, company_id, station_ids) -> None:
+    """Lots never sit on an integration node — that is the model's one hard rule
+    about them, and it held everywhere except the three endpoints that place
+    units at an arbitrary station. A handoff link is a real route row, so
+    /advance would happily walk finished goods ONTO the ShipStation node —
+    where they then credited the order as if arriving at an unbound leaf,
+    bypassing the handoff and its sink-addressed event entirely. A scanner at
+    the last station (scan-to-advance) would do this on every read.
+
+    Moving OUT of a bound station is deliberately not refused: nothing should
+    ever be there, but if something is, the rescue path must stay open.
+    """
+    ids = {u for u in (parse_uuid(str(sid)) for sid in station_ids) if u is not None}
+    if not ids:
+        return
+    hit = ids & await _boundary_station_ids(session, company_id)
+    if hit:
+        st = await session.get(StationRow, next(iter(hit)))
+        name = st.name if st else "that location"
+        raise HTTPException(400,
+            f"Lots never sit on {name} — it is the boundary to "
+            f"{st.integrationProvider if st else 'a partner'}. Finished goods leave "
+            f"through it with a handoff (\u201cSend to {name}\u201d), which consumes the lot.")
 
 
 async def _assert_not_unmerged_precursor(session, company_id, row: CardRow, from_id: str) -> None:
@@ -703,6 +736,7 @@ async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(
     """Super-admin lot-board drag: unconstrained move of units between any two
     bins (forward or backward along the graph — backward can trigger unmerge)."""
     row = await _get_owned(session, card_id, ctx, for_update=True)
+    await _assert_units_stay_off_partner_nodes(session, ctx.company_id, [body.toStationId])
     # The board drag is unconstrained on purpose — backwards, sideways, to fix a
     # mistake — but pushing a precursor *onward* out of the station that
     # assembles it is not a correction, it is the same lie /advance already
@@ -749,6 +783,7 @@ async def advance_card(card_id: str, body: AdvanceBody,
     row = await _get_owned(session, card_id, ctx, for_update=True)
     from_uuid = require_uuid(body.fromStationId, "Station not found")
     to_uuid = require_uuid(body.toStationId, "Station not found")
+    await _assert_units_stay_off_partner_nodes(session, ctx.company_id, [body.toStationId])
     # The route must belong to the card's own process: routes of a sibling
     # process sharing these stations are a different value stream, and riding
     # one would teleport the lot out of its own flow.

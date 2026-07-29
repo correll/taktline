@@ -219,18 +219,23 @@ export default function OperatorView() {
     setPhase('working')
   }, [stationId, card, quantity, elapsed, setStatus])
 
-  const handleMove = useCallback(async (toStationId: string) => {
+  // One or several route-constrained advances (allowed for operators and
+  // admins). Several happen when a choice station's units are dealt across
+  // destinations — each advance is its own transaction, in the given order,
+  // so a failure partway leaves the earlier moves committed and visible.
+  const handleMove = useCallback(async (moves: { toStationId: string; quantity: number }[]) => {
     if (!card || !stationId) return
-    const fromCount = card.bins[stationId]?.count ?? 0
-    const moveQty   = Math.min(quantity, fromCount)
-    if (moveQty <= 0) { reset(); return }
-
-    // Route-constrained advance — allowed for operators (members) and admins.
+    let remaining = Math.min(quantity, card.bins[stationId]?.count ?? 0)
     try {
-      const moved = await cardsApi.advance(card._id, stationId, toStationId, moveQty)
-      // Store the response directly: if the follow-up status call or the WS
-      // echo is lost, the local board still reflects the committed move.
-      upsertCard(moved)
+      for (const m of moves) {
+        const q = Math.min(m.quantity, remaining)
+        if (q <= 0) continue
+        const moved = await cardsApi.advance(card._id, stationId, m.toStationId, q)
+        // Store the response directly: if the follow-up status call or the WS
+        // echo is lost, the local board still reflects the committed move.
+        upsertCard(moved)
+        remaining -= q
+      }
       await setStatus(card._id, 'idle')
     } catch (e) {
       console.error('advance failed:', e)
@@ -989,7 +994,7 @@ function DonePanel({
   stationId:   string
   quantity:    number
   elapsed:     number
-  onMove:      (toStationId: string) => void
+  onMove:      (moves: { toStationId: string; quantity: number }[]) => void
   onContinue:  () => Promise<void>
   onBack:      () => void
 }) {
@@ -1081,11 +1086,47 @@ function DonePanel({
     } finally { setSending(false) }
   }
 
-  const doMove = async (target?: Station) => {
-    const dest = target ?? nextStation
-    if (!dest) return
+  // How the worked units are dealt across the destinations, when picking.
+  // Defaults to everything down the first branch — the old single-button
+  // behaviour — and re-anchors when the lot or its branches change.
+  const [alloc, setAlloc] = useState<Record<string, number>>({})
+  const branchKey = branches.map((b) => b._id).join('|')
+  useEffect(() => {
+    if (!picksDestination) return
+    const init: Record<string, number> = {}
+    branches.forEach((st, i) => { init[st._id] = i === 0 ? quantity : 0 })
+    setAlloc(init)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picksDestination, quantity, branchKey])
+
+  const allocTotal = branches.reduce((s, st) => s + (alloc[st._id] ?? 0), 0)
+  // Raising a route's count takes units from the other routes when the total
+  // would overflow — dealing, not gatekeeping: with everything defaulted onto
+  // the first route, a hard clamp would pin every other row at zero.
+  const setRow = (id: string, v: number) => {
+    setAlloc((a) => {
+      const next = { ...a, [id]: Math.max(0, Math.min(v, quantity)) }
+      let excess = branches.reduce((s, st) => s + (next[st._id] ?? 0), 0) - quantity
+      for (const st of branches) {
+        if (excess <= 0) break
+        if (st._id === id) continue
+        const take = Math.min(next[st._id] ?? 0, excess)
+        next[st._id] = (next[st._id] ?? 0) - take
+        excess -= take
+      }
+      return next
+    })
+  }
+  const allTo = (id: string) => {
+    const next: Record<string, number> = {}
+    branches.forEach((st) => { next[st._id] = st._id === id ? quantity : 0 })
+    setAlloc(next)
+  }
+
+  const doMove = async (moves: { toStationId: string; quantity: number }[]) => {
+    if (moves.length === 0) return
     setMoving(true)
-    try { await onMove(dest._id) } finally { setMoving(false) }
+    try { await onMove(moves) } finally { setMoving(false) }
   }
 
   return (
@@ -1144,31 +1185,75 @@ function DonePanel({
       {picksDestination ? (
         <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: size.sp3 }}>
           <div style={{ fontSize: 11, color: color.textDim, textAlign: 'center' }}>
-            This lot moves whole — pick where it goes.
+            This lot moves whole — deal the units across the routes.
           </div>
           {branches.map((st) => (
-            <button
+            <div
               key={st._id}
-              onClick={() => doMove(st)}
-              disabled={moving}
               style={{
-                width: '100%', padding: `${size.sp4} 0`,
-                background:   moving ? `${color.bluePrimary}40` : color.bluePrimary,
-                border: 'none', borderRadius: size.radiusMd,
-                color: '#fff', fontFamily: font.mono,
-                fontSize: 17, fontWeight: 700, letterSpacing: '0.1em',
-                cursor: moving ? 'not-allowed' : 'pointer',
-                boxShadow: `0 4px 20px ${color.bluePrimary}30`,
-                transition: 'all 0.15s ease',
+                display: 'flex', alignItems: 'center', gap: size.sp3,
+                background: color.bgCard, border: `1px solid ${color.border}`,
+                borderRadius: size.radiusMd, padding: `${size.sp3} ${size.sp4}`,
               }}
             >
-              {moving ? 'MOVING…' : `MOVE → ${st.name.toUpperCase()}`}
-            </button>
+              <span style={{
+                flex: 1, fontSize: 13.5, fontWeight: 600, color: color.textPrimary,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {st.name}
+              </span>
+              <input
+                type="number" min={0} max={quantity}
+                value={alloc[st._id] ?? 0}
+                onChange={(e) => setRow(st._id, parseInt(e.target.value, 10) || 0)}
+                onFocus={(e) => e.target.select()}
+                style={{
+                  width: 64, background: color.bgInput, border: `1px solid ${color.border}`,
+                  borderRadius: size.radius, color: color.textPrimary, padding: '8px 6px',
+                  fontSize: 16, fontFamily: font.mono, textAlign: 'center',
+                }}
+              />
+              <button
+                onClick={() => allTo(st._id)}
+                style={{
+                  background: 'transparent', border: `1px solid ${color.border}`,
+                  borderRadius: size.radius, color: color.textSecondary,
+                  fontSize: 11, fontFamily: font.mono, letterSpacing: '0.06em',
+                  padding: '9px 10px', cursor: 'pointer',
+                }}
+              >
+                ALL
+              </button>
+            </div>
           ))}
+          {allocTotal < quantity && (
+            <div style={{ fontSize: 11, color: color.textDim, textAlign: 'center' }}>
+              {quantity - allocTotal} unit{quantity - allocTotal !== 1 ? 's' : ''}{' '}
+              stay{quantity - allocTotal === 1 ? 's' : ''} at {station?.name}.
+            </div>
+          )}
+          <button
+            onClick={() => doMove(branches
+              .filter((st) => (alloc[st._id] ?? 0) > 0)
+              .map((st) => ({ toStationId: st._id, quantity: alloc[st._id] })))}
+            disabled={moving || allocTotal < 1}
+            style={{
+              width: '100%', padding: `${size.sp5} 0`,
+              background:   moving || allocTotal < 1 ? `${color.bluePrimary}40` : color.bluePrimary,
+              border: 'none', borderRadius: size.radiusMd,
+              color: '#fff', fontFamily: font.mono,
+              fontSize: 20, fontWeight: 700, letterSpacing: '0.12em',
+              cursor: moving || allocTotal < 1 ? 'not-allowed' : 'pointer',
+              boxShadow: `0 4px 20px ${color.bluePrimary}40`,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {moving ? 'MOVING…' : `MOVE ${allocTotal} UNIT${allocTotal !== 1 ? 'S' : ''}`}
+          </button>
         </div>
       ) : nextStation && (
         <button
-          onClick={() => doMove()}
+          onClick={() => doMove([{ toStationId: nextStation._id, quantity }])}
           disabled={moving}
           style={{
             width: '100%', maxWidth: 320, padding: `${size.sp5} 0`,

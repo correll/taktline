@@ -217,6 +217,45 @@ def test_teardown_uses_its_own_processes_weights(actor):
     assert _at(a, g.modtest, g.lfp["proc"]) == 6 and _at(a, g.busbar, g.lfp["proc"]) == 1
 
 
+# ─── The spares route is an escape path, not a second disassembly ────────────
+
+def test_set_aside_to_spares_relocates_and_never_mints(actor):
+    """A spares shelf fed from Module Test gives that station two outgoing
+    routes in BOTH processes — including LFP, whose teardown yield (6) exactly
+    matches its merge's take (6), so no structural surplus ever needs the
+    route. It exists as the escape path for a failed or extra module, and it is
+    safe because a module card wears the branch's own product: setting one
+    aside is a relocation, not a re-triggered split — nothing is minted on the
+    other branch, nothing is relabelled."""
+    a = actor(); bootstrap_admin(a)
+    g = _build(a)
+    spares = _st(a, "Spare Modules", isStorage=True)
+    for line in (g.nmc, g.lfp):
+        _route(a, line["proc"], g.modtest, spares)
+
+    # LFP: the balanced line. One module fails test and goes to the shelf.
+    _order(a, g, g.lfp, 1, "LFP-1")
+    mods, _ = _teardown(a, g, g.lfp, "LFP-1")
+    before = {c["_id"] for c in _cards(a)}
+    _advance(a, mods["_id"], g.modtest, spares, 1)
+
+    assert {c["_id"] for c in _cards(a)} == before, "the set-aside minted cards"
+    fresh = a.req("GET", f"/cards/{mods['_id']}").json()
+    assert fresh["lotTemplateId"] == g.lfp["module"], "the piece was relabelled"
+    assert fresh["bins"] == {g.modtest: {"count": 5}, spares: {"count": 1}}, fresh["bins"]
+
+    # NMC: the line with a real surplus — 4 arrive, the merge takes 3. The
+    # fourth goes to the shelf and the merge still assembles.
+    _order(a, g, g.nmc, 1, "NMC-1")
+    n_mods, n_bus = _teardown(a, g, g.nmc, "NMC-1")
+    _advance(a, n_mods["_id"], g.modtest, spares, 1)
+    _advance(a, n_mods["_id"], g.modtest, g.reasm, 3)
+    _advance(a, n_bus["_id"], g.busbar, g.reasm, 2)
+    r = a.req("POST", f"/merge/{g.reasm}", {"cardIds": [n_mods["_id"], n_bus["_id"]]})
+    assert r.status_code == 201, r.text
+    assert _at(a, spares) == 2                      # one of each chemistry
+
+
 # ─── Two merges, one bench — both reachable ──────────────────────────────────
 
 def _stage_both_lines(a, g):

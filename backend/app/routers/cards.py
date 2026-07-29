@@ -412,17 +412,23 @@ async def _assert_not_unmerged_precursor(session, company_id, row: CardRow, from
     from_uuid = parse_uuid(from_id)
     if from_uuid is None:
         return
-    # Scoped to the card's own process: the station may host another process's
-    # merge, but that is a different value stream — a card passing through on
-    # its own process's single feed is not that merge's precursor.
+    # Judged on the topology of the card's OWN process, and nothing else.
+    #
+    # Within one process, two feeds converging on a station *is* a merge — that
+    # is what a merge is. The shared-resource case people reach for (a paint
+    # booth two lines send work through) is not a counter-example: that is two
+    # *processes* sharing a physical location, and each of them has a single
+    # feed into it, so this returns early below. Alternative routing is modelled
+    # the same way, as a separate process.
+    #
+    # This used to also require that a product template already start here,
+    # excused as protecting the paint booth. It protected nothing — process
+    # scoping already did that — and it left a hole exactly where the product
+    # is newest: until someone defines the assembly, every precursor could walk
+    # straight out of the station that was supposed to consume it.
     incoming = await _incoming_routes(session, company_id, from_uuid, row.processId)
     if len(incoming) < 2:
-        return                      # not a merge station — ordinary pass-through
-    # Only a station that actually mints a product here is assembling: two feeds
-    # into a shared resource (a paint booth both lines use) is not a merge, and
-    # work must keep flowing through it.
-    if await _assembly_template(session, company_id, from_uuid, row.processId) is None:
-        return
+        return                      # one feed in this process — ordinary pass-through
     precursor_ids: set = set()
     for route in incoming:
         precursor_ids.update(await _precursor_template_ids(session, company_id, route))

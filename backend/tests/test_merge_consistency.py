@@ -299,28 +299,73 @@ def test_precursor_cannot_be_advanced_out_of_a_merge_station(actor):
     assert r.json()["bins"][test["_id"]]["count"] == 1
 
 
-def test_shared_resource_with_two_feeds_still_passes_work_through(actor):
-    """Two lines feeding one station is only a merge if something is assembled
-    there. A shared paint booth mints no product of its own, so lots must keep
-    flowing through it."""
+def test_a_shared_location_is_two_processes_not_one_merge(actor):
+    """A paint booth two lines send work through is the case people reach for
+    to argue "two feeds is not always a merge". It is not a counter-example —
+    it is two *processes* sharing a physical location, and each of them has a
+    single feed into it.
+
+    Modelled that way (which is how alternative routing is modelled throughout),
+    work passes through the booth on both lines and nothing is treated as a
+    precursor. Modelled as one process with two feeds it would be a merge, and
+    correctly so, because that is what a merge is.
+    """
     a = actor(); bootstrap_admin(a)
     line_a = _mk_station(a, "Line A", 100)
     line_b = _mk_station(a, "Line B", 200)
     booth  = _mk_station(a, "Paint booth", 300)
     ship   = _mk_station(a, "Shipping", 400)
-    proc = a.req("POST", "/processes/", {"name": "Paint"}).json()
-    for load, unload in [(line_a, booth), (line_b, booth), (booth, ship)]:
-        assert a.req("POST", "/routes/", {"processId": proc["_id"], "load": load["_id"],
-                                          "unload": unload["_id"], "quantity": 1}).status_code == 201
-    tmpl = a.req("POST", "/lot-templates/", {"name": "Panel", "processId": proc["_id"],
-                                             "startStationId": line_a["_id"]}).json()
-    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": proc["_id"],
-                                     "totalQuantity": 1, "bins": {line_a["_id"]: {"count": 1}},
-                                     "fields": {}, "flagged": False, "description": "",
-                                     "status": "idle"}).json()
-    assert a.req("POST", f"/cards/{card['_id']}/advance",
-                 {"fromStationId": line_a["_id"], "toStationId": booth["_id"],
-                  "quantity": 1}).status_code == 200
-    r = a.req("POST", f"/cards/{card['_id']}/advance",
-              {"fromStationId": booth["_id"], "toStationId": ship["_id"], "quantity": 1})
-    assert r.status_code == 200, f"pass-through blocked: {r.text}"
+
+    made = {}
+    for name, source in (("Paint A", line_a), ("Paint B", line_b)):
+        proc = a.req("POST", "/processes/", {"name": name}).json()
+        for load, unload in [(source, booth), (booth, ship)]:
+            r = a.req("POST", "/routes/", {"processId": proc["_id"], "load": load["_id"],
+                                           "unload": unload["_id"], "quantity": 1})
+            assert r.status_code == 201, r.text
+        tmpl = a.req("POST", "/lot-templates/", {"name": f"Panel {name[-1]}",
+                                                 "processId": proc["_id"],
+                                                 "startStationId": source["_id"]}).json()
+        made[name] = (proc, tmpl, source)
+
+    # Both lines run through the shared booth without either being held.
+    for name, (proc, tmpl, source) in made.items():
+        card = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": proc["_id"],
+                                         "totalQuantity": 1,
+                                         "bins": {source["_id"]: {"count": 1}}}).json()
+        assert a.req("POST", f"/cards/{card['_id']}/advance",
+                     {"fromStationId": source["_id"], "toStationId": booth["_id"],
+                      "quantity": 1}).status_code == 200, name
+        r = a.req("POST", f"/cards/{card['_id']}/advance",
+                  {"fromStationId": booth["_id"], "toStationId": ship["_id"], "quantity": 1})
+        assert r.status_code == 200, f"{name} blocked at the shared booth: {r.text}"
+        assert r.json()["bins"][ship["_id"]]["count"] == 1
+
+
+def test_two_feeds_inside_one_process_is_a_merge_even_before_the_product_exists(actor):
+    """The hole the old escape hatch left: the gate used to require that a
+    product template already start at the station, excused as protecting the
+    shared booth. It protected nothing — process scoping does that — and it
+    meant that on a line whose assembly had not been named yet, every precursor
+    could walk straight out of the station meant to consume it."""
+    a = actor(); bootstrap_admin(a)
+    cell_a = _mk_station(a, "Cell A", 100)
+    cell_b = _mk_station(a, "Cell B", 200)
+    asm    = _mk_station(a, "Assembly", 300)
+    test   = _mk_station(a, "Testing", 400)
+    proc = a.req("POST", "/processes/", {"name": "One line"}).json()
+    for load, unload in [(cell_a, asm), (cell_b, asm), (asm, test)]:
+        a.req("POST", "/routes/", {"processId": proc["_id"], "load": load["_id"],
+                                   "unload": unload["_id"], "quantity": 1})
+    # Deliberately NO template starting at Assembly — the product is not named yet.
+    motor = a.req("POST", "/lot-templates/", {"name": "Motor", "processId": proc["_id"],
+                                              "startStationId": cell_a["_id"]}).json()
+    a.req("POST", "/lot-templates/", {"name": "Frame", "processId": proc["_id"],
+                                      "startStationId": cell_b["_id"]})
+    card = a.req("POST", "/cards/", {"lotTemplateId": motor["_id"], "processId": proc["_id"],
+                                     "totalQuantity": 1, "bins": {asm["_id"]: {"count": 1}}}).json()
+
+    for endpoint in ("advance", "move"):
+        r = a.req("POST", f"/cards/{card['_id']}/{endpoint}",
+                  {"fromStationId": asm["_id"], "toStationId": test["_id"], "quantity": 1})
+        assert r.status_code == 409, f"{endpoint} let an unmerged precursor through: {r.text}"

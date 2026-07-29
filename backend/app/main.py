@@ -24,7 +24,7 @@ from .plugins.registry import plugin_registry
 from .routers import (
     admin, api_keys, auth, cards, companies, global_settings, invitations, lot_templates,
     map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
-    client_errors, stations, stats,
+    client_errors, map_io, stations, stats,
 )
 from .core import sandbox_gc, usage
 from .core.traffic import traffic
@@ -144,6 +144,7 @@ app.include_router(reports.router)
 app.include_router(admin.router)
 app.include_router(platform.router)
 app.include_router(client_errors.router)
+app.include_router(map_io.router)
 
 
 # ── Traffic counter (feeds the platform dashboard) ────────────────────────────

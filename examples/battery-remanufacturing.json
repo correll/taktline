@@ -1,0 +1,388 @@
+{
+  "kind": "taktline-map",
+  "version": 1,
+  "name": "Battery remanufacturing — two chemistries over one floor",
+  "mapSettings": {
+    "unit": "m",
+    "pixelsPerUnit": 36.0,
+    "stationSizeUnits": 2.0
+  },
+  "stations": [
+    {
+      "ref": "s1",
+      "name": "Intake",
+      "description": "Used packs arrive here.",
+      "position": {
+        "x": 180.0,
+        "y": 540.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": null,
+      "icon": "Truck",
+      "isStorage": false,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s2",
+      "name": "Teardown",
+      "description": "Disassembly: one pack becomes modules and busbars.",
+      "position": {
+        "x": 700.0,
+        "y": 540.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": null,
+      "icon": "Hammer",
+      "isStorage": false,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s3",
+      "name": "Module Test",
+      "description": "",
+      "position": {
+        "x": 1250.0,
+        "y": 320.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": "#2D5B8E",
+      "icon": "FlaskConical",
+      "isStorage": false,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s4",
+      "name": "Busbar Clean",
+      "description": "",
+      "position": {
+        "x": 1250.0,
+        "y": 760.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": "#2D5B8E",
+      "icon": "Wrench",
+      "isStorage": false,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s5",
+      "name": "Reassembly",
+      "description": "The reman pack is assembled here; orders are created here.",
+      "position": {
+        "x": 1800.0,
+        "y": 540.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": null,
+      "icon": "Factory",
+      "isStorage": false,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s6",
+      "name": "QA",
+      "description": "",
+      "position": {
+        "x": 2350.0,
+        "y": 540.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": null,
+      "icon": "ScanSearch",
+      "isStorage": false,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s7",
+      "name": "Spare Modules",
+      "description": "Surplus modules rest here — storage, not work.",
+      "position": {
+        "x": 1250.0,
+        "y": 1050.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": null,
+      "icon": "Box",
+      "isStorage": true,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s8",
+      "name": "Odoo",
+      "description": "",
+      "position": {
+        "x": 1800.0,
+        "y": 160.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": null,
+      "icon": null,
+      "isStorage": false,
+      "integrationProvider": "odoo",
+      "integrationRole": "both"
+    },
+    {
+      "ref": "s9",
+      "name": "ShipStation",
+      "description": "",
+      "position": {
+        "x": 2800.0,
+        "y": 540.0,
+        "width": 72.0,
+        "height": 72.0
+      },
+      "color": null,
+      "icon": null,
+      "isStorage": false,
+      "integrationProvider": "shipstation",
+      "integrationRole": "sink"
+    }
+  ],
+  "processes": [
+    {
+      "ref": "p1",
+      "name": "NMC",
+      "description": "High-energy packs: 1 pack → 4 modules + 2 busbars; a reman pack consumes 3 modules + 2 busbars, so every teardown leaves one spare module.",
+      "desiredTaktSec": 1800.0
+    },
+    {
+      "ref": "p2",
+      "name": "LFP",
+      "description": "Long-life packs: 1 pack → 6 modules + 1 busbar; a reman pack consumes all six and the busbar — no surplus.",
+      "desiredTaktSec": 2400.0
+    }
+  ],
+  "templates": [
+    {
+      "ref": "t1",
+      "name": "NMC used pack",
+      "description": "",
+      "process": "p1",
+      "startStation": "s1",
+      "color": "#6B7A2E",
+      "fields": [
+        {
+          "key": "soh",
+          "label": "State of health %",
+          "type": "number",
+          "options": [],
+          "required": false
+        }
+      ]
+    },
+    {
+      "ref": "t2",
+      "name": "NMC module",
+      "description": "",
+      "process": "p1",
+      "startStation": "s3",
+      "color": "#2D5B8E",
+      "fields": []
+    },
+    {
+      "ref": "t3",
+      "name": "NMC busbar",
+      "description": "",
+      "process": "p1",
+      "startStation": "s4",
+      "color": "#8A5A2B",
+      "fields": []
+    },
+    {
+      "ref": "t4",
+      "name": "Reman NMC",
+      "description": "",
+      "process": "p1",
+      "startStation": "s5",
+      "color": "#993C1D",
+      "fields": []
+    },
+    {
+      "ref": "t5",
+      "name": "LFP used pack",
+      "description": "",
+      "process": "p2",
+      "startStation": "s1",
+      "color": "#6B7A2E",
+      "fields": [
+        {
+          "key": "soh",
+          "label": "State of health %",
+          "type": "number",
+          "options": [],
+          "required": false
+        }
+      ]
+    },
+    {
+      "ref": "t6",
+      "name": "LFP module",
+      "description": "",
+      "process": "p2",
+      "startStation": "s3",
+      "color": "#2D5B8E",
+      "fields": []
+    },
+    {
+      "ref": "t7",
+      "name": "LFP busbar",
+      "description": "",
+      "process": "p2",
+      "startStation": "s4",
+      "color": "#8A5A2B",
+      "fields": []
+    },
+    {
+      "ref": "t8",
+      "name": "Reman LFP",
+      "description": "",
+      "process": "p2",
+      "startStation": "s5",
+      "color": "#993C1D",
+      "fields": []
+    }
+  ],
+  "routes": [
+    {
+      "process": "p1",
+      "load": "s1",
+      "unload": "s2",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s2",
+      "unload": "s3",
+      "quantity": 4,
+      "outputTemplate": "t2"
+    },
+    {
+      "process": "p1",
+      "load": "s2",
+      "unload": "s4",
+      "quantity": 2,
+      "outputTemplate": "t3"
+    },
+    {
+      "process": "p1",
+      "load": "s3",
+      "unload": "s5",
+      "quantity": 3,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s4",
+      "unload": "s5",
+      "quantity": 2,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s5",
+      "unload": "s6",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s3",
+      "unload": "s7",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s8",
+      "unload": "s5",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s6",
+      "unload": "s9",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s1",
+      "unload": "s2",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s2",
+      "unload": "s3",
+      "quantity": 6,
+      "outputTemplate": "t6"
+    },
+    {
+      "process": "p2",
+      "load": "s2",
+      "unload": "s4",
+      "quantity": 1,
+      "outputTemplate": "t7"
+    },
+    {
+      "process": "p2",
+      "load": "s3",
+      "unload": "s5",
+      "quantity": 6,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s4",
+      "unload": "s5",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s5",
+      "unload": "s6",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s3",
+      "unload": "s7",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s8",
+      "unload": "s5",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s6",
+      "unload": "s9",
+      "quantity": 1,
+      "outputTemplate": null
+    }
+  ]
+}

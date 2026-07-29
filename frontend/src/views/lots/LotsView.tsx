@@ -220,18 +220,26 @@ export default function LotsView() {
     [routes],
   )
 
-  const { order: topoOrder, solidBars, dashedBars } = useMemo(() => {
-    // Boundary nodes (ERP/shipper) are not columns: cards never sit on them —
-    // demand comes *from* them and handoffs consume *into* them — so a column
-    // would be permanently empty. Their edges go too, or the flattening would
-    // still order the board around links that carry no material.
+  // Boundary nodes (ERP/shipper) are not columns: cards never sit on them —
+  // demand comes *from* them and handoffs consume *into* them — so a column
+  // would be permanently empty. Their edges go too, or the flattening would
+  // still order the board around links that carry no material. Shared by both
+  // layouts — split mode passing the raw routes was how the boundary links
+  // leaked back into the lane graph.
+  const flowGraph = useMemo(() => {
     const bound = new Set(Object.values(stations)
       .filter(isIntegrationStation).map((s) => s._id))
-    const edgeList = Object.values(routes)
-      .filter((r) => !bound.has(r.load) && !bound.has(r.unload))
-      .map((r) => ({ load: r.load, unload: r.unload }))
-    return computeColumnGroups(edgeList, Object.keys(stations).filter((id) => !bound.has(id)))
+    return {
+      edges: Object.values(routes)
+        .filter((r) => !bound.has(r.load) && !bound.has(r.unload))
+        .map((r) => ({ load: r.load, unload: r.unload })),
+      nodeIds: Object.keys(stations).filter((id) => !bound.has(id)),
+    }
   }, [stations, routes])
+
+  const { order: topoOrder, solidBars, dashedBars } = useMemo(
+    () => computeColumnGroups(flowGraph.edges, flowGraph.nodeIds),
+    [flowGraph])
 
   const columns = useMemo(() => {
     const cardList = Object.values(cards)
@@ -313,8 +321,7 @@ export default function LotsView() {
   // that first claims the merge node (first source in topological order).
   const splitRows = useMemo(() => {
     if (!splitMode || columns.length === 0) return null
-    const edgeList = Object.values(routes).map((r) => ({ load: r.load, unload: r.unload }))
-    const lanes    = computeLanes(edgeList, Object.keys(stations))
+    const lanes = computeLanes(flowGraph.edges, flowGraph.nodeIds)
     if (lanes.length === 0) return null
     return lanes
       .map((lane) => ({
@@ -322,7 +329,7 @@ export default function LotsView() {
         cols:   lane.nodes.map((id) => colById.get(id)!).filter(Boolean),
       }))
       .filter((lane) => lane.cols.length > 0)
-  }, [splitMode, columns, stations, routes, colById])
+  }, [splitMode, columns, flowGraph, colById])
 
   // ─── Column-item renderer (shared by normal and split layouts) ────────────
   const renderColumnItem = (col: (typeof columns)[number]) => {

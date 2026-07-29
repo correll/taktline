@@ -27,6 +27,7 @@ const StatisticsView = lazyView(() => import('./views/statistics/StatisticsView'
 const OperatorView   = lazyView(() => import('./views/operator/OperatorView'))
 const SettingsView   = lazyView(() => import('./views/settings/SettingsView'))
 const PlatformView   = lazyView(() => import('./views/platform/PlatformView'))
+const ClientErrorsView = lazyView(() => import('./views/platform/ClientErrorsView'))
 
 const LoginView          = lazyView(() => import('./views/auth/LoginView'))
 const SignupView         = lazyView(() => import('./views/auth/SignupView'))
@@ -137,6 +138,7 @@ function Shell() {
               <Route path="/statistics" element={<StatisticsView />} />
               <Route path="/settings"   element={<RequireAdmin><SettingsView /></RequireAdmin>} />
               <Route path="/platform"   element={<RequirePlatformStaff><PlatformView /></RequirePlatformStaff>} />
+              <Route path="/platform/client-errors" element={<RequirePlatformStaff><ClientErrorsView /></RequirePlatformStaff>} />
             </Routes>
           </React.Suspense>
         </RouteErrorBoundary>

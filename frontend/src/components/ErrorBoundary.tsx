@@ -21,13 +21,20 @@ type Props = {
    *  recovers instead of leaving the boundary latched on the failed view. */
   resetKey?: string
 }
-type State = { error: Error | null }
+type State = {
+  error: Error | null
+  /** Whether the report actually reached Taktline. Tracked rather than
+   *  assumed: telling someone their crash was sent when the POST failed —
+   *  offline, rate-limited, server down — is a lie that costs us the report
+   *  AND their trust that anything is being done about it. */
+  reported: 'pending' | 'sent' | 'failed'
+}
 
 export class ErrorBoundary extends React.Component<Props, State> {
-  state: State = { error: null }
+  state: State = { error: null, reported: 'pending' }
 
-  static getDerivedStateFromError(error: Error): State {
-    return { error }
+  static getDerivedStateFromError(error: Error): Partial<State> {
+    return { error, reported: 'pending' }
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
@@ -47,12 +54,16 @@ export class ErrorBoundary extends React.Component<Props, State> {
         JSON.stringify({ ...report, at: new Date().toISOString() }))
     } catch { /* storage full or blocked — the POST below still goes out */ }
     // A crashed view must never crash again in the reporter.
-    try { client.post('/client-errors/', report).catch(() => {}) } catch { /* noop */ }
+    try {
+      client.post('/client-errors/', report)
+        .then(() => this.setState({ reported: 'sent' }))
+        .catch(() => this.setState({ reported: 'failed' }))
+    } catch { this.setState({ reported: 'failed' }) }
   }
 
   componentDidUpdate(prev: Props) {
     if (this.state.error && prev.resetKey !== this.props.resetKey) {
-      this.setState({ error: null })
+      this.setState({ error: null, reported: 'pending' })
     }
   }
 
@@ -84,6 +95,15 @@ export class ErrorBoundary extends React.Component<Props, State> {
               ? 'Taktline was updated while this tab was open, so this page could not load. Reloading picks up the new version.'
               : 'This view ran into an error and stopped. Your data is safe — nothing was saved or changed by this.'}
           </div>
+          {/* Only claimed once the POST has actually resolved. A stale build is
+              excluded: that is the tab being old, not a fault worth reporting. */}
+          {!stale && this.state.reported !== 'pending' && (
+            <div style={{ fontSize: 12.5, color: color.textDim, lineHeight: 1.55 }}>
+              {this.state.reported === 'sent'
+                ? 'This error has been recorded and sent to Taktline to improve the software. You don’t need to report it.'
+                : 'We couldn’t reach Taktline to report this automatically — the details are saved in this browser under “Details” below.'}
+            </div>
+          )}
           <button
             onClick={() => window.location.reload()}
             style={{
@@ -94,7 +114,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           >
             Reload
           </button>
-          {!stale && (
+          {(!stale || this.state.reported === 'failed') && (
             <details style={{ fontSize: 12, color: color.textDim, textAlign: 'left', width: '100%' }}>
               <summary style={{ cursor: 'pointer' }}>Details</summary>
               <pre style={{

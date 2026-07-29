@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, NavLink } from 'react-router-dom'
 import { formatDistanceToNow } from 'date-fns'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { useAuthStore } from '../../store/auth.store'
@@ -48,6 +48,26 @@ export default function PlatformView() {
         <CompaniesSection companies={companies} onChanged={reload} />
         <UsersSection users={users} isOwner={isOwner} selfId={user?.id} onChanged={reload} />
         <AuditSection audit={audit} />
+
+        {/* Crashes that reached a customer's screen. Bottom of the page on
+            purpose: it is the thing you go looking for after a support
+            conversation starts, not something to watch. */}
+        <NavLink to="/platform/client-errors" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: size.sp4, textDecoration: 'none',
+          background: color.bgCard, border: `1px solid ${color.border}`,
+          borderRadius: size.radiusMd, padding: `${size.sp4} ${size.sp5}`,
+        }}>
+          <span>
+            <span style={{ color: color.textPrimary, fontSize: 14, fontWeight: 600 }}>
+              Client errors
+            </span>
+            <span style={{ display: 'block', color: color.textDim, fontSize: 11.5, marginTop: 2 }}>
+              Crashes reported from customers&rsquo; browsers, with a copy-for-support button.
+            </span>
+          </span>
+          <span style={{ color: color.blueBright, fontSize: 13, whiteSpace: 'nowrap' }}>View →</span>
+        </NavLink>
       </div>
     </div>
   )

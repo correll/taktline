@@ -291,7 +291,7 @@ async def list_audit(limit: int = 100, user: User = Depends(require_platform_sta
         "detail": r.detail, "createdAt": r.createdAt,
     } for r in rows]
 
-@router.get("/client-errors")
+@router.get("/client-errors/list")
 async def list_client_errors(companyId: str | None = None, limit: int = 100,
                              _staff=Depends(require_platform_staff),
                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):

@@ -53,7 +53,25 @@ export interface AuditEntry {
   createdAt: string
 }
 
+export interface ClientErrorReport {
+  id: string
+  companyId: string | null
+  userEmail: string | null
+  message: string
+  stack: string
+  componentStack: string
+  url: string
+  userAgent: string
+  appVersion: string
+  createdAt: string
+}
+
 export const platformApi = {
+  /** Crash reports from the frontend error boundary. The bare
+   *  /platform/client-errors path belongs to the SPA page, so the data lives
+   *  one level down. */
+  clientErrors: (companyId?: string): Promise<ClientErrorReport[]> =>
+    client.get('/platform/client-errors/list', { params: { companyId } }),
   status:    (): Promise<PlatformStatus>    => client.get('/platform/status'),
   users:     (): Promise<PlatformUser[]>    => client.get('/platform/users'),
   companies: (): Promise<PlatformCompany[]> => client.get('/platform/companies'),

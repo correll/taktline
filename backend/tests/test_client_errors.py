@@ -30,7 +30,7 @@ def test_signed_in_report_is_attributed(actor, owner):
     r = a.req("POST", "/client-errors/", REPORT)
     assert r.status_code == 204, r.text
 
-    rows = owner.req("GET", "/platform/client-errors").json()
+    rows = owner.req("GET", "/platform/client-errors/list").json()
     mine = [x for x in rows if x["message"] == "boom from the view"]
     assert mine, rows
     assert mine[0]["companyId"] == a.company           # header verified via membership
@@ -43,7 +43,7 @@ def test_anonymous_report_is_accepted_unattributed(actor, owner):
     a = actor()   # never signed in
     r = a.req("POST", "/client-errors/", {**REPORT, "message": "anon crash"})
     assert r.status_code == 204, r.text
-    rows = owner.req("GET", "/platform/client-errors").json()
+    rows = owner.req("GET", "/platform/client-errors/list").json()
     mine = [x for x in rows if x["message"] == "anon crash"]
     assert mine and mine[0]["companyId"] is None and mine[0]["userEmail"] is None
 
@@ -57,7 +57,7 @@ def test_spoofed_company_header_is_not_trusted(actor, owner):
     r = a.req("POST", "/client-errors/", {**REPORT, "message": "spoof try"},
               headers={"X-Company-Id": b.company})
     assert r.status_code == 204, r.text
-    rows = owner.req("GET", "/platform/client-errors").json()
+    rows = owner.req("GET", "/platform/client-errors/list").json()
     mine = [x for x in rows if x["message"] == "spoof try"]
     assert mine and mine[0]["companyId"] is None, mine
 
@@ -66,12 +66,12 @@ def test_fields_are_truncated_not_rejected(actor, owner):
     a = actor(); bootstrap_admin(a)
     r = a.req("POST", "/client-errors/", {"message": "x" * 5000, "stack": "y" * 50000})
     assert r.status_code == 204, r.text
-    rows = owner.req("GET", "/platform/client-errors").json()
+    rows = owner.req("GET", "/platform/client-errors/list").json()
     mine = [x for x in rows if x["message"].startswith("xxx")]
     assert mine and len(mine[0]["message"]) == 1000 and len(mine[0]["stack"]) == 6000
 
 
 def test_reading_reports_is_staff_only(actor):
     a = actor(); bootstrap_admin(a)
-    r = a.req("GET", "/platform/client-errors")
+    r = a.req("GET", "/platform/client-errors/list")
     assert r.status_code == 404, r.text     # non-staff sees no such endpoint

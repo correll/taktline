@@ -21,7 +21,9 @@ Design constraints, in order:
   sandbox is still a crash report; sandbox visitors are exactly who hit the
   odd paths.
 
-Reading them is platform-staff only: ``GET /platform/client-errors``.
+Reading them is platform-staff only: ``GET /platform/client-errors/list``.
+The bare ``/platform/client-errors`` is left to the SPA, which renders
+them as a page with a copy-for-support button.
 """
 
 from typing import Optional

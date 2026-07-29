@@ -26,23 +26,56 @@ export const PROCESS_COLORS: Record<'night' | 'day', readonly string[]> = {
   night: ['#3B82F6', '#C97B30', '#EC4899'],
 }
 
-/** Stable slot for a process id.
- *
- *  Hashed rather than taken from list order: a process keeps its colour when
- *  another is created or deleted, so the map does not silently re-colour a line
- *  someone has learned to recognise.
- */
-export function processColorIndex(processId: string): number {
+/** Preferred slot for a process id — hashed, so it does not depend on how many
+ *  processes exist or what order they were made in. */
+function preferredSlot(processId: string): number {
   let h = 0
   for (let i = 0; i < processId.length; i++) h = (h * 31 + processId.charCodeAt(i)) | 0
   return Math.abs(h) % PROCESS_COLORS.day.length
 }
 
-export function processColor(processId: string, mode: 'night' | 'day'): string {
-  return PROCESS_COLORS[mode][processColorIndex(processId)]
+/** Colours for a whole set of processes, guaranteed distinct while the palette
+ *  lasts.
+ *
+ *  Hashing alone is not enough: with three slots, two processes land on the
+ *  same colour one time in three, and two lines drawn in one colour defeats the
+ *  entire point. So each process takes its hashed slot when free, and otherwise
+ *  the next free one — which keeps colours stable for everyone whose preference
+ *  was uncontested, and only moves the process that actually collided.
+ *
+ *  Past three processes the palette necessarily repeats; the map's legend names
+ *  every line, so identity never rests on hue alone.
+ */
+export function processColorSlots(processIds: string[]): Record<string, number> {
+  const n = PROCESS_COLORS.day.length
+  const ordered = [...processIds].sort()          // stable regardless of fetch order
+  const taken = new Set<number>()
+  const slots: Record<string, number> = {}
+
+  for (const id of ordered) {                     // uncontested preferences first
+    const pref = preferredSlot(id)
+    if (!taken.has(pref)) { taken.add(pref); slots[id] = pref }
+  }
+  for (const id of ordered) {                     // then the collisions, in order
+    if (id in slots) continue
+    let s = preferredSlot(id)
+    for (let i = 0; i < n && taken.has(s); i++) s = (s + 1) % n
+    taken.add(s)
+    slots[id] = s
+  }
+  return slots
+}
+
+export function processColorsFor(
+  processIds: string[], mode: 'night' | 'day',
+): Record<string, string> {
+  const slots = processColorSlots(processIds)
+  const out: Record<string, string> = {}
+  for (const [id, slot] of Object.entries(slots)) out[id] = PROCESS_COLORS[mode][slot]
+  return out
 }
 
 /** Pixi needs numeric colours. */
-export function processColorInt(processId: string, mode: 'night' | 'day'): number {
-  return parseInt(processColor(processId, mode).slice(1), 16)
+export function hexToInt(hex: string): number {
+  return parseInt(hex.slice(1), 16)
 }

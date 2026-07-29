@@ -86,8 +86,9 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize,
     const dx = toStation.position.x - fromStation.position.x
     const dy = toStation.position.y - fromStation.position.y
     const len = Math.hypot(dx, dy) || 1
-    midX += (-dy / len) * offsetPx
-    midY += (dx / len) * offsetPx
+    const flip = String(route.load) > String(route.unload) ? -1 : 1   // same frame as the line
+    midX += (-dy / len) * offsetPx * flip
+    midY += (dx / len) * offsetPx * flip
   }
 
   const redraw = useCallback(() => {
@@ -103,7 +104,12 @@ export default function RouteEdge({ route, fromStation, toStation, nodeSize,
     if (offsetPx) {
       const dx = x2 - x1, dy = y2 - y1
       const len = Math.hypot(dx, dy) || 1
-      const nx = -dy / len, ny = dx / len      // unit normal to the run
+      // The normal is taken in a canonical frame — always as if running from
+      // the lower station id to the higher — so a route and its reverse shift
+      // to *opposite* sides rather than each to its own left, which would put
+      // them back on top of each other.
+      const flip = String(route.load) > String(route.unload) ? -1 : 1
+      const nx = (-dy / len) * flip, ny = (dx / len) * flip
       x1 += nx * offsetPx; y1 += ny * offsetPx
       x2 += nx * offsetPx; y2 += ny * offsetPx
     }

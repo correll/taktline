@@ -12,7 +12,7 @@ import { useCyclePulses } from '../../motion/useCyclePulses'
 import type { CyclePulses } from '../../motion/cycle'
 import { findAccumulations, type Accumulation } from '../../domain/graph'
 import { integrationProvider, isIntegrationStation } from '../../domain/integrations'
-import { processColor, processColorInt } from '../../domain/processColors'
+import { processColorsFor, hexToInt } from '../../domain/processColors'
 import { hasWebGL } from '../demo/webgl'
 
 /** Pixi needs numeric colours; the partner registry stores CSS hex. */
@@ -504,6 +504,13 @@ export default function MapCanvas({
   // (which equals the settings-preview CSS display width, the frame ppu was calibrated in).
   const ppu = mapConfig?.pixelsPerUnit ?? DEFAULT_NODE_SIZE
 
+  // One colour per process, guaranteed distinct while the palette lasts — a
+  // pure hash collides one time in three with only three slots, and two lines
+  // in one colour is exactly the thing this is meant to prevent.
+  const processPalette = React.useMemo(
+    () => processColorsFor(Object.keys(processes), themeMode),
+    [processes, themeMode])
+
   // Two processes routing between the same pair of locations draw one line
   // exactly on top of the other: the second is invisible, and so is the fact
   // that there are two. Shift them apart, centred on the true run, so the pair
@@ -511,10 +518,14 @@ export default function MapCanvas({
   const routeLanes = React.useMemo(() => {
     const byPair = new Map<string, string[]>()
     for (const r of Object.values(routes)) {
-      const key = `${r.load}->${r.unload}`
+      // Keyed on the *pair*, not the direction. A directed key missed the case
+      // where one process runs A→B and another runs B→A: two different keys,
+      // one route each, no lane for either, and both drawn along the identical
+      // straight line between the two locations.
+      const key = [r.load, r.unload].sort().join('|')
       byPair.set(key, [...(byPair.get(key) ?? []), r._id])
     }
-    const gap = Math.max(6, nodeSize * 0.11)
+    const gap = Math.max(3, nodeSize * 0.055)
     const lanes: Record<string, number> = {}
     for (const ids of byPair.values()) {
       // Stable order, so a line does not hop sides when routes are refetched.
@@ -630,7 +641,7 @@ export default function MapCanvas({
                   toStation={stations[route.unload]}
                   nodeSize={nodeSize}
                   boundaryTint={boundaryTint}
-                  tint={processColorInt(route.processId, themeMode)}
+                  tint={hexToInt(processPalette[route.processId] ?? '#888888')}
                   offsetPx={lane}
                 />
               )
@@ -694,7 +705,7 @@ export default function MapCanvas({
             <div key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 6,
                                       fontSize: 11, color: color.glassText }}>
               <span style={{ width: 14, height: 3, borderRadius: 2, flexShrink: 0,
-                             background: processColor(p._id, themeMode) }} />
+                             background: processPalette[p._id] }} />
               {p.name}
             </div>
           ))}

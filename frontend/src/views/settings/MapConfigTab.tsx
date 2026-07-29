@@ -215,6 +215,12 @@ export default function MapConfigTab() {
           </div>
         )}
 
+        {/* Export/import above the danger zone: shipping a line to a file is
+            everyday work; deleting everything is not. Burying the file section
+            underneath the delete button hid it below the fold — found the hard
+            way, by its intended user asking where it was. */}
+        <MapFileSection onError={setError} />
+
         {/* ── Clear map data ── */}
         <div style={{
           marginTop: 'auto', paddingTop: size.sp4,
@@ -242,8 +248,6 @@ export default function MapConfigTab() {
             {clearing ? 'Clearing…' : '🗑 Clear Map Data'}
           </button>
         </div>
-
-        <MapFileSection onError={setError} />
       </div>
     </div>
   )
@@ -312,7 +316,7 @@ function MapFileSection({ onError }: { onError: (e: string | null) => void }) {
   }
 
   return (
-    <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${color.border}` }}>
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${color.border}` }}>
       <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace',
                     letterSpacing: '0.08em', color: color.textDim, marginBottom: 6 }}>
         MAP AS A FILE

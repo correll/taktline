@@ -5,12 +5,14 @@ import { useHelpStore } from './helpStore'
 import { TaktlineLogo } from '../components/TaktlineLogo'
 import { FigureBottleneck, FigureFlow, FigureMerge, FigurePull } from './ManualFigures'
 
-const H2: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <h2 style={{ color: color.textPrimary, fontSize: 18, marginTop: size.sp8, marginBottom: size.sp3,
-               borderBottom: `1px solid ${color.border}`, paddingBottom: size.sp2 }}>{children}</h2>
+const H2: React.FC<{ children: React.ReactNode; id?: string }> = ({ children, id }) => (
+  <h2 id={id} style={{ color: color.textPrimary, fontSize: 18, marginTop: size.sp8, marginBottom: size.sp3,
+               borderBottom: `1px solid ${color.border}`, paddingBottom: size.sp2,
+               scrollMarginTop: size.sp4 }}>{children}</h2>
 )
-const H3: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <h3 style={{ color: color.textPrimary, fontSize: 14, marginTop: size.sp5, marginBottom: size.sp2 }}>{children}</h3>
+const H3: React.FC<{ children: React.ReactNode; id?: string }> = ({ children, id }) => (
+  <h3 id={id} style={{ color: color.textPrimary, fontSize: 14, marginTop: size.sp5, marginBottom: size.sp2,
+               scrollMarginTop: size.sp4 }}>{children}</h3>
 )
 const P: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <p style={{ color: color.textSecondary, fontSize: 13.5, lineHeight: 1.65, margin: `${size.sp2} 0` }}>{children}</p>
@@ -39,8 +41,28 @@ const CONNECTORS: { name: string; maps: string }[] = [
 
 export function UserManual() {
   const open = useHelpStore((s) => s.manualOpen)
+  const section = useHelpStore((s) => s.manualSection)
   const close = useHelpStore((s) => s.closeManual)
   const startTour = useHelpStore((s) => s.startTour)
+  const bodyRef = React.useRef<HTMLDivElement>(null)
+
+  // Opened from a "what is this?" tooltip: land on the explanation, not at the
+  // top of a long document, and flash the heading so it is obvious where you
+  // were taken. Layout has to settle first, hence the frame.
+  React.useEffect(() => {
+    if (!open || !section) return
+    const id = requestAnimationFrame(() => {
+      const el = bodyRef.current?.querySelector(`#${CSS.escape(section)}`)
+      if (!el) return
+      el.scrollIntoView({ block: 'start' })
+      const node = el as HTMLElement
+      node.style.transition = 'background 0.9s ease'
+      node.style.background = `${color.bluePrimary}26`
+      setTimeout(() => { node.style.background = 'transparent' }, 900)
+    })
+    return () => cancelAnimationFrame(id)
+  }, [open, section])
+
   if (!open) return null
 
   return (
@@ -66,7 +88,8 @@ export function UserManual() {
         </div>
 
         {/* Body */}
-        <div style={{ overflowY: 'auto', padding: `${size.sp4} ${size.sp8} ${size.sp8}`, fontFamily: font.sans }}>
+        <div ref={bodyRef}
+             style={{ overflowY: 'auto', padding: `${size.sp4} ${size.sp8} ${size.sp8}`, fontFamily: font.sans }}>
           <ManualContent />
 
           <div style={{ marginTop: size.sp8, display: 'flex', gap: size.sp3 }}>
@@ -120,7 +143,7 @@ export function ManualContent() {
 
           <FigureFlow />
 
-          <H2>The lean method in five steps</H2>
+          <H2 id="waste">The lean method in five steps</H2>
           <P>
             Taktline is built on <B>lean manufacturing</B> — a framework for doing more with less
             while staying focused on what the customer actually pays for. Lean is best learned at the
@@ -191,7 +214,7 @@ export function ManualContent() {
             station's cycle time is close to takt.
           </P>
 
-          <H3>Takt time, cycle time and line cycle time</H3>
+          <H3 id="timing">Takt time, cycle time and line cycle time</H3>
           <P>
             These three get muddled constantly, and the confusion is expensive: they answer different
             questions, and only one of them is something you choose.
@@ -239,7 +262,7 @@ export function ManualContent() {
               counts per column = an unbalanced line, visible at a glance (wastes <B>I</B> and
               <B> W</B>).</LI>
           </ul>
-          <H3>See waste in the statistics</H3>
+          <H3 id="statistics">See waste in the statistics</H3>
           <ul>
             <LI><B>Cycle time per station</B> — each station's average working time per unit. Compare
               it against the takt your demand requires; the slowest station sets your whole line's
@@ -289,7 +312,7 @@ export function ManualContent() {
               and whether it pays.</LI>
           </ul>
 
-          <H2>Core concepts</H2>
+          <H2 id="concepts">Core concepts</H2>
           <ul>
             <LI><B>Station (station)</B> — a place where work happens: a node in the graph. E.g.
               <i> Steel Inventory, Frame Welding, Bike Testing</i>.</LI>

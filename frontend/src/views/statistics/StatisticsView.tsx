@@ -6,6 +6,7 @@ import { color, font, size, shadow } from '../../theme/tokens'
 import { STATUS_CSS } from '../../components/map/mapColors'
 import type { MachineStatus } from '../../models'
 import { formatDistanceToNow } from 'date-fns'
+import { MetricInfo, METRICS } from '../../help/MetricInfo'
 
 type Overview = Awaited<ReturnType<typeof statsApi.overview>>
 
@@ -124,17 +125,17 @@ export default function StatisticsView() {
           gap:                 size.sp4,
           marginBottom:        size.sp6,
         }}>
-          <KpiTile label="Total Lots"    value={liveStats.totalLots}  />
-          <KpiTile label="Total Units"   value={liveStats.totalUnits} />
-          <KpiTile label="Flagged"       value={liveStats.flagged}    accent={liveStats.flagged > 0 ? color.statusWarning : undefined} />
-          <KpiTile label="Stations"     value={stationList.length}   />
-          <KpiTile label="Processes"     value={Object.values(processes).length} />
+          <KpiTile label="Total Lots"  metric="totalLots"  value={liveStats.totalLots}  />
+          <KpiTile label="Total Units" metric="totalUnits" value={liveStats.totalUnits} />
+          <KpiTile label="Flagged"     metric="flagged"    value={liveStats.flagged}    accent={liveStats.flagged > 0 ? color.statusWarning : undefined} />
+          <KpiTile label="Stations"    metric="stations"   value={stationList.length}   />
+          <KpiTile label="Processes"   metric="processes"  value={Object.values(processes).length} />
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: size.sp6 }}>
 
           {/* Station queue depth */}
-          <Panel label="LOTS BY STATION">
+          <Panel label="LOTS BY STATION" metric="lotsByStation">
             {stationList.length === 0 ? (
               <Empty />
             ) : (
@@ -167,7 +168,7 @@ export default function StatisticsView() {
           </Panel>
 
           {/* Machine status summary */}
-          <Panel label="STATION STATUS">
+          <Panel label="STATION STATUS" metric="stationStatus">
             {Object.values(machines).length === 0 ? (
               <Empty msg="No machines with adapters" />
             ) : (
@@ -177,7 +178,7 @@ export default function StatisticsView() {
 
           {/* Moves over time (last 24h) — only shown after stats load */}
           {overview && (
-            <Panel label="MOVES — LAST 24 HOURS" wide>
+            <Panel label="MOVES — LAST 24 HOURS" metric="moves24h" wide>
               <SparklineChart
                 data={overview.movesPerHour.map((d) => d.moves)}
                 labels={overview.movesPerHour.map((d) =>
@@ -188,7 +189,7 @@ export default function StatisticsView() {
           )}
 
           {/* Lots per process */}
-          <Panel label="LOTS BY PROCESS">
+          <Panel label="LOTS BY PROCESS" metric="lotsByProcess">
             {Object.values(processes).length === 0 ? (
               <Empty />
             ) : (
@@ -211,7 +212,7 @@ export default function StatisticsView() {
           </Panel>
 
           {/* Cycle-time / OEE by station */}
-          <Panel label="CYCLE TIME, LINE CYCLE TIME & OEE BY STATION" wide>
+          <Panel label="CYCLE TIME, LINE CYCLE TIME & OEE BY STATION" metric="cycleTable" wide>
             {stationList.length === 0 ? (
               <Empty />
             ) : (
@@ -227,7 +228,9 @@ export default function StatisticsView() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function KpiTile({ label, value, accent }: { label: string; value: number; accent?: string }) {
+function KpiTile({ label, value, accent, metric }: {
+  label: string; value: number; accent?: string; metric?: keyof typeof METRICS
+}) {
   return (
     <div style={{
       background:   color.bgCard,
@@ -236,8 +239,9 @@ function KpiTile({ label, value, accent }: { label: string; value: number; accen
       padding:      `${size.sp4} ${size.sp5}`,
       boxShadow:    shadow.sm,
     }}>
-      <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, letterSpacing: '0.1em', marginBottom: 6 }}>
-        {label}
+      <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, letterSpacing: '0.1em',
+                    marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+        {label}{metric && <MetricInfo metric={metric} />}
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, fontFamily: font.mono, color: accent ?? color.textPrimary }}>
         {value.toLocaleString()}
@@ -246,7 +250,9 @@ function KpiTile({ label, value, accent }: { label: string; value: number; accen
   )
 }
 
-function Panel({ label, children, wide }: { label: string; children: React.ReactNode; wide?: boolean }) {
+function Panel({ label, children, wide, metric }: {
+  label: string; children: React.ReactNode; wide?: boolean; metric?: keyof typeof METRICS
+}) {
   return (
     <div style={{
       background:   color.bgCard,
@@ -262,8 +268,11 @@ function Panel({ label, children, wide }: { label: string; children: React.React
         letterSpacing: '0.14em',
         color:         color.textDim,
         marginBottom:  size.sp4,
+        display:       'flex',
+        alignItems:    'center',
+        gap:           6,
       }}>
-        {label}
+        {label}{metric && <MetricInfo metric={metric} />}
       </div>
       {children}
     </div>
@@ -331,7 +340,9 @@ function CycleOeeTable({
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${color.border}` }}>
-            {['Station', 'Sessions', 'Units', 'Working time', 'Cycle time', 'Line cycle time', 'OEE'].map((h) => (
+            {([['Station', undefined], ['Sessions', 'sessions'], ['Units', 'units'],
+               ['Working time', 'workingTime'], ['Cycle time', 'cycleTime'],
+               ['Line cycle time', 'lineCycleTime'], ['OEE', 'oee']] as const).map(([h, metric]) => (
               <th key={h} style={{
                 ...colStyle,
                 textAlign:     h === 'Station' ? 'left' : 'right',
@@ -339,7 +350,14 @@ function CycleOeeTable({
                 letterSpacing: '0.1em',
                 color:         color.textDim,
                 paddingBottom: size.sp3,
-              }}>{h}</th>
+              }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  {h}
+                  {/* Right-aligned columns would push the card off the table's
+                      right edge, so those open leftwards. */}
+                  {metric && <MetricInfo metric={metric} />}
+                </span>
+              </th>
             ))}
           </tr>
         </thead>

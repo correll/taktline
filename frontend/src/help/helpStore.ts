@@ -6,6 +6,9 @@ interface HelpState {
   tourActive: boolean
   tourStep: number
   manualOpen: boolean
+  /** Heading id the manual should scroll to when it opens — set by the "read
+   *  more" links on measurement tooltips, cleared once the manual has jumped. */
+  manualSection: string | null
   calloutDismissed: boolean
 
   startTour: () => void
@@ -14,7 +17,7 @@ interface HelpState {
   backStep: () => void
   goToStep: (n: number) => void
 
-  openManual: () => void
+  openManual: (section?: string) => void
   closeManual: () => void
 
   showCallout: () => void
@@ -25,6 +28,7 @@ export const useHelpStore = create<HelpState>((set) => ({
   tourActive: false,
   tourStep: 0,
   manualOpen: false,
+  manualSection: null,
   calloutDismissed: localStorage.getItem(DISMISS_KEY) === '1',
 
   startTour: () => set({ tourActive: true, tourStep: 0, manualOpen: false, calloutDismissed: true }),
@@ -33,8 +37,8 @@ export const useHelpStore = create<HelpState>((set) => ({
   backStep: () => set((s) => ({ tourStep: Math.max(0, s.tourStep - 1) })),
   goToStep: (n) => set({ tourStep: n }),
 
-  openManual: () => set({ manualOpen: true }),
-  closeManual: () => set({ manualOpen: false }),
+  openManual: (section?: string) => set({ manualOpen: true, manualSection: section ?? null }),
+  closeManual: () => set({ manualOpen: false, manualSection: null }),
 
   showCallout: () => set({ calloutDismissed: false }),
   dismissCallout: (remember?: boolean) => {

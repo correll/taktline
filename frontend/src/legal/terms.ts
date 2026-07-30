@@ -12,7 +12,7 @@
  *  in the EU/UK. Have counsel review before relying on it.
  */
 
-export const TERMS_VERSION = '2026-07-30'
+export const TERMS_VERSION = '2026-07-30.1'
 export const TERMS_EFFECTIVE = '30 July 2026'
 
 export interface TermsSection {
@@ -92,7 +92,7 @@ export const TERMS: TermsSection[] = [
       'Our total aggregate liability arising out of or relating to this agreement or the Service, ' +
       'for all claims combined, will not exceed the greater of (a) the fees you actually paid us ' +
       'for the Service in the three months immediately before the event giving rise to the claim, ' +
-      'or (b) fifty euros (€50).',
+      'or (b) fifty US dollars (US$50).',
       'These limits apply even if a remedy fails of its essential purpose. Nothing here excludes ' +
       'liability that cannot lawfully be excluded — including liability for death or personal ' +
       'injury caused by negligence, or for fraud.',
@@ -187,10 +187,10 @@ export const TERMS: TermsSection[] = [
   {
     heading: '12. Law, disputes and the rest',
     paragraphs: [
-      'This agreement is governed by the laws of the State of Colorado, USA, without regard to ' +
-      'its conflict-of-laws rules, and the state and federal courts located in Boulder County, ' +
-      'Colorado have exclusive jurisdiction — except where mandatory law in your country of ' +
-      'residence gives you the right to bring proceedings elsewhere.',
+      'This agreement is governed by the laws of the State of Indiana, USA, without regard to ' +
+      'its conflict-of-laws rules, and the state and federal courts located in St. Joseph ' +
+      'County, Indiana have exclusive jurisdiction — except where mandatory law in your country ' +
+      'of residence gives you the right to bring proceedings elsewhere.',
       'If any provision is held unenforceable, it is limited to the minimum extent necessary and ' +
       'the rest stays in force. Our failure to enforce a provision is not a waiver of it. You may ' +
       'not assign this agreement without our consent; we may assign it in connection with a ' +

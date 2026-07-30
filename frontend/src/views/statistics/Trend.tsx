@@ -48,7 +48,23 @@ export function Trend({ now, before, lowerIsBetter, unit = '', deadband = 0.05, 
     ? color.textDim
     : (up === !lowerIsBetter) ? color.statusRunning : color.statusWarning
 
-  const pct = `${change > 0 ? '+' : ''}${(change * 100).toFixed(0)}%`
+  // A percentage is only readable while it is small. Going from 0.1 s to 80 s
+  // is "+79,900%", which nobody can parse — past a doubling a multiplier says
+  // the same thing in three characters, and beyond a thousandfold the honest
+  // answer is that the two windows are not comparable at all.
+  //
+  // The switch is on the RATIO, not the signed change, because a percentage is
+  // asymmetric: a doubling is "+100%" but a halving is "-50%", and an
+  // eight-hundredfold *drop* saturates at "-100%" — which reads as "went to
+  // zero" when it went to an eight-hundredth. Inside a halving-to-doubling the
+  // percentage is the natural phrasing; outside it, the multiplier is.
+  const ratio = now / before
+  const pct =
+    !Number.isFinite(ratio) || ratio > 1000 ? '∞'
+    : ratio > 0 && ratio < 0.001 ? '÷1000+'
+    : ratio >= 0.5 && ratio <= 2 ? `${change > 0 ? '+' : ''}${(change * 100).toFixed(0)}%`
+    : ratio > 2 ? `×${ratio.toFixed(1)}`
+    : `÷${(1 / ratio).toFixed(1)}`
   const was = unit === '%' ? `${(before * 100).toFixed(1)}%`
             : before >= 60 ? `${(before / 60).toFixed(1)} min`
             : `${before.toFixed(1)}${unit || ' s'}`

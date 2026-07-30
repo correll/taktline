@@ -198,16 +198,19 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
     """
     now = utcnow()
     since = now - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS)
-    # A departure is any event that carries a fromStation: a plain move, and
-    # also the 'created' events a split or an un-split records per branch —
-    # pieces leaving a teardown ARE departures, and in a remanufacturing shop
-    # they are the ones that matter most. (Creation events without a
-    # fromStation — a release, a merge — are births, not departures, and stay
-    # excluded by the isnot(None) filter.)
+    # A departure is any event that carries a fromStation: a plain move, the
+    # 'created' events a split or an un-split records per branch — pieces
+    # leaving a teardown ARE departures, and in a remanufacturing shop they are
+    # the ones that matter most — and a **handoff**, which is how finished
+    # goods leave a make-to-order line. Without that last one the shipping
+    # station reported no exit rate at all, which is the one station you most
+    # want it for. (Events without a fromStation are excluded by the filter
+    # below: a release and a merge are births, and a plain deletion is scrap,
+    # not a departure — only the handoff records a station to leave from.)
     rows = (await session.execute(
         select(CardEventRow.fromStation, CardEventRow.timestamp, CardEventRow.quantity)
         .where(CardEventRow.companyId == company_id,
-               CardEventRow.type.in_(("moved", "created")),
+               CardEventRow.type.in_(("moved", "created", "deleted")),
                CardEventRow.fromStation.isnot(None),
                CardEventRow.timestamp >= since)
         .order_by(CardEventRow.timestamp.asc())
@@ -217,6 +220,24 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
 
     opens = shift_starts(since, now, schedule, tzname)
 
+    # When each station first had anything to do with a lot — arrivals as well
+    # as departures. A shift opening earlier than that cannot be delay this
+    # station is answerable for: on a line's first day it is time before the
+    # line existed, and charging it reported thousands of seconds per piece
+    # while pieces were visibly leaving every minute. Stations with older
+    # history are unaffected, so a real shift's idle morning is still counted.
+    first_activity: dict[str, object] = {}
+    for col in (CardEventRow.fromStation, CardEventRow.toStation):
+        for station, first_ts in (await session.execute(
+            select(col, func.min(CardEventRow.timestamp))
+            .where(CardEventRow.companyId == company_id,
+                   col.isnot(None), CardEventRow.timestamp >= since)
+            .group_by(col)
+        )).all():
+            key = str(station)
+            if key not in first_activity or first_ts < first_activity[key]:
+                first_activity[key] = first_ts
+
     per_station: dict[str, list] = {}
     for from_station, ts, qty in rows:
         if ts is None:
@@ -225,15 +246,17 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
 
     out: dict[str, float] = {}
     for station_id, departures in per_station.items():
+        floor = first_activity.get(station_id, departures[0][0])
+        station_opens = [o for o in opens if o >= floor]
         intervals: list[float] = []
         anchor = None
         oi = 0
         for ts, qty in departures:
             # Re-anchor to the most recent shift opening at or before this
             # departure: work that could not have been done is not delay.
-            while oi < len(opens) and opens[oi] <= ts:
-                if anchor is None or opens[oi] > anchor:
-                    anchor = opens[oi]
+            while oi < len(station_opens) and station_opens[oi] <= ts:
+                if anchor is None or station_opens[oi] > anchor:
+                    anchor = station_opens[oi]
                 oi += 1
             if anchor is not None and ts > anchor:
                 intervals.append((ts - anchor).total_seconds() / qty)
@@ -282,6 +305,27 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
             "oee": None if is_warehouse else _oee(total_working, d.firstStart, d.lastEnd,
                                                   schedule, tzname),
             "isWarehouse": is_warehouse,
+        })
+
+    # A station can have a measurable exit rate and no work sessions at all —
+    # nobody runs a timer at a shipping bench, and an automated cell may never
+    # have one. Listing only stations with sessions dropped them from the
+    # statistics table entirely, which reads as "nothing happens here" for a
+    # station that is in fact shipping every order. Line cycle time is built
+    # from departures, not sessions, so it stands on its own.
+    seen = {r["stationId"] for r in results}
+    for station_id, line_cycle in line_cycles.items():
+        if station_id in seen:
+            continue
+        results.append({
+            "stationId": station_id,
+            "sessionCount": 0,
+            "totalUnits": 0,
+            "totalWorkingSec": 0.0,
+            "cycleTimeSec": None,
+            "lineCycleTimeSec": line_cycle,
+            "oee": None,
+            "isWarehouse": parse_uuid(station_id) in warehouses,
         })
     return results
 

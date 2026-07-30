@@ -243,11 +243,28 @@ async def _station_lock(session: AsyncSession, company_id, station_id: str) -> N
 async def _cards_with_bin(session, company_id, station_id: str, template_ids: list[uuid.UUID],
                           for_update: bool = False,
                           card_ids: Optional[set] = None) -> list[CardRow]:
+    """Candidate precursor cards at a station, **oldest first**.
+
+    FIFO is the order, and it is ordered *here* so that the merge proposal and
+    the merge that consumes it can never disagree.
+
+    This query used to have no ORDER BY at all, and both callers then sorted by
+    bin count — smallest first, to avoid breaking a whole lot when a partial
+    one would do. Two things were wrong with that. Lots at one station almost
+    always hold the same count (every NMC teardown yields exactly 2 busbars),
+    so the sort was one long tie, and a stable sort over a tie preserves
+    whatever order Postgres happened to return — arbitrary, and free to change
+    as rows are updated. And even unmade ties, "smallest first" is not a rule a
+    Kanban system may use: material must leave in the order it arrived or the
+    oldest lot is simply never chosen. On a running line that showed as module
+    lots aging 10, 12, 14 minutes at the assembly bench while lots minted
+    seconds earlier were consumed past them.
+    """
     if not template_ids:
         return []
     stmt = select(CardRow).where(
         CardRow.companyId == company_id, CardRow.lotTemplateId.in_(template_ids)
-    )
+    ).order_by(CardRow.createdAt.asc(), CardRow.id.asc())
     if for_update:
         stmt = stmt.with_for_update()
     cards = (await session.execute(stmt)).scalars().all()
@@ -306,8 +323,9 @@ async def _proposed_cards(session, company_id, station_id: str, incoming: list[R
     for route in incoming:
         per_assembly = await _feed_consumption(session, company_id, route)
         tmpl_ids = await _precursor_template_ids(session, company_id, route)
+        # Already oldest-first from the query; do not re-sort, or the proposal
+        # stops matching what the merge below actually consumes.
         cards = await _cards_with_bin(session, company_id, station_id, tmpl_ids)
-        cards.sort(key=lambda c: _bin_count(c, station_id))
         need = assemblies * per_assembly
         picked: list[str] = []
         for card in cards:
@@ -476,7 +494,6 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
         # the same units out from under the merge.
         cards = await _cards_with_bin(session, ctx.company_id, station_id, tmpl_ids,
                                       for_update=True, card_ids=selected)
-        cards.sort(key=lambda c: _bin_count(c, station_id))
 
         for card in cards:
             if to_consume <= 0:

@@ -10,6 +10,8 @@ The rules being pinned here:
 - measured **per piece** — a lot of ten leaving is ten pieces, not one
 - the clock starts when work *could* have moved (the shift opening) and
   re-anchors at every departure
+- the clock never starts before the station had anything to do with a lot, so a
+  line's opening day is not charged for the morning before it existed
 - **every shift opening resets it**, so a lot finished after hours is charged to
   the shift that follows rather than to the night — without this, the first
   departure of a Monday carries the whole weekend and the metric is worthless
@@ -51,11 +53,15 @@ def test_a_late_starting_shift_opens_on_the_quarter():
 
 # ─── The metric itself, over a hand-built departure log ──────────────────────
 
-def _line_cycle(departures, opens):
+def _line_cycle(departures, opens, first_activity=None):
     """The algorithm under test, in the small: walk departures, re-anchoring to
     the most recent shift opening, and average the per-piece intervals. Mirrors
     sessions._line_cycle_times so the semantics can be pinned without a
     database round-trip per case."""
+    # A shift opening before the station had anything to do with a lot is not
+    # delay it is answerable for (see sessions._line_cycle_times).
+    if first_activity is not None:
+        opens = [o for o in opens if o >= first_activity]
     intervals, anchor, oi = [], None, 0
     for ts, qty in departures:
         while oi < len(opens) and opens[oi] <= ts:
@@ -123,3 +129,28 @@ def test_a_departure_before_any_opening_is_skipped_not_guessed():
     out = _line_cycle([(FRI_OPEN - timedelta(hours=2), 1),
                        (FRI_OPEN + timedelta(minutes=30), 1)], [FRI_OPEN])
     assert out == 30 * 60      # only the second departure yields an interval
+
+
+def test_a_new_line_is_not_charged_for_the_morning_before_it_existed(actor=None):
+    """The regression this exists for, found by reading a running simulation's
+    own statistics: a company created at 16:30 shipped a piece a minute, and
+    every station reported ~1700 s per piece. The first departure was anchored
+    to a 09:00 shift opening — seven hours before the line, the stations or the
+    lots existed. Time the station could not possibly have shipped in is not
+    its delay."""
+    born = FRI_OPEN + timedelta(hours=7)          # 16:00, the line's first event
+    departures = [(born + timedelta(minutes=1), 1),
+                  (born + timedelta(minutes=2), 1),
+                  (born + timedelta(minutes=3), 1)]
+    out = _line_cycle(departures, [FRI_OPEN], first_activity=born)
+    assert out == 60, out                          # a piece a minute, as observed
+
+    # Without the floor the morning dominates and the number is meaningless.
+    naive = _line_cycle(departures, [FRI_OPEN])
+    assert naive > 20 * 60
+
+    # A station with older history still gets its idle morning counted: the
+    # opening is later than its first activity, so nothing is discarded.
+    established = _line_cycle([(FRI_OPEN + timedelta(minutes=9), 1)], [FRI_OPEN],
+                              first_activity=FRI_OPEN - timedelta(days=1))
+    assert established == 9 * 60

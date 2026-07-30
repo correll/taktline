@@ -142,6 +142,13 @@ class Line:
         self.sinks = {r["load"]: r["unload"] for r in routes
                       if r["unload"] in self.partners
                       and self.stations[r["unload"]].get("integrationRole") in ("sink", "both")}
+        # Where an ERP raises demand. Taktline's own placement rule says a
+        # demand link must point at the station where the ordered product is
+        # made, so this is the authority on what a customer can order.
+        self.demand_targets = {r["unload"] for r in routes
+                               if r["load"] in self.partners
+                               and self.stations[r["load"]].get("integrationRole")
+                               in ("source", "both")}
         self.out: dict[str, list] = {}
         self.inn: dict[str, list] = {}
         for r in self.flow:
@@ -195,6 +202,40 @@ class Line:
         for s in ids:
             d(s)
         return sorted(ids, key=lambda s: (depth.get(s, 0), self.name(s)))
+
+    def orderable_products(self) -> list:
+        """What a customer can actually order — the finished goods.
+
+        An ERP's demand link names them: the placement rule makes it point at
+        the station where the ordered product is made, so a template starting
+        there is a finished good. Without any integration drawn, fall back to
+        the product furthest downstream in each process.
+
+        Getting this wrong is not cosmetic. An earlier version asked "is this
+        made at a station that sends work nowhere else?" — true of nothing on a
+        line whose last bench still routes to QA — and then fell back to
+        "anything a merge station makes", which includes the **cleaned busbar**.
+        Ordering an intermediate pulls a whole pack to get it, and that pack's
+        teardown also yields four modules nobody asked for. They pile up at the
+        assembly bench forever: exactly the starvation this simulation was
+        supposed to be free of.
+        """
+        by_start: dict = {}
+        for t in self.templates.values():
+            sid = t.get("startStationId")
+            if sid and sid in self.stations and not self.is_storage(sid):
+                by_start.setdefault(sid, []).append(t)
+
+        picked = [t for sid, ts in by_start.items()
+                  if sid in self.demand_targets for t in ts]
+        if not picked:
+            # No ERP drawn: the deepest station of each process makes its
+            # finished good.
+            depth = {s: i for i, s in enumerate(self.work_stations())}
+            best = max((depth.get(s, -1) for s in by_start), default=-1)
+            picked = [t for sid, ts in by_start.items()
+                      if depth.get(sid, -1) == best for t in ts]
+        return sorted(picked, key=lambda t: t["name"])
 
     def throughput_rank(self, sid: str) -> int:
         """Roughly how many units pass through per pack — used to decide where
@@ -354,23 +395,11 @@ async def releaser(api: Api, line: Line, stats: Stats, interval: float, stop_at:
                    verbose: bool):
     """Customer demand: one order a minute, alternating between the products
     that are actually made at the end of each process."""
-    finished = []
-    for t in line.templates.values():
-        sid = t.get("startStationId")
-        if not sid or sid not in line.stations:
-            continue
-        pid = t.get("processId")
-        # A finished good: made at a station this process sends nowhere else.
-        if pid and not line.out_in_process(sid, pid):
-            finished.append(t)
-    if not finished:
-        # Fall back to whatever a merge station makes.
-        finished = [t for t in line.templates.values()
-                    if t.get("startStationId") and line.is_merge(t["startStationId"])]
-    finished.sort(key=lambda t: t["name"])
+    finished = line.orderable_products()
     if not finished:
         print("!! no finished product found — nothing to order", flush=True)
         return
+    print(f"  [orders] ordering: {', '.join(t['name'] for t in finished)}", flush=True)
 
     n = 0
     while time.monotonic() < stop_at:

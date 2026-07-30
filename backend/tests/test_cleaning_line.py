@@ -259,6 +259,102 @@ def test_nothing_stupid_sticks(actor):
         assert _snapshot(a) == before, f"{path} bounced but changed state"
 
 
+def test_the_merge_consumes_the_oldest_lots_first(actor):
+    """FIFO — the oldest material leaves first, even when it is not the tidiest
+    choice.
+
+    Found on a running line: candidates came back from the database with **no
+    ORDER BY** and were then sorted by bin count, smallest first, to avoid
+    breaking a full lot when a partial one would do. Two faults. Lots at one
+    station usually hold identical counts, so that sort was one long tie and
+    the winner was whatever physical row order Postgres happened to return —
+    arbitrary, and free to change as rows are updated. And where the counts DO
+    differ, smallest-first actively reaches past older material. On the
+    simulated line, module lots sat at the assembly bench for ten, twelve,
+    fourteen minutes while lots minted seconds earlier were consumed in front
+    of them. In a Kanban system that is not a scheduling preference, it is a
+    broken promise about lead time.
+
+    The sizes here are deliberately unequal, because that is the only way to
+    tell the two rules apart on demand: with equal lots both orders agree, and
+    in a freshly seeded test database the unordered query happens to return
+    insertion order — which is why this never showed up in a test before.
+    """
+    a = actor(); bootstrap_admin(a)
+    g = _import_line(a)
+
+    for ref in ("A", "B", "C"):
+        _order(a, g, "NMC", ref)
+        _teardown(a, g, "NMC", ref)
+
+    # Modules to the bench: the OLDEST lot is the BIGGEST, so first-in-first-out
+    # and smallest-lot-first must now choose differently.
+    for ref, qty in (("A", 4), ("B", 3), ("C", 3)):
+        mods = _find(a, g, "NMC module", lot=ref)
+        assert _adv(a, mods["_id"], g.st["Module Test"], g.st["Reassembly"], qty).status_code == 200
+
+    # Wash four busbars so the bench can build exactly two assemblies.
+    for ref in ("A", "B"):
+        sol = _find(a, g, "Cleaning solution (NMC)", lot=ref)
+        assert _adv(a, sol["_id"], g.st["Cleaning solution"], g.st["Busbar Clean"], 2).status_code == 200
+    w = a.req("POST", f"/merge/{g.st['Busbar Clean']}", {"processId": g.pr["NMC"]})
+    assert w.status_code == 201, w.text
+    cleaned = a.req("GET", f"/cards/{w.json()['createdCardId']}").json()
+    assert cleaned["bins"][g.st["Busbar Clean"]]["count"] == 4
+    assert _adv(a, cleaned["_id"], g.st["Busbar Clean"], g.st["Reassembly"], 4).status_code == 200
+
+    # 10 modules and 4 busbars on the bench; each pack takes 3 + 2, so two are
+    # possible and the merge must draw 6 module units.
+    p = a.req("GET", f"/merge/{g.st['Reassembly']}?processId={g.pr['NMC']}").json()
+    assert p["assembliesPossible"] == 2, p
+    a_id = _find(a, g, "NMC module", lot="A")["_id"]
+    proposed = {cid for r in p["requirements"] for cid in r["proposedCardIds"]}
+    assert a_id in proposed, "the proposal skipped the oldest lot for a smaller one"
+
+    assert a.req("POST", f"/merge/{g.st['Reassembly']}",
+                 {"processId": g.pr["NMC"]}).status_code == 201
+    left = {c["lotNum"]: c["bins"][g.st["Reassembly"]]["count"] for c in _cards(a)
+            if c["lotTemplateId"] == g.tm["NMC module"]["_id"]
+            and c["bins"].get(g.st["Reassembly"])}
+    # FIFO empties A (4) and takes 2 from B. Smallest-first would have eaten
+    # B and C whole and left the oldest lot standing at 4.
+    assert left == {"B": 1, "C": 3}, f"not first-in-first-out: {left}"
+
+
+def test_shipping_counts_as_a_departure(actor):
+    """The last station of a make-to-order line hands goods to the shipper
+    rather than moving them on, and a handoff was not counted as a departure —
+    so the one station whose exit rate you most want reported nothing at all.
+    A scrapped card still must not count: it records no station to leave from."""
+    a = actor(); bootstrap_admin(a)
+    g = _import_line(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
+
+    for ref in ("S1", "S2"):
+        _order(a, g, "NMC", ref)
+        _teardown(a, g, "NMC", ref)
+        sol = _find(a, g, "Cleaning solution (NMC)", lot=ref)
+        _adv(a, sol["_id"], g.st["Cleaning solution"], g.st["Busbar Clean"], 2)
+        w = a.req("POST", f"/merge/{g.st['Busbar Clean']}", {"processId": g.pr["NMC"]})
+        cleaned = a.req("GET", f"/cards/{w.json()['createdCardId']}").json()
+        mods = _find(a, g, "NMC module", lot=ref)
+        _adv(a, mods["_id"], g.st["Module Test"], g.st["Reassembly"], 3)
+        _adv(a, cleaned["_id"], g.st["Busbar Clean"], g.st["Reassembly"], 2)
+        m = a.req("POST", f"/merge/{g.st['Reassembly']}", {"processId": g.pr["NMC"]})
+        made = a.req("GET", f"/cards/{m.json()['createdCardId']}").json()
+        _adv(a, made["_id"], g.st["Reassembly"], g.st["QA"], 1)
+        r = a.req("POST", f"/cards/{made['_id']}/handoff",
+                  {"fromStationId": g.st["QA"], "integrationStationId": g.st["ShipStation"],
+                   "quantity": 1})
+        assert r.status_code == 200, r.text
+
+    stats = {s["stationId"]: s for s in a.req("GET", "/sessions/stats").json()}
+    qa = stats.get(g.st["QA"])
+    assert qa and qa.get("lineCycleTimeSec") is not None, \
+        "the station that ships reported no exit rate"
+    assert qa["lineCycleTimeSec"] > 0
+
+
 def test_declaring_the_cleaned_product_on_the_dirty_branch_is_refused(actor):
     """The masquerade: pieces wearing the wash's own output would count as
     already washed. The declaration is refused at the route."""

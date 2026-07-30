@@ -70,6 +70,30 @@ The line export/import lives behind the file icon in the floor plan's
 lower-right corner (super-admin), not in Settings — the file carries the whole
 line, not just that tab's configuration.
 
+## Running the line for real (`backend/simulate_line.py`)
+
+A live simulator that staffs the line from N tablets against a **running
+server**, over the public HTTP API — log in, start a work session, wait out the
+cycle, stop, then advance / merge / hand off. Because it uses the same
+endpoints the Operator view does, every movement broadcasts on the websocket
+(an open board shows lots moving without a reload) and every session feeds the
+real cycle-time / line-cycle-time / OEE statistics. Defaults are 8 tablets, a
+5 s cycle, one order a minute, one hour.
+
+    .venv/bin/python simulate_line.py                      # fresh dev company + the shipped line
+    .venv/bin/python simulate_line.py --email you@… --company "My line"
+
+Tablets are independent coroutines with their own `operatorId`, so they race
+for the same lots exactly as real tablets do; a losing race is a 4xx and the
+tablet retries next tick (serialising them would prove nothing). Each reads its
+own station's role from the graph: merge → work a cycle and merge the
+**proposal**; choice → deal units by what the downstream merge actually needs,
+surplus to the storage branch; split → one advance fans out; a sink link →
+hand off. At a merge station only lots whose template *starts there* may be
+advanced — the parts waiting to be consumed are not movable work, and a tablet
+that tried would spin on 409 forever. `--mistakes` makes a worker occasionally
+carry only part of a lot; the line self-heals, which is the point.
+
 # Engineering conventions
 
 ## Persistence layer (PostgreSQL + SQLAlchemy async)

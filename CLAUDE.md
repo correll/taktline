@@ -62,6 +62,29 @@ The gap between cycle time and line cycle time is the waste, in seconds: work th
 
 Also collected: Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. open work time, number of transport events when lot cards travel from one location to another and overall transport in meters. 
 
+## Taking the statistics away, and starting them over
+
+`GET /reports/export.xlsx` (reports scope / member session) returns the whole
+picture as a workbook — **About, Stations, Work sessions, Lot history, Lots
+now, Orders**, one sheet each, with `?window=` narrowing the Stations sheet the
+same way the page's trend picker does. xlsx rather than CSV because a CSV is
+one flat table of strings: it cannot carry six tables, and every value arrives
+as text that Excel then guesses at — turning lot code `0042` into `42` and
+disagreeing about decimal separators between locales. The workbook carries
+typed cells (timestamps are datetimes; OEE is a fraction *formatted* as a
+percent, so it still works in a pivot), frozen headers and filters, and opens
+natively in Excel, LibreOffice, Numbers and Sheets.
+`tests/test_export_and_reset.py` opens the produced file and reads cells — a
+corrupt xlsx is still a 200.
+
+`POST /admin/reset-statistics` (super-admin) clears the measured history: work
+sessions and card events, which is everything the Statistics view computes
+from. It deliberately does NOT touch stations, routes, processes, products, the
+lots on the floor or production orders — `/admin/reset` is the one that clears
+those, and conflating them would make "clean up my test data" delete a
+customer's factory. Both live behind the same document icon the floor plan uses
+for its line file.
+
 ## UI vocabulary
 
 The UI says **station** (not "location") and **Floor plan** (not "Map") — the

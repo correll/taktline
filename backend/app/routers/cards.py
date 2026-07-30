@@ -21,7 +21,8 @@ from ..models.card_event import CardEvent, EventType
 from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
 from .merge import (_assembly_template, _boundary_station_ids, _ensure_origination_template,
-                    _gen_lot_code, _incoming_routes, _leaf_sources, _precursor_template_ids)
+                    _feed_consumption, _gen_lot_code, _incoming_routes, _leaf_sources,
+                    _precursor_template_ids)
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -327,9 +328,12 @@ async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id:
     requested: Card | None = None
     for branch in branches:
         into_merge = await _is_merge_station(session, company_id, branch.unload, process_id)
-        # On a merge feed the weight counts units consumed per assembly and is
-        # applied at the merge, so the branch itself moves 1:1.
-        units = quantity * (1 if into_merge else max(1, branch.quantity))
+        # The split owns the weight: one source unit becomes this many pieces,
+        # whatever the branch lands on. When the target is a merge, that merge
+        # consumes ONE piece per assembly from this feed (merge._feed_consumption)
+        # — minting 1:1 here instead silently re-read the yield as consumption
+        # the moment a second feed was drawn into the target.
+        units = quantity * max(1, branch.quantity)
         # Which product the piece *is*. A disassembly yields different products
         # per branch (a battery → modules, busbars, cables), so the branch may
         # name its own output template. Without one we infer: normally the
@@ -374,6 +378,12 @@ async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_
                             quantity: int) -> Card:
     """Shift `quantity` units of a card between two of its bins, record the
     'moved' event, and fire the arrive/depart plugin notifications."""
+    # A self-move is refused, not ignored: the arithmetic below would read the
+    # destination's count from the pre-move bins, discard the subtraction, and
+    # MINT `quantity` units out of thin air. (Found by the fuzz suite: a random
+    # drag onto the lot's own station returned 200 and grew the lot.)
+    if from_id == to_id:
+        raise HTTPException(400, "The lot is already at that station")
     old_bins = dict(row.bins or {})
     from_count = old_bins.get(from_id, {}).get("count", 0)
     if quantity < 1 or quantity > from_count:
@@ -1045,7 +1055,9 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
         _emit_card_update(session, ctx.company_id, pre)
 
     for route in incoming:
-        units = qty * max(1, route.quantity)
+        # The mirror of what the merge consumed: 1 per assembly from a split-fed
+        # branch (the weight there is the split's yield), the weight otherwise.
+        units = qty * await _feed_consumption(session, ctx.company_id, route)
         # A disassembly feed names its product (battery → cable): the precursor
         # this branch consumed wore THAT template, so it is what comes back.
         up_tmpl = None

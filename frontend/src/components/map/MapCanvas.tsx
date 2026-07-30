@@ -530,15 +530,23 @@ export default function MapCanvas({
   const isolated = React.useMemo(() => isolatedProcessStations(routes), [routes])
   // Stations where the weights deliver more per cycle than the next step takes:
   // work piles up structurally, and the surplus usually wants a warehouse.
-  const accumulations = React.useMemo(
-    () => findAccumulations(
-      Object.values(routes).map((r) => ({
-        load: r.load, unload: r.unload, quantity: r.quantity, processId: r.processId,
-      })),
+  const accumulations = React.useMemo(() => {
+    // Boundary links carry no material — an ERP's demand link would otherwise
+    // read as a feed and distort the balance, same as everywhere else.
+    const bound = new Set(Object.values(stations)
+      .filter(isIntegrationStation).map((s) => s._id))
+    return findAccumulations(
+      Object.values(routes)
+        .filter((r) => !bound.has(r.load) && !bound.has(r.unload))
+        .map((r) => ({
+          load: r.load, unload: r.unload, quantity: r.quantity, processId: r.processId,
+        })),
       Object.keys(stations),
       new Set(Object.values(stations)
-        .filter((s) => s.branchMode === 'choice').map((s) => s._id))),
-    [routes, stations])
+        .filter((s) => s.branchMode === 'choice').map((s) => s._id)),
+      new Set(Object.values(stations)
+        .filter((s) => s.isStorage).map((s) => s._id)))
+  }, [routes, stations])
   // Storage and boundary stations are *meant* to fill up — a dock or a shelf
   // accumulating finished goods is the system working, not a problem to route
   // around.
@@ -859,9 +867,12 @@ export default function MapCanvas({
                    strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                 <path d="M3 3v16a2 2 0 0 0 2 2h16" /><path d="M7 15v-4M12 15V8M17 15v-6" />
               </svg>
+              {/* Always name the process: the same physical station can be
+                  flagged once per line, and two bare "Module Test"s in one
+                  sentence read as a glitch, not a diagnosis. */}
               {accumulations.length === 1
-                ? `${stations[accumulations[0].stationId]?.name ?? '—'} accumulates ${accumulations[0].surplus} unit${accumulations[0].surplus !== 1 ? 's' : ''} per cycle — ${accumulations[0].produced} arrive, ${accumulations[0].consumed} move on.`
-                : `${accumulations.length} stations accumulate work every cycle: ${accumulations.map((a) => `${stations[a.stationId]?.name ?? '—'} +${a.surplus}`).join(', ')}.`}
+                ? `${stations[accumulations[0].stationId]?.name ?? '—'} (${processes[accumulations[0].processId]?.name ?? '—'}) accumulates ${accumulations[0].surplus} unit${accumulations[0].surplus !== 1 ? 's' : ''} per cycle — ${accumulations[0].produced} arrive, ${accumulations[0].consumed} move on.`
+                : `${accumulations.length} stations accumulate work every cycle: ${accumulations.map((a) => `${stations[a.stationId]?.name ?? '—'} (${processes[a.processId]?.name ?? '—'}) +${a.surplus}`).join(', ')}.`}
               <span style={{ color: color.textSecondary }}>Route the surplus to a warehouse.</span>
             </div>
           )}

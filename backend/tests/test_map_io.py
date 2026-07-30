@@ -199,7 +199,8 @@ def test_the_battery_example_imports_and_runs(actor):
                                   "source": "manual", "externalRef": "EX-1"})
     assert o.status_code == 201, o.text
     pack = next(c for c in a.req("GET", "/cards/").json()
-                if c["orderId"] == o.json()["id"])
+                if c["orderId"] == o.json()["id"]
+                and c["lotTemplateId"] == tmpls["NMC used pack"]["_id"])
     assert pack["bins"] == {stations["Intake"]: {"count": 1}}
 
     adv = lambda cid, f, t, q: a.req("POST", f"/cards/{cid}/advance",
@@ -208,12 +209,24 @@ def test_the_battery_example_imports_and_runs(actor):
     assert adv(pack["_id"], stations["Teardown"], stations["Module Test"], 1).status_code == 200
     cards = a.req("GET", "/cards/").json()
     mods = next(c for c in cards if c["lotTemplateId"] == tmpls["NMC module"]["_id"])
-    bus = next(c for c in cards if c["lotTemplateId"] == tmpls["NMC busbar"]["_id"])
+    dirty = next(c for c in cards if c["lotTemplateId"] == tmpls["NMC dirty busbar"]["_id"])
     assert mods["bins"][stations["Module Test"]]["count"] == 4
-    assert bus["bins"][stations["Busbar Clean"]]["count"] == 2
+    assert dirty["bins"][stations["Busbar Clean"]]["count"] == 2, \
+        "the teardown's yield must survive the wash becoming a merge"
+
+    # The wash: the pull seeded one solution unit per busbar; clean them.
+    sol = next(c for c in cards if c["lotTemplateId"] == tmpls["Cleaning solution (NMC)"]["_id"])
+    assert sol["bins"][stations["Cleaning solution"]]["count"] == 2
+    assert adv(sol["_id"], stations["Cleaning solution"], stations["Busbar Clean"], 2).status_code == 200
+    w = a.req("POST", f"/merge/{stations['Busbar Clean']}", {"processId": tmpls["NMC busbar"]["processId"]})
+    assert w.status_code == 201, w.text
+    cleaned = a.req("GET", f"/cards/{w.json()['createdCardId']}").json()
+    assert cleaned["lotTemplateId"] == tmpls["NMC busbar"]["_id"]
+    assert cleaned["bins"][stations["Busbar Clean"]]["count"] == 2, \
+        "2 dirty + 2 solution wash into 2 cleaned busbars, not 1"
 
     assert adv(mods["_id"], stations["Module Test"], stations["Reassembly"], 3).status_code == 200
-    assert adv(bus["_id"], stations["Busbar Clean"], stations["Reassembly"], 2).status_code == 200
+    assert adv(cleaned["_id"], stations["Busbar Clean"], stations["Reassembly"], 2).status_code == 200
     picks = [c["_id"] for c in a.req("GET", "/cards/").json()
              if c["bins"].get(stations["Reassembly"])]
     m = a.req("POST", f"/merge/{stations['Reassembly']}", {"cardIds": picks})

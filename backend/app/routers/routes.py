@@ -278,7 +278,7 @@ _OUTPUT_TEMPLATE_ERROR = (
 
 
 async def _validate_output_template(session, company_id, template_id, load_uuid,
-                                    process_id, exclude_id=None):
+                                    process_id, exclude_id=None, unload_uuid=None):
     """A split branch may declare which product it yields (battery → module /
     busbar / cable). Only splits may: elsewhere a lot keeps its own product."""
     tmpl_uuid = optional_uuid(template_id)
@@ -293,6 +293,19 @@ async def _validate_output_template(session, company_id, template_id, load_uuid,
     tmpl = await session.get(LotTemplateRow, tmpl_uuid)
     if tmpl is None or tmpl.companyId != company_id:
         raise HTTPException(404, "Output product not found")
+    # When the destination is a MERGE, a piece must never wear the
+    # destination's own product: that template is what the merge MINTS, so a
+    # piece wearing it is invisible as a precursor and masquerades as finished
+    # output — a wash station would count dirty parts as clean and could
+    # consume its own work. (On a plain target this is the NORMAL pattern —
+    # the branch product starts where the piece lands.)
+    if unload_uuid is not None and tmpl.startStationId == unload_uuid:
+        from .merge import _incoming_routes
+        feeds = await _incoming_routes(session, company_id, unload_uuid, process_id)
+        if any(f.id != exclude_id for f in feeds if f.load != load_uuid):
+            raise HTTPException(400, "That product is what the destination's merge assembles — "
+                                     "a piece wearing it would count as already finished there. "
+                                     "Give the branch its own product (for example a 'dirty' variant).")
     return tmpl_uuid
 
 
@@ -337,7 +350,8 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
         companyId=ctx.company_id, processId=process_uuid,
         load=load_uuid, unload=unload_uuid, quantity=body.quantity,
         outputTemplateId=await _validate_output_template(
-            session, ctx.company_id, body.outputTemplateId, load_uuid, process_uuid),
+            session, ctx.company_id, body.outputTemplateId, load_uuid, process_uuid,
+            unload_uuid=unload_uuid),
     )
     session.add(row)
     try:
@@ -394,7 +408,7 @@ async def update_route(route_id: str, body: RouteUpdate,
     elif body.outputTemplateId is not None:
         row.outputTemplateId = await _validate_output_template(
             session, ctx.company_id, body.outputTemplateId, row.load, row.processId,
-            exclude_id=row.id)
+            exclude_id=row.id, unload_uuid=row.unload)
     row.updatedAt = utcnow()
     try:
         await session.flush()

@@ -347,7 +347,8 @@ async def import_map(doc: MapDocument,
                 raise HTTPException(422, f"Route {r.load!r}→{r.unload!r}: unknown template "
                                          f"ref {r.outputTemplate!r}")
             row.outputTemplateId = await _validate_output_template(
-                session, ctx.company_id, str(t_id[r.outputTemplate]), row.load, row.processId)
+                session, ctx.company_id, str(t_id[r.outputTemplate]), row.load, row.processId,
+                unload_uuid=row.unload)
         row.updatedAt = utcnow()
 
     # ── Map scale, if the file carries it ──

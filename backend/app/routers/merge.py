@@ -304,11 +304,11 @@ async def _proposed_cards(session, company_id, station_id: str, incoming: list[R
     """
     out: dict = {}
     for route in incoming:
-        route_qty = max(1, route.quantity)
+        per_assembly = await _feed_consumption(session, company_id, route)
         tmpl_ids = await _precursor_template_ids(session, company_id, route)
         cards = await _cards_with_bin(session, company_id, station_id, tmpl_ids)
         cards.sort(key=lambda c: _bin_count(c, station_id))
-        need = assemblies * route_qty
+        need = assemblies * per_assembly
         picked: list[str] = []
         for card in cards:
             if need <= 0:
@@ -323,15 +323,15 @@ async def _build_requirements(session, company_id, station_id: str, incoming: li
                               card_ids: Optional[set] = None) -> list[RequirementInfo]:
     result: list[RequirementInfo] = []
     for route in incoming:
-        route_qty = max(1, route.quantity)
+        per_assembly = await _feed_consumption(session, company_id, route)
         tmpl_ids = await _precursor_template_ids(session, company_id, route)
         available = await _available_units(session, company_id, station_id, tmpl_ids, card_ids=card_ids)
         result.append(RequirementInfo(
             routeId=str(route.id),
             sourceStationId=str(route.load),
-            requiredPerAssembly=route_qty,
+            requiredPerAssembly=per_assembly,
             availableUnits=available,
-            canMake=available // route_qty,
+            canMake=available // per_assembly,
             precursorTemplateIds=[str(t) for t in tmpl_ids],
         ))
     return result
@@ -469,9 +469,8 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     consumed_order_ids: set = set()   # to attribute the assembly back to its order
     consumed_codes: set = set()       # to carry the lot code through when all agree
     for route in incoming:
-        route_qty = max(1, route.quantity)
         tmpl_ids = await _precursor_template_ids(session, ctx.company_id, route)
-        to_consume = assemblies * route_qty
+        to_consume = assemblies * await _feed_consumption(session, ctx.company_id, route)
 
         # Row-lock the cards being consumed so a concurrent /move can't shift
         # the same units out from under the merge.
@@ -568,68 +567,130 @@ async def _is_choice_station(session, station_uuid) -> bool:
     return row is not None and row.branchMode == "choice"
 
 
-def _coalesce_sources(sources: list[dict]) -> list[dict]:
-    """Recombine demand that reconverges on the same source — the reverse of a
-    split. In a diamond (one source feeding two branches that merge again) each
-    branch walks back to the same station, but one unit there becomes a piece on
-    *every* branch at once, so the requirement is the largest branch's demand,
-    not their sum. Distinct sources are left alone (that is a plain merge).
+async def _is_split_station(session, company_id, station_uuid, process_id) -> bool:
+    """A disassembly within this process: 2+ outgoing production routes and not
+    declared a choice."""
+    if await _is_choice_station(session, station_uuid):
+        return False
+    return await _outgoing_count(session, company_id, station_uuid, process_id) >= 2
 
-    A **choice** diamond is the opposite: each unit goes down ONE branch, so
-    demand arriving via a choice fan is additive — two branches that each need
-    one unit need two, and taking the max would starve one of them. Entries are
-    tagged `via_choice` by the walk; a mixed nest errs toward the sum, which
-    over-orders rather than starves."""
-    merged: dict[tuple, dict] = {}
-    for src in sources:
-        key = (src["station_id"], src["template"].id)
-        prev = merged.get(key)
-        if prev is None:
-            merged[key] = dict(src)
-        elif src.get("via_choice") or prev.get("via_choice"):
-            prev["quantity"] += src["quantity"]
-            prev["via_choice"] = True
-        elif src["quantity"] > prev["quantity"]:
-            merged[key] = dict(src)
-    return list(merged.values())
+
+async def _feed_consumption(session, company_id, route: RouteRow) -> int:
+    """Units one assembly consumes from this merge feed.
+
+    **The split owns the weight.** An edge out of a split station says how many
+    pieces one upstream unit becomes — a physical fact about the disassembly —
+    and that meaning must not flip because someone later draws a second feed
+    into the target. So when a split branch lands on a merge, the merge
+    consumes ONE piece per assembly from it, and the weight keeps meaning
+    yield. (The mirror of the choice rule, where the weight belongs to the
+    merge.) Before this rule, adding a cleaning-solution feed to a wash station
+    silently re-read "one pack yields 2 busbars" as "each wash consumes 2
+    busbars", and five subsystems disagreed about which it was.
+
+    A merge that genuinely consumes several pieces of a split's output per
+    assembly is expressed with a buffer station between the split and the
+    merge.
+    """
+    if await _is_split_station(session, company_id, route.load, route.processId):
+        return 1
+    return max(1, route.quantity)
 
 
 async def _leaf_sources(session, company_id, station_uuid, multiplier: int = 1, process_id=None) -> list[dict]:
-    # The walk stays inside one process: a shared station's feeds from OTHER
-    # processes are different value streams, and walking them would spawn
-    # precursors for material this pull never consumes.
-    incoming = await _incoming_routes(session, company_id, station_uuid, process_id)
-    if not incoming:
+    """The leaf source queues one pull's demand lands on, with quantities.
+
+    Demand **propagates over the process's material DAG**, downstream-first,
+    and each station combines what its outgoing branches ask of it by what the
+    station IS:
+
+    - a **split** fans one unit onto every branch at once, so its demand is the
+      hungriest branch (max) — a diamond through a split orders ONE source lot;
+    - a **choice** sends each unit down exactly one branch, so its demand is
+      the branches' SUM — a diamond through a choice orders one per branch;
+    - a plain chain has one demanded branch either way.
+
+    Per edge, the demand passed upstream is (units consumed at the target) ÷
+    (pieces yielded per source unit): a split's weight is yield and its merge
+    feed consumes 1; anyone else's weight is merge consumption and yields 1.
+
+    This replaced a per-path recursion whose terminal dedup could not tell WHY
+    two paths reconverged on one source — through a split's branches (max) or a
+    choice's (sum) — and guessed from a tag, over-ordering packs whenever a
+    choice sat anywhere upstream of an ordinary split diamond.
+
+    The walk stays inside one process throughout: a shared station's feeds from
+    OTHER processes are different value streams, and walking them would spawn
+    precursors for material this pull never consumes.
+    """
+    boundary = await _boundary_station_ids(session, company_id)
+    if station_uuid in boundary:
+        # An integration node never holds lots, so demand aimed AT one seeds
+        # nothing — without this, pulling "at ShipStation" (which has a handoff
+        # feed from QA) planted a lot on the partner itself.
+        return []
+    incoming0 = await _incoming_routes(session, company_id, station_uuid, process_id)
+    if not incoming0:
         # A leaf source always yields a lot — provisioning a default template if
         # the admin never made one, so pulling never silently skips a branch.
         tmpl = await _ensure_origination_template(session, company_id, station_uuid, process_id)
         return [{"station_id": str(station_uuid), "template": tmpl, "quantity": multiplier}]
-    results: list[dict] = []
-    for route in incoming:
-        route_qty = max(1, route.quantity)
-        fans_out = len(incoming) == 1 and await _outgoing_count(
-            session, company_id, route.load, route.processId) >= 2
-        is_choice = fans_out and await _is_choice_station(session, route.load)
-        if fans_out and not is_choice:
-            # Split: the upstream unit becomes route_qty pieces, so demand for N
-            # pieces needs only ceil(N / route_qty) of it — one bar, four tubes.
-            upstream = -(-multiplier // route_qty)
+    if process_id is None:
+        process_id = incoming0[0].processId
+
+    edges = [r for r in (await session.execute(
+        select(RouteRow).where(RouteRow.companyId == company_id,
+                               RouteRow.processId == process_id)
+    )).scalars().all() if r.load not in boundary and r.unload not in boundary]
+
+    incoming_by: dict = {}
+    outgoing_by: dict = {}
+    nodes: set = set()
+    for r in edges:
+        incoming_by.setdefault(r.unload, []).append(r)
+        outgoing_by.setdefault(r.load, []).append(r)
+        nodes.add(r.load); nodes.add(r.unload)
+    nodes.add(station_uuid)
+
+    # Downstream-first order (Kahn on reversed edges — the graph is a DAG, the
+    # cycle check guarantees it at route creation).
+    pending = {n: len(outgoing_by.get(n, [])) for n in nodes}
+    order = [n for n, d in pending.items() if d == 0]
+    i = 0
+    while i < len(order):
+        for r in incoming_by.get(order[i], []):
+            pending[r.load] -= 1
+            if pending[r.load] == 0:
+                order.append(r.load)
+        i += 1
+
+    branch_demand: dict = {}   # station -> {route_id: units of its product}
+    demand: dict = {}          # station -> combined units of its product
+    for node in order:
+        if node == station_uuid:
+            total = multiplier
         else:
-            # Merge feed, a choice branch, or a plain 1:1 hop: each downstream
-            # unit consumes route_qty upstream units (1 on a choice branch —
-            # its weight is only ever a merge feed's).
-            upstream = multiplier * route_qty
-        branch_sources = await _leaf_sources(
-            session, company_id, route.load, upstream,
-            process_id if process_id is not None else route.processId,
-        )
-        if is_choice:
-            # Mark demand routed through an either/or fan: if it reconverges on
-            # a shared source, it adds up instead of collapsing to the max.
-            for src in branch_sources:
-                src["via_choice"] = True
-        results.extend(branch_sources)
-    return _coalesce_sources(results)
+            asks = list(branch_demand.get(node, {}).values())
+            if not asks:
+                continue
+            total = (sum(asks)
+                     if await _is_choice_station(session, node) and len(outgoing_by.get(node, [])) >= 2
+                     else max(asks))
+        demand[node] = total
+        for r in incoming_by.get(node, []):
+            load_is_split = await _is_split_station(session, company_id, r.load, process_id)
+            consumption = 1 if load_is_split else max(1, r.quantity)
+            pieces_per_unit = max(1, r.quantity) if load_is_split else 1
+            need = -(-(total * consumption) // pieces_per_unit)
+            branch_demand.setdefault(r.load, {})[r.id] = need
+
+    results: list[dict] = []
+    for node, qty in demand.items():
+        if incoming_by.get(node) or qty < 1:
+            continue                                   # not a leaf, or no ask
+        tmpl = await _ensure_origination_template(session, company_id, node, process_id)
+        results.append({"station_id": str(node), "template": tmpl, "quantity": qty})
+    return results
 
 
 @router.post("/{station_id}/pull", response_model=PullResult, status_code=201)
@@ -641,6 +702,9 @@ async def pull_for_merge(station_id: str, body: PullRequest,
 
     station_uuid = require_uuid(station_id, "Station not found")
     await _assert_station(session, station_uuid, ctx.company_id)
+    if station_uuid in await _boundary_station_ids(session, ctx.company_id):
+        raise HTTPException(400, "That is an integration node — it never holds lots. "
+                                 "Pull at the station where the product is made.")
     incoming = await _incoming_routes(session, ctx.company_id, station_uuid)
     if len(incoming) < 1:
         raise HTTPException(400, "This station has no upstream sources to pull from")

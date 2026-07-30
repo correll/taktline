@@ -1,11 +1,11 @@
 {
   "kind": "taktline-map",
   "version": 1,
-  "name": "Battery remanufacturing — two chemistries over one floor",
+  "name": "Battery remanufacturing \u2014 two chemistries, cleaning merge at the wash",
   "mapSettings": {
     "unit": "m",
-    "pixelsPerUnit": 36.0,
-    "stationSizeUnits": 2.0
+    "pixelsPerUnit": 36,
+    "stationSizeUnits": 2
   },
   "stations": [
     {
@@ -13,14 +13,15 @@
       "name": "Intake",
       "description": "Used packs arrive here.",
       "position": {
-        "x": 180.0,
-        "y": 540.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 951,
+        "y": 537,
+        "width": 72,
+        "height": 72
       },
       "color": null,
       "icon": "Truck",
       "isStorage": false,
+      "branchMode": null,
       "integrationProvider": null,
       "integrationRole": null
     },
@@ -29,14 +30,15 @@
       "name": "Teardown",
       "description": "Disassembly: one pack becomes modules and busbars.",
       "position": {
-        "x": 700.0,
-        "y": 540.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1084,
+        "y": 535,
+        "width": 72,
+        "height": 72
       },
       "color": null,
       "icon": "Hammer",
       "isStorage": false,
+      "branchMode": null,
       "integrationProvider": null,
       "integrationRole": null
     },
@@ -45,14 +47,15 @@
       "name": "Module Test",
       "description": "",
       "position": {
-        "x": 1250.0,
-        "y": 320.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1207,
+        "y": 461,
+        "width": 72,
+        "height": 72
       },
       "color": "#2D5B8E",
       "icon": "FlaskConical",
       "isStorage": false,
+      "branchMode": "choice",
       "integrationProvider": null,
       "integrationRole": null
     },
@@ -61,14 +64,15 @@
       "name": "Busbar Clean",
       "description": "",
       "position": {
-        "x": 1250.0,
-        "y": 760.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1206,
+        "y": 623,
+        "width": 72,
+        "height": 72
       },
       "color": "#2D5B8E",
       "icon": "Wrench",
       "isStorage": false,
+      "branchMode": null,
       "integrationProvider": null,
       "integrationRole": null
     },
@@ -77,14 +81,15 @@
       "name": "Reassembly",
       "description": "The reman pack is assembled here; orders are created here.",
       "position": {
-        "x": 1800.0,
-        "y": 540.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1385,
+        "y": 550,
+        "width": 72,
+        "height": 72
       },
       "color": null,
       "icon": "Factory",
       "isStorage": false,
+      "branchMode": null,
       "integrationProvider": null,
       "integrationRole": null
     },
@@ -93,30 +98,32 @@
       "name": "QA",
       "description": "",
       "position": {
-        "x": 2350.0,
-        "y": 540.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1517,
+        "y": 549,
+        "width": 72,
+        "height": 72
       },
       "color": null,
       "icon": "ScanSearch",
       "isStorage": false,
+      "branchMode": null,
       "integrationProvider": null,
       "integrationRole": null
     },
     {
       "ref": "s7",
       "name": "Spare Modules",
-      "description": "Surplus modules rest here — storage, not work.",
+      "description": "Surplus modules rest here \u2014 storage, not work.",
       "position": {
-        "x": 1250.0,
-        "y": 1050.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1207,
+        "y": 351,
+        "width": 72,
+        "height": 72
       },
       "color": null,
       "icon": "Box",
       "isStorage": true,
+      "branchMode": null,
       "integrationProvider": null,
       "integrationRole": null
     },
@@ -125,14 +132,15 @@
       "name": "Odoo",
       "description": "",
       "position": {
-        "x": 1800.0,
-        "y": 160.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1385,
+        "y": 385,
+        "width": 72,
+        "height": 72
       },
       "color": null,
       "icon": null,
       "isStorage": false,
+      "branchMode": null,
       "integrationProvider": "odoo",
       "integrationRole": "both"
     },
@@ -141,30 +149,48 @@
       "name": "ShipStation",
       "description": "",
       "position": {
-        "x": 2800.0,
-        "y": 540.0,
-        "width": 72.0,
-        "height": 72.0
+        "x": 1630,
+        "y": 549,
+        "width": 72,
+        "height": 72
       },
       "color": null,
       "icon": null,
       "isStorage": false,
+      "branchMode": null,
       "integrationProvider": "shipstation",
       "integrationRole": "sink"
+    },
+    {
+      "ref": "s10",
+      "name": "Cleaning solution",
+      "description": "",
+      "position": {
+        "x": 1083,
+        "y": 679,
+        "width": 60,
+        "height": 60
+      },
+      "color": null,
+      "icon": "FlaskConical",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
     }
   ],
   "processes": [
     {
       "ref": "p1",
       "name": "NMC",
-      "description": "High-energy packs: 1 pack → 4 modules + 2 busbars; a reman pack consumes 3 modules + 2 busbars, so every teardown leaves one spare module.",
-      "desiredTaktSec": 1800.0
+      "description": "High-energy packs: 1 pack \u2192 4 modules + 2 busbars; a reman pack consumes 3 modules + 2 busbars, so every teardown leaves one spare module.",
+      "desiredTaktSec": 1800
     },
     {
       "ref": "p2",
       "name": "LFP",
-      "description": "Long-life packs: 1 pack → 6 modules + 1 busbar; a reman pack consumes all six and the busbar — no surplus.",
-      "desiredTaktSec": 2400.0
+      "description": "Long-life packs: 1 pack \u2192 6 modules + 1 busbar; a reman pack consumes all six and the busbar \u2014 no surplus.",
+      "desiredTaktSec": 2400
     }
   ],
   "templates": [
@@ -255,6 +281,42 @@
       "startStation": "s5",
       "color": "#993C1D",
       "fields": []
+    },
+    {
+      "ref": "t9",
+      "name": "NMC dirty busbar",
+      "description": "Straight off the teardown \u2014 cleaned at Busbar Clean.",
+      "process": "p1",
+      "startStation": null,
+      "color": "#6B7280",
+      "fields": []
+    },
+    {
+      "ref": "t10",
+      "name": "LFP dirty busbar",
+      "description": "Straight off the teardown \u2014 cleaned at Busbar Clean.",
+      "process": "p2",
+      "startStation": null,
+      "color": "#6B7280",
+      "fields": []
+    },
+    {
+      "ref": "t11",
+      "name": "Cleaning solution (NMC)",
+      "description": "One unit cleans one busbar.",
+      "process": "p1",
+      "startStation": "s10",
+      "color": "#0E7490",
+      "fields": []
+    },
+    {
+      "ref": "t12",
+      "name": "Cleaning solution (LFP)",
+      "description": "One unit cleans one busbar.",
+      "process": "p2",
+      "startStation": "s10",
+      "color": "#0E7490",
+      "fields": []
     }
   ],
   "routes": [
@@ -277,7 +339,7 @@
       "load": "s2",
       "unload": "s4",
       "quantity": 2,
-      "outputTemplate": "t3"
+      "outputTemplate": "t9"
     },
     {
       "process": "p1",
@@ -301,27 +363,6 @@
       "outputTemplate": null
     },
     {
-      "process": "p1",
-      "load": "s3",
-      "unload": "s7",
-      "quantity": 1,
-      "outputTemplate": null
-    },
-    {
-      "process": "p1",
-      "load": "s8",
-      "unload": "s5",
-      "quantity": 1,
-      "outputTemplate": null
-    },
-    {
-      "process": "p1",
-      "load": "s6",
-      "unload": "s9",
-      "quantity": 1,
-      "outputTemplate": null
-    },
-    {
       "process": "p2",
       "load": "s1",
       "unload": "s2",
@@ -340,7 +381,7 @@
       "load": "s2",
       "unload": "s4",
       "quantity": 1,
-      "outputTemplate": "t7"
+      "outputTemplate": "t10"
     },
     {
       "process": "p2",
@@ -371,6 +412,27 @@
       "outputTemplate": null
     },
     {
+      "process": "p1",
+      "load": "s3",
+      "unload": "s7",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s8",
+      "unload": "s5",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s6",
+      "unload": "s9",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
       "process": "p2",
       "load": "s8",
       "unload": "s5",
@@ -381,6 +443,20 @@
       "process": "p2",
       "load": "s6",
       "unload": "s9",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s10",
+      "unload": "s4",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s10",
+      "unload": "s4",
       "quantity": 1,
       "outputTemplate": null
     }

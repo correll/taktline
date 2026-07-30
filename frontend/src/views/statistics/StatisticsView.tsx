@@ -3,6 +3,7 @@ import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } 
 import { statsApi } from '../../api/cards.api'
 import { sessionsApi, TREND_WINDOWS, type SessionStats, type TrendWindow } from '../../api/sessions.api'
 import { Trend } from './Trend'
+import { StationDetail, type DetailMetric } from './StationDetail'
 import { client } from '../../api/client'
 import { useRole } from '../../auth/useRole'
 import { color, font, size, shadow } from '../../theme/tokens'
@@ -23,6 +24,8 @@ export default function StatisticsView() {
   const [lastRefresh,   setLastRefresh]   = useState<Date>(new Date())
   // Off by default: with no window these are the all-time numbers the page
   // has always shown. Picking one narrows them AND adds the comparison.
+  // Which station + view the detail window is showing, if any.
+  const [drill, setDrill] = useState<{ id: string; metric: DetailMetric } | null>(null)
   const [trendWindow,   setTrendWindow]   = useState<TrendWindow | null>(() => {
     const v = localStorage.getItem('taktline.stats.window')
     return v && v in TREND_WINDOWS ? (v as TrendWindow) : null
@@ -154,6 +157,11 @@ export default function StatisticsView() {
         </button>
       </div>
 
+      {drill && (
+        <StationDetail stationId={drill.id} metric={drill.metric} window={trendWindow}
+                       onClose={() => setDrill(null)} />
+      )}
+
       {/* Content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: size.sp6 }}>
         {/* KPI tiles */}
@@ -256,7 +264,8 @@ export default function StatisticsView() {
             {stationList.length === 0 ? (
               <Empty />
             ) : (
-              <CycleOeeTable stations={stationList} statsMap={sessionStatsMap} window={trendWindow} />
+              <CycleOeeTable stations={stationList} statsMap={sessionStatsMap} window={trendWindow}
+                             onDrill={(id, m) => setDrill({ id, metric: m })} />
             )}
           </Panel>
 
@@ -358,10 +367,12 @@ function CycleOeeTable({
   stations,
   statsMap,
   window: trendWindow,
+  onDrill,
 }: {
   stations: import('../../models').Station[]
   statsMap: Record<string, SessionStats>
   window:   TrendWindow | null
+  onDrill:  (stationId: string, metric: DetailMetric) => void
 }) {
   const colStyle: React.CSSProperties = {
     padding:      `${size.sp2} ${size.sp3}`,
@@ -445,11 +456,21 @@ function CycleOeeTable({
                   {s.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />}
                   {s.name}
                 </td>
-                <td style={{ ...colStyle, color: color.textSecondary }}>{st?.sessionCount ?? '—'}</td>
-                <td style={{ ...colStyle, color: color.textSecondary }}>{st?.totalUnits    ?? '—'}</td>
+                <td style={colStyle}>
+                  <Drill on={!!st?.sessionCount} onClick={() => onDrill(s._id, 'activity')}>
+                    {st?.sessionCount ?? '—'}
+                  </Drill>
+                </td>
+                <td style={colStyle}>
+                  <Drill on={!!st?.totalUnits} onClick={() => onDrill(s._id, 'activity')}>
+                    {st?.totalUnits ?? '—'}
+                  </Drill>
+                </td>
                 <td style={{ ...colStyle, color: color.textSecondary }}>{workMin}</td>
-                <td style={{ ...colStyle, color: color.textSecondary }}>
-                  {cycle}
+                <td style={colStyle}>
+                  <Drill on={st?.cycleTimeSec != null} onClick={() => onDrill(s._id, 'cycle')}>
+                    {cycle}
+                  </Drill>
                   {/* Faster work is plainly better, so the arrow may judge. */}
                   {trendWindow && <Trend now={st?.cycleTimeSec} before={st?.previous?.cycleTimeSec}
                                          lowerIsBetter windowLabel={TREND_WINDOWS[trendWindow]} />}
@@ -457,13 +478,16 @@ function CycleOeeTable({
                 <td style={{ ...colStyle, color: starved ? color.statusWarning : color.textSecondary }}
                     title={starved ? 'Pieces leave much slower than the work takes — waiting, not working'
                                    : undefined}>
-                  {lineCycle}
+                  <Drill on={st?.lineCycleTimeSec != null}
+                         onClick={() => onDrill(s._id, 'lineCycle')}>{lineCycle}</Drill>
                   {trendWindow && <Trend now={st?.lineCycleTimeSec}
                                          before={st?.previous?.lineCycleTimeSec} lowerIsBetter
                                          windowLabel={TREND_WINDOWS[trendWindow]} />}
                 </td>
                 <td style={{ ...colStyle, color: oeeColor, fontWeight: st?.oee != null ? 700 : 400 }}>
-                  {oee}
+                  <Drill on={st?.oee != null} onClick={() => onDrill(s._id, 'activity')}>
+                    {oee}
+                  </Drill>
                   {/* No lowerIsBetter: a rising OEE can be a station working
                       more OR a bottleneck queueing work in front of it, so the
                       arrow states the direction and passes on the verdict. */}
@@ -678,5 +702,32 @@ function StatsFileMenu({ window: trendWindow, onWiped }: {
         </span>
       )}
     </div>
+  )
+}
+
+
+/** A number you can open. Underlined on hover rather than always, so the table
+ *  still reads as a table — but the cursor changes on the whole cell, which is
+ *  what makes the affordance findable without decorating every figure. */
+function Drill({ on, onClick, children }: {
+  on: boolean; onClick: () => void; children: React.ReactNode
+}) {
+  const [hover, setHover] = useState(false)
+  if (!on) return <span style={{ color: color.textSecondary }}>{children}</span>
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title="Show the numbers behind this"
+      style={{
+        background: 'none', border: 'none', padding: 0, font: 'inherit',
+        color: hover ? color.blueBright : color.textSecondary,
+        textDecoration: hover ? 'underline' : 'none',
+        cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
   )
 }

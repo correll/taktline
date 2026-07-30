@@ -157,3 +157,37 @@ def test_only_a_super_admin_may_wipe_the_statistics(actor):
     add_member(a, member, role="admin")
     assert member.req("POST", "/admin/reset-statistics").status_code == 403
     assert len(a.req("GET", "/sessions/").json()) == 1, "the refused call changed nothing"
+
+
+# ─── The detail behind a number ──────────────────────────────────────────────
+
+def test_detail_returns_samples_not_more_averages(actor):
+    """The point of the drill-down: an average hides the outlier that explains
+    the station. So it must hand back the individual observations."""
+    a = actor(); bootstrap_admin(a)
+    one, _two, _card = _line(a)
+
+    d = a.req("GET", f"/sessions/stats/{one}/detail").json()
+    assert d["stationName"] == "Cutting"
+    assert len(d["cycleSamples"]) == 1
+    s = d["cycleSamples"][0]
+    assert s["units"] == 6 and s["secPerPiece"] > 0
+    # Two departures were recorded; the first has nothing to measure from, so
+    # exactly one interval survives — the same rule line cycle time uses.
+    assert len(d["departureSamples"]) == 1
+
+    # Activity lands in a real hour, and the schedule comes along so a client
+    # can show work happening outside it.
+    worked = [h for h in d["byHour"] if h["sessions"]]
+    assert len(worked) == 1 and worked[0]["units"] == 6
+    assert len(d["byHour"]) == 24
+    assert d["openHours"] == list(range(9, 17))       # the default 09:00–17:00
+
+
+def test_detail_honours_the_window_and_refuses_a_stranger(actor):
+    a = actor(); bootstrap_admin(a)
+    one, _two, _card = _line(a)
+    assert a.req("GET", f"/sessions/stats/{one}/detail?window=1h").json()["window"] == "1h"
+
+    other = actor(); bootstrap_admin(other)
+    assert other.req("GET", f"/sessions/stats/{one}/detail").status_code == 404

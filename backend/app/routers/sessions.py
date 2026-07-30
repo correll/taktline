@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import List, Optional
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -435,3 +435,116 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
         "oee": oee,
         "isWarehouse": is_warehouse,
     }
+
+
+# ─── Detail behind one number ────────────────────────────────────────────────
+
+_MAX_SAMPLES = 3000
+
+
+@router.get("/stats/{station_id}/detail")
+async def station_detail(station_id: str, window: Optional[str] = None,
+                         ctx: CompanyContext = Depends(get_active_company),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """The samples behind a station's numbers, for charting.
+
+    An average hides the thing you most need to see. On a line watched today,
+    a bench averaged 30 s per piece — sixteen sessions near 4 s and one 80 s
+    stall. "Slow station" and "usually quick but occasionally jams" are
+    different problems with different fixes, and only the distribution tells
+    them apart. So this returns SAMPLES, not more aggregates, and lets the
+    client draw the shape.
+
+    * ``cycleSamples``     one point per work session: when, and seconds per piece.
+                           Serves both the histogram and the run chart.
+    * ``departureSamples`` one point per departure: the per-piece interval that
+                           line cycle time averages.
+    * ``byHour``           sessions and units by hour of the day, with the hours
+                           the company says it is open — which is how work
+                           happening outside the schedule becomes visible.
+    """
+    sid = parse_uuid(station_id)
+    if sid is None:
+        raise HTTPException(404, "Station not found")
+    station = await session.get(StationRow, sid)
+    if station is None or station.companyId != ctx.company_id:
+        raise HTTPException(404, "Station not found")
+
+    now = utcnow()
+    span = _TREND_WINDOWS.get(window) if window else None
+    since = now - (span or timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS))
+    schedule, tzname = await _work_schedule(session, ctx.company_id)
+
+    rows = (await session.execute(
+        select(SessionRow.startedAt, SessionRow.durationSec, SessionRow.quantity)
+        .where(SessionRow.companyId == ctx.company_id, SessionRow.stationId == sid,
+               SessionRow.endedAt.isnot(None),
+               SessionRow.endedAt >= since, SessionRow.endedAt <= now)
+        .order_by(SessionRow.startedAt.asc()).limit(_MAX_SAMPLES)
+    )).all()
+
+    cycle_samples = [
+        {"t": started.isoformat(), "secPerPiece": dur / qty, "units": qty}
+        for started, dur, qty in rows if dur and qty and qty > 0
+    ]
+
+    # Departures, as the line-cycle walk sees them, but kept as individual
+    # intervals rather than averaged — the spread is the point.
+    departures = await _line_cycle_samples(session, ctx.company_id, sid, schedule,
+                                           tzname, since, now)
+
+    # Activity by hour of the day, in the company's own timezone, against the
+    # hours it says it is open. Work outside those hours is the signal.
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo(tzname)
+    except Exception:
+        tz = timezone.utc
+    by_hour = [{"hour": h, "sessions": 0, "units": 0} for h in range(24)]
+    for started, _dur, qty in rows:
+        h = started.astimezone(tz).hour
+        by_hour[h]["sessions"] += 1
+        by_hour[h]["units"] += qty or 0
+    # An hour counts as open if any scheduled day opens in it — the histogram
+    # aggregates across days, so a per-weekday mask cannot be drawn on it.
+    open_hours = sorted({h for day in schedule for h, mask in enumerate(day) if mask})
+
+    return {
+        "stationId": station_id,
+        "stationName": station.name,
+        "window": window,
+        "cycleSamples": cycle_samples,
+        "departureSamples": departures,
+        "byHour": by_hour,
+        "openHours": open_hours,
+        "timezone": tzname,
+    }
+
+
+async def _line_cycle_samples(session, company_id, station_uuid, schedule, tzname,
+                              since, until) -> list:
+    """The individual per-piece departure intervals — the same walk
+    _line_cycle_times averages, stopping one step earlier."""
+    rows = (await session.execute(
+        select(CardEventRow.timestamp, CardEventRow.quantity)
+        .where(CardEventRow.companyId == company_id,
+               CardEventRow.type.in_(("moved", "created", "deleted")),
+               CardEventRow.fromStation == str(station_uuid),
+               CardEventRow.timestamp >= since, CardEventRow.timestamp <= until)
+        .order_by(CardEventRow.timestamp.asc()).limit(_MAX_SAMPLES)
+    )).all()
+    if not rows:
+        return []
+    opens = [o for o in shift_starts(since, until, schedule, tzname) if o >= rows[0][0]]
+    out, anchor, oi = [], None, 0
+    for ts, qty in rows:
+        qty = max(1, qty or 1)
+        while oi < len(opens) and opens[oi] <= ts:
+            if anchor is None or opens[oi] > anchor:
+                anchor = opens[oi]
+            oi += 1
+        if anchor is not None and ts > anchor:
+            out.append({"t": ts.isoformat(),
+                        "secPerPiece": (ts - anchor).total_seconds() / qty})
+        anchor = ts
+    return out

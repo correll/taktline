@@ -36,6 +36,7 @@ import argparse
 import asyncio
 import json
 import os
+import math
 import random
 import sys
 import time
@@ -243,6 +244,71 @@ class Line:
         return sum(max(1, r["quantity"]) for r in self.inn.get(sid, [])) or 1
 
 
+# ── How long a cycle actually takes ───────────────────────────────────────────
+
+class Pace:
+    """Where the variation in a real shift comes from.
+
+    A flat ±20% jitter made every station report the same cycle time and every
+    window the same as the one before, so the statistics page had nothing to
+    show: no spread down the table, no trend arrows, no bottleneck. Four
+    independent sources, each of which a shop floor genuinely has:
+
+    * **The station.** A teardown bench is not a scanner. A fixed factor per
+      station, drawn from its name so two runs of the same line are comparable.
+    * **The person.** Steady differences between operators, smaller than the
+      differences between stations.
+    * **The piece.** Task times are right-skewed — most are near the mode and a
+      few run long — which is a lognormal, not a uniform band. `--variance` is
+      its sigma.
+    * **The hiccup.** Occasionally something jams: a rare multi-fold cycle,
+      which is what actually moves line cycle time away from cycle time.
+
+    On top of those the whole shift **drifts**, so consecutive windows differ
+    and the trend arrows have a direction to report. Negative is the line
+    getting faster.
+    """
+
+    def __init__(self, cycle: float, variance: float, hiccup: float, drift: float,
+                 started: float, ends: float, stations: list[str] | None = None):
+        self.cycle, self.variance, self.hiccup, self.drift = cycle, variance, hiccup, drift
+        self.started, self.ends = started, max(ends, started + 1)
+        # Centre the station factors on THIS line, so `--cycle 5` means five
+        # seconds on this floor rather than five seconds times whatever these
+        # particular station names happened to hash to. (On the battery line
+        # the unnormalised names ran 31% slow.)
+        names = stations or []
+        self._station_norm = (
+            sum(self._factor(n, 2.4) for n in names) / len(names)) if names else 1.0
+
+    @staticmethod
+    def _factor(seed: str, spread: float) -> float:
+        """Deterministic multiplier in roughly [1/spread, spread]."""
+        h = 0
+        for ch in seed:
+            h = (h * 131 + ord(ch)) & 0xFFFFFFFF
+        return spread ** ((h % 1000) / 500.0 - 1.0)
+
+    # Skewing and stalling both push the AVERAGE up, so without this `--cycle 5`
+    # would quietly mean "about seven seconds". Divide by what the random parts
+    # add in expectation — E[lognormal] = e^(σ²/2), and a hiccup of probability
+    # h multiplying by 3–9 adds 5h — so the flag keeps meaning the mean cycle
+    # time at a station of average speed.
+    @property
+    def _normaliser(self) -> float:
+        return math.exp(self.variance ** 2 / 2) * (1.0 + 5.0 * self.hiccup)
+
+    def seconds(self, station: str, operator: str, rng: random.Random) -> float:
+        base = (self.cycle * (self._factor(station, 2.4) / self._station_norm)
+                * self._factor(operator, 1.25))
+        secs = base * math.exp(rng.gauss(0.0, self.variance)) / self._normaliser
+        if rng.random() < self.hiccup:
+            secs *= rng.uniform(3.0, 9.0)          # a jam, a missing part, a question
+        progress = (time.monotonic() - self.started) / (self.ends - self.started)
+        secs *= 1.0 + self.drift * min(1.0, max(0.0, progress))
+        return max(0.15, secs)
+
+
 # ── Tablets ───────────────────────────────────────────────────────────────────
 
 class Stats:
@@ -261,7 +327,7 @@ class Stats:
 
 
 async def tablet(idx: int, station_id: str, api: Api, line: Line, stats: Stats,
-                 cycle: float, stop_at: float, mistakes: float, verbose: bool):
+                 pace: Pace, stop_at: float, mistakes: float, verbose: bool):
     """One worker at one station, for the duration of the shift."""
     operator = f"tablet-{idx:02d}"
     name = line.name(station_id)
@@ -277,7 +343,7 @@ async def tablet(idx: int, station_id: str, api: Api, line: Line, stats: Stats,
         r = await api.req("POST", "/sessions/", {"stationId": station_id, "cardId": card_id,
                                                  "operatorId": operator, "quantity": quantity})
         sid = r.json()["_id"] if r.status_code == 201 else None
-        await asyncio.sleep(cycle * rng.uniform(0.8, 1.2))
+        await asyncio.sleep(pace.seconds(name, operator, rng))
         if sid:
             await api.req("POST", f"/sessions/{sid}/end", {"quantity": quantity})
             stats.sessions += 1
@@ -446,6 +512,13 @@ async def main() -> None:
     p.add_argument("--cycle", type=float, default=5.0, help="seconds of work per lot")
     p.add_argument("--minutes", type=float, default=60.0)
     p.add_argument("--order-interval", type=float, default=60.0)
+    p.add_argument("--variance", type=float, default=0.45,
+                   help="spread of cycle times (lognormal sigma); 0 = every cycle identical")
+    p.add_argument("--hiccup", type=float, default=0.06,
+                   help="chance a cycle stalls to several times its length")
+    p.add_argument("--drift", type=float, default=-0.4,
+                   help="fractional pace change from the start of the run to the end "
+                        "(-0.4 = 40%% faster by the end, so trends have a direction)")
     p.add_argument("--mistakes", type=float, default=0.15,
                    help="chance a worker carries only part of a lot")
     p.add_argument("--email", help="drive an existing company as this user")
@@ -484,9 +557,13 @@ async def main() -> None:
 
         started = time.monotonic()
         stop_at = started + args.minutes * 60
+        pace = Pace(args.cycle, args.variance, args.hiccup, args.drift, started, stop_at,
+                    stations=[line.name(s) for s in assignment])
 
         print(f"\nTaktline line simulator — driving {who}")
-        print(f"  {args.tablets} tablets · {args.cycle:g}s cycle · one order every "
+        print(f"  {args.tablets} tablets · {args.cycle:g}s mean cycle "
+              f"(σ {args.variance:g}, {args.hiccup:.0%} hiccups, "
+              f"{args.drift:+.0%} drift) · one order every "
               f"{args.order_interval:g}s · running {args.minutes:g} min")
         for n, sid in enumerate(assignment, 1):
             role = []
@@ -502,7 +579,7 @@ async def main() -> None:
 
         stats = Stats()
         workers = [asyncio.create_task(
-            tablet(n, sid, api, line, stats, args.cycle, stop_at, args.mistakes, args.verbose))
+            tablet(n, sid, api, line, stats, pace, stop_at, args.mistakes, args.verbose))
             for n, sid in enumerate(assignment, 1)]
         workers.append(asyncio.create_task(
             releaser(api, line, stats, args.order_interval, stop_at, args.verbose)))

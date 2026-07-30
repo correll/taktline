@@ -119,6 +119,20 @@ advanced — the parts waiting to be consumed are not movable work, and a tablet
 that tried would spin on 409 forever. `--mistakes` makes a worker occasionally
 carry only part of a lot; the line self-heals, which is the point.
 
+Cycle times come from a **pace model** (`Pace`), not a flat jitter band, because
+a flat band made every station report the same number and every window match
+the one before — the statistics page had no spread, no bottleneck and no trend
+to show. Four independent sources, each of which a real floor has: a fixed
+factor per **station** (a teardown bench is not a scanner), a smaller one per
+**operator**, a **lognormal** per piece (task times are right-skewed, not
+uniform — `--variance` is its sigma), and a rare **hiccup** (`--hiccup`) that
+multiplies a cycle severalfold, which is what actually pushes line cycle time
+away from cycle time. On top, `--drift` moves the whole shift's pace from start
+to end so consecutive windows differ and the trend arrows have a direction. The
+random parts and the station factors are normalised against the loaded line, so
+`--cycle 5` still means about five seconds on this floor rather than five
+times whatever the station names happened to hash to.
+
 # Engineering conventions
 
 ## Persistence layer (PostgreSQL + SQLAlchemy async)

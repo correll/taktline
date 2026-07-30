@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, NavLink } from 'react-router-dom'
 import { formatDistanceToNow } from 'date-fns'
 import { color, font, size, shadow } from '../../theme/tokens'
+import { useSortable } from './useSortable'
 import { useAuthStore } from '../../store/auth.store'
 import {
   platformApi, type AuditEntry, type PlatformCompany, type PlatformStatus, type PlatformUser,
@@ -226,22 +227,29 @@ function CompaniesSection({ companies, onChanged }: {
     } catch (e) { setError(String(e)) } finally { setBusy(null) }
   }
 
+  // Sorted on the underlying values, never the formatted text — "1.2k" must
+  // not sort before "900".
+  const sortable = useSortable(companies, [
+    { label: 'Company',         value: (c) => c.name },
+    { label: 'Active users',    value: (c) => c.activeUsers, descFirst: true },
+    { label: 'Stations',        value: (c) => c.stations, descFirst: true },
+    { label: 'Lots on floor',   value: (c) => c.cards, descFirst: true },
+    { label: 'Devices',         value: (c) => c.devicesConnected, descFirst: true },
+    { label: 'API req · month', value: (c) => c.apiRequestsMonth, descFirst: true },
+    { label: 'WS msgs · month', value: (c) => c.wsMessagesMonth, descFirst: true },
+    { label: 'Last activity',   value: (c) => c.lastActivityAt ?? null, descFirst: true },
+    { label: '' },
+  ], 'Last activity')
+
   return (
     <section>
       <SectionTitle>Companies ({companies.length})</SectionTitle>
       {error && <div style={{ fontSize: 12, color: color.statusFault, marginBottom: 6 }}>{error}</div>}
       <div style={{ ...cardListStyle, overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
-          <thead>
-            <tr>
-              {['Company', 'Active users', 'Stations', 'Lots on floor', 'Devices',
-                'API req · month', 'WS msgs · month', 'Last activity', ''].map((h) => (
-                <th key={h} style={thStyle}>{h}</th>
-              ))}
-            </tr>
-          </thead>
+          <thead>{sortable.header}</thead>
           <tbody>
-            {companies.map((c) => (
+            {sortable.rows.map((c) => (
               <tr key={c.id} style={{ borderTop: `1px solid ${color.border}` }}>
                 <td style={{ ...tdStyle, color: color.textPrimary, fontWeight: 500 }}>{c.name}</td>
                 <td style={tdStyle} title={`${c.activeUsers} signed in now of ${c.members} members`}>
@@ -324,17 +332,25 @@ function UsersSection({ users, isOwner, selfId, onChanged }: {
     catch (e) { setError(String(e)) }
   }
 
+  const sortable = useSortable(users, [
+    { label: 'User',      value: (u) => u.email },
+    // By how many companies they belong to: the cell lists names, but "which
+    // user is in the most companies" is the question this column answers.
+    { label: 'Companies', value: (u) => u.companies.length, descFirst: true },
+    { label: 'Last seen', value: (u) => u.lastSeenAt ?? null, descFirst: true },
+    { label: 'Platform',  value: (u) => u.platformRole ?? null },
+    { label: '' },
+  ], 'Last seen')
+
   return (
     <section>
       <SectionTitle>Users ({users.length})</SectionTitle>
       {error && <div style={{ fontSize: 12, color: color.statusFault, marginBottom: 6 }}>{error}</div>}
       <div style={cardListStyle}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-          <thead>
-            <tr>{['User', 'Companies', 'Last seen', 'Platform', ''].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
-          </thead>
+          <thead>{sortable.header}</thead>
           <tbody>
-            {users.map((u) => (
+            {sortable.rows.map((u) => (
               <tr key={u.id} style={{ borderTop: `1px solid ${color.border}` }}>
                 <td style={{ ...tdStyle, color: color.textPrimary }}>
                   {u.email}

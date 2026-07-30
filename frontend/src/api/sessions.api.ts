@@ -23,7 +23,23 @@ export interface SessionStats {
   lineCycleTimeSec: number | null
   oee:             number | null
   isWarehouse?:    boolean          // storage, not a work station — no OEE
+  /** Set when a trend window was asked for: the same metrics over the window
+   *  immediately before this one, so the client can show which way each number
+   *  is moving. Null when the station has no history that far back. */
+  previous?: {
+    cycleTimeSec:     number | null
+    lineCycleTimeSec: number | null
+    oee:              number | null
+    totalUnits:       number
+  } | null
+  window?: TrendWindow
 }
+
+/** How far back a trend compares. Also the labels the picker shows. */
+export const TREND_WINDOWS = {
+  '1h': 'past hour', '1d': 'past day', '1w': 'past week', '1m': 'past month',
+} as const
+export type TrendWindow = keyof typeof TREND_WINDOWS
 
 export const sessionsApi = {
   list:       (stationId?: string, openOnly?: boolean): Promise<WorkSession[]> =>
@@ -37,8 +53,8 @@ export const sessionsApi = {
   end: (id: string, quantity?: number): Promise<WorkSession> =>
     client.post(`/sessions/${id}/end`, { quantity }),
 
-  allStats: (): Promise<SessionStats[]> =>
-    client.get('/sessions/stats'),
+  allStats: (window?: TrendWindow): Promise<SessionStats[]> =>
+    client.get('/sessions/stats', window ? { params: { window } } : undefined),
 
   stationStats: (stationId: string): Promise<SessionStats> =>
     client.get(`/sessions/stats/${stationId}`),

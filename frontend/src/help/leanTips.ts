@@ -125,10 +125,50 @@ export const LEAN_TIPS: LeanTip[] = [
 
 const TIP_EPOCH = Date.UTC(2026, 0, 1)   // rotation anchor — same tip for everyone on a given day
 
-// Stride through the list with a step coprime to its length: every tip still
-// appears exactly once per cycle, but consecutive days hop between categories
-// instead of walking through one topic for a week.
-const STRIDE = 37
+/** The day-to-day order, built once so that CATEGORIES are spread as far apart
+ *  as the list allows.
+ *
+ *  The obvious scheme — stride the flat array by a step coprime to its length —
+ *  guarantees every tip appears exactly once per cycle, which is the property
+ *  one naturally checks. But nobody experiences "tip 45" and then "tip 48";
+ *  they experience *another takt tip*. With 94 tips and a stride of 37, five
+ *  days moved the index by only −3, so whole neighbourhoods came back inside a
+ *  week: Takt on the 22nd and again on the 27th, Lean method on the 26th and
+ *  again on the 31st. Two quality tips a day apart — Defects then Poka-yoke —
+ *  read as the same tip repeated, which is how this was noticed.
+ *
+ *  So each position takes the tip whose category has gone longest unused, ties
+ *  broken by the original order. Deterministic, so everyone still sees the same
+ *  tip on the same day, and every tip still appears exactly once per cycle —
+ *  but a category with two entries now sits ~47 days apart instead of possibly
+ *  three.
+ */
+function spreadByCategory(tips: LeanTip[]): number[] {
+  // Each tip is placed at its category's *fractional* position: the k-th of a
+  // category with m entries belongs (k + ½)/m of the way through the cycle.
+  // Sorting by that interleaves every category evenly, so a category with two
+  // tips lands ~47 days apart and the eleven takt tips ~8.5 days apart.
+  //
+  // Greedily taking "whichever category has waited longest" was the obvious
+  // alternative and it fails at the tail: once the small categories are spent,
+  // only the big one is left and its last entries come out back to back.
+  const perCategory = new Map<string, number>()
+  const total = new Map<string, number>()
+  for (const t of tips) total.set(t.category, (total.get(t.category) ?? 0) + 1)
+
+  return tips
+    .map((t, i) => {
+      const k = perCategory.get(t.category) ?? 0
+      perCategory.set(t.category, k + 1)
+      return { i, at: (k + 0.5) / (total.get(t.category) ?? 1), cat: t.category }
+    })
+    // Ties (two categories of the same size) resolve by name, then by original
+    // order — anything deterministic will do, as long as it is stable.
+    .sort((a, b) => a.at - b.at || a.cat.localeCompare(b.cat) || a.i - b.i)
+    .map((e) => e.i)
+}
+
+const ROTATION = spreadByCategory(LEAN_TIPS)
 
 /** The tips quoted on the landing page, in the order they read there: what WIP
  *  costs, why it costs that, and the belief that keeps producing it. Each one is
@@ -141,7 +181,6 @@ export function featuredTips(): LeanTip[] {
 /** Deterministic tip for a given date (defaults to today). */
 export function tipOfTheDay(date: Date = new Date()): LeanTip {
   const day = Math.floor((date.getTime() - TIP_EPOCH) / 86_400_000)
-  const n = LEAN_TIPS.length
-  const idx = (((day * STRIDE) % n) + n) % n
-  return LEAN_TIPS[idx]
+  const n = ROTATION.length
+  return LEAN_TIPS[ROTATION[((day % n) + n) % n]]
 }

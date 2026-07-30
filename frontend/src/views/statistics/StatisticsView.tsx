@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } from '../../store'
 import { statsApi } from '../../api/cards.api'
-import { sessionsApi, type SessionStats } from '../../api/sessions.api'
+import { sessionsApi, TREND_WINDOWS, type SessionStats, type TrendWindow } from '../../api/sessions.api'
+import { Trend } from './Trend'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { STATUS_CSS } from '../../components/map/mapColors'
 import type { MachineStatus } from '../../models'
@@ -18,6 +19,12 @@ export default function StatisticsView() {
   const [sessionStats,  setSessionStats]  = useState<SessionStats[]>([])
   const [loading,       setLoading]       = useState(true)
   const [lastRefresh,   setLastRefresh]   = useState<Date>(new Date())
+  // Off by default: with no window these are the all-time numbers the page
+  // has always shown. Picking one narrows them AND adds the comparison.
+  const [trendWindow,   setTrendWindow]   = useState<TrendWindow | null>(() => {
+    const v = localStorage.getItem('taktline.stats.window')
+    return v && v in TREND_WINDOWS ? (v as TrendWindow) : null
+  })
 
   const stations  = useStationsStore((s) => s.stations)
   const processes = useProcessesStore((s) => s.processes)
@@ -28,7 +35,7 @@ export default function StatisticsView() {
     try {
       const [data, stats] = await Promise.all([
         statsApi.overview(),
-        sessionsApi.allStats(),
+        sessionsApi.allStats(trendWindow ?? undefined),
       ])
       setOverview(data)
       setSessionStats(stats)
@@ -41,7 +48,8 @@ export default function StatisticsView() {
     fetchOverview()
     const timer = setInterval(fetchOverview, REFRESH_MS)
     return () => clearInterval(timer)
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trendWindow])
 
   // Keyed session stats for fast lookup
   const sessionStatsMap = useMemo(() => {
@@ -99,10 +107,37 @@ export default function StatisticsView() {
         <span style={{ fontSize: 11, color: color.textDim }}>
           refreshes every 15s · last {formatDistanceToNow(lastRefresh, { addSuffix: true })}
         </span>
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 10, fontFamily: font.mono, color: color.textDim,
+                         letterSpacing: '0.08em', marginRight: 2,
+                         display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            TREND <MetricInfo metric="trend" />
+          </span>
+          {([null, '1h', '1d', '1w', '1m'] as const).map((w) => (
+            <button
+              key={w ?? 'off'}
+              onClick={() => {
+                setTrendWindow(w)
+                if (w) localStorage.setItem('taktline.stats.window', w)
+                else localStorage.removeItem('taktline.stats.window')
+              }}
+              title={w ? `Compare the ${TREND_WINDOWS[w]} against the ${TREND_WINDOWS[w].replace('past', 'previous')}`
+                       : 'No comparison — every session on record'}
+              style={{
+                background:   trendWindow === w ? `${color.bluePrimary}22` : 'transparent',
+                border:       `1px solid ${trendWindow === w ? color.bluePrimary : color.border}`,
+                borderRadius: size.radius,
+                color:        trendWindow === w ? color.textPrimary : color.textSecondary,
+                cursor: 'pointer', fontSize: 10.5, fontFamily: font.mono, padding: '3px 8px',
+              }}
+            >
+              {w ?? 'off'}
+            </button>
+          ))}
+        </span>
         <button
           onClick={fetchOverview}
           style={{
-            marginLeft:   'auto',
             background:   'none',
             border:       `1px solid ${color.border}`,
             borderRadius: size.radius,
@@ -212,11 +247,13 @@ export default function StatisticsView() {
           </Panel>
 
           {/* Cycle-time / OEE by station */}
-          <Panel label="CYCLE TIME, LINE CYCLE TIME & OEE BY STATION" metric="cycleTable" wide>
+          <Panel label={trendWindow
+                  ? `CYCLE TIME, LINE CYCLE TIME & OEE — ${TREND_WINDOWS[trendWindow].toUpperCase()}`
+                  : 'CYCLE TIME, LINE CYCLE TIME & OEE BY STATION'} metric="cycleTable" wide>
             {stationList.length === 0 ? (
               <Empty />
             ) : (
-              <CycleOeeTable stations={stationList} statsMap={sessionStatsMap} />
+              <CycleOeeTable stations={stationList} statsMap={sessionStatsMap} window={trendWindow} />
             )}
           </Panel>
 
@@ -317,9 +354,11 @@ function MachineStatusGrid({ machines }: { machines: Record<string, import('../.
 function CycleOeeTable({
   stations,
   statsMap,
+  window: trendWindow,
 }: {
   stations: import('../../models').Station[]
   statsMap: Record<string, SessionStats>
+  window:   TrendWindow | null
 }) {
   const colStyle: React.CSSProperties = {
     padding:      `${size.sp2} ${size.sp3}`,
@@ -405,13 +444,27 @@ function CycleOeeTable({
                 <td style={{ ...colStyle, color: color.textSecondary }}>{st?.sessionCount ?? '—'}</td>
                 <td style={{ ...colStyle, color: color.textSecondary }}>{st?.totalUnits    ?? '—'}</td>
                 <td style={{ ...colStyle, color: color.textSecondary }}>{workMin}</td>
-                <td style={{ ...colStyle, color: color.textSecondary }}>{cycle}</td>
+                <td style={{ ...colStyle, color: color.textSecondary }}>
+                  {cycle}
+                  {/* Faster work is plainly better, so the arrow may judge. */}
+                  {trendWindow && <Trend now={st?.cycleTimeSec} before={st?.previous?.cycleTimeSec}
+                                         lowerIsBetter />}
+                </td>
                 <td style={{ ...colStyle, color: starved ? color.statusWarning : color.textSecondary }}
                     title={starved ? 'Pieces leave much slower than the work takes — waiting, not working'
                                    : undefined}>
                   {lineCycle}
+                  {trendWindow && <Trend now={st?.lineCycleTimeSec}
+                                         before={st?.previous?.lineCycleTimeSec} lowerIsBetter />}
                 </td>
-                <td style={{ ...colStyle, color: oeeColor, fontWeight: st?.oee != null ? 700 : 400 }}>{oee}</td>
+                <td style={{ ...colStyle, color: oeeColor, fontWeight: st?.oee != null ? 700 : 400 }}>
+                  {oee}
+                  {/* No lowerIsBetter: a rising OEE can be a station working
+                      more OR a bottleneck queueing work in front of it, so the
+                      arrow states the direction and passes on the verdict. */}
+                  {trendWindow && !st?.isWarehouse
+                    && <Trend now={st?.oee} before={st?.previous?.oee} unit="%" />}
+                </td>
               </tr>
             )
           })}

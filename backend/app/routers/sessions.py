@@ -180,7 +180,8 @@ async def _warehouse_ids(session, company_id) -> set:
 _LINE_CYCLE_LOOKBACK_DAYS = 30
 
 
-async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
+async def _line_cycle_times(session, company_id, schedule, tzname,
+                            since=None, until=None) -> dict:
     """Seconds per piece between a station's departures — its actual exit rate.
 
     Cycle time answers "how long does the work take"; this answers "how often
@@ -196,8 +197,11 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
 
     Divided by units: moving a lot of ten is ten pieces leaving, not one.
     """
-    now = utcnow()
-    since = now - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS)
+    if until is None:
+        until = utcnow()
+    if since is None:
+        since = until - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS)
+    now = until
     # A departure is any event that carries a fromStation: a plain move, the
     # 'created' events a split or an un-split records per branch — pieces
     # leaving a teardown ARE departures, and in a remanufacturing shop they are
@@ -212,7 +216,8 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
         .where(CardEventRow.companyId == company_id,
                CardEventRow.type.in_(("moved", "created", "deleted")),
                CardEventRow.fromStation.isnot(None),
-               CardEventRow.timestamp >= since)
+               CardEventRow.timestamp >= since,
+               CardEventRow.timestamp <= until)
         .order_by(CardEventRow.timestamp.asc())
     )).all()
     if not rows:
@@ -230,8 +235,8 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
     for col in (CardEventRow.fromStation, CardEventRow.toStation):
         for station, first_ts in (await session.execute(
             select(col, func.min(CardEventRow.timestamp))
-            .where(CardEventRow.companyId == company_id,
-                   col.isnot(None), CardEventRow.timestamp >= since)
+            .where(CardEventRow.companyId == company_id, col.isnot(None),
+                   CardEventRow.timestamp >= since, CardEventRow.timestamp <= until)
             .group_by(col)
         )).all():
             key = str(station)
@@ -269,10 +274,20 @@ async def _line_cycle_times(session, company_id, schedule, tzname) -> dict:
 
 # ─── All-stations OEE / cycle-time summary ───────────────────────────────────
 
-@router.get("/stats")
-async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
-                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
-    stmt = (
+# Trend windows the Statistics view offers. A trend is this window against the
+# one immediately before it, which is the only comparison that answers "is it
+# getting better or worse" without pretending to know a target.
+_TREND_WINDOWS = {"1h": timedelta(hours=1), "1d": timedelta(days=1),
+                  "1w": timedelta(weeks=1), "1m": timedelta(days=30)}
+
+
+async def _station_metrics(session, company_id, schedule, tzname, since, until) -> dict:
+    """cycle time, line cycle time and OEE per station over one window.
+
+    Windowed on the *session* rather than pre-aggregated, so the same code
+    answers both halves of a trend and the two halves cannot drift apart.
+    """
+    rows = (await session.execute(
         select(
             SessionRow.stationId,
             func.count().label("sessionCount"),
@@ -281,52 +296,85 @@ async def all_station_stats(ctx: CompanyContext = Depends(get_active_company),
             func.min(SessionRow.startedAt).label("firstStart"),
             func.max(SessionRow.endedAt).label("lastEnd"),
         )
-        .where(SessionRow.companyId == ctx.company_id, SessionRow.endedAt.isnot(None))
+        .where(SessionRow.companyId == company_id, SessionRow.endedAt.isnot(None),
+               SessionRow.endedAt >= since, SessionRow.endedAt <= until)
         .group_by(SessionRow.stationId)
-    )
-    rows = (await session.execute(stmt)).all()
-    schedule, tzname = await _work_schedule(session, ctx.company_id)
-    warehouses = await _warehouse_ids(session, ctx.company_id)
-    line_cycles = await _line_cycle_times(session, ctx.company_id, schedule, tzname)
-    results = []
-    for d in rows:
-        total_units = d.totalUnits or 0
-        total_working = d.totalWorking or 0.0
-        cycle = total_working / total_units if total_units > 0 else None
-        is_warehouse = d.stationId in warehouses
-        results.append({
-            "stationId": str(d.stationId),
-            "sessionCount": d.sessionCount,
-            "totalUnits": total_units,
-            "totalWorkingSec": total_working,
-            "cycleTimeSec": cycle,
-            "lineCycleTimeSec": line_cycles.get(str(d.stationId)),
-            # A warehouse stores, it does not run — OEE would be meaningless.
-            "oee": None if is_warehouse else _oee(total_working, d.firstStart, d.lastEnd,
-                                                  schedule, tzname),
-            "isWarehouse": is_warehouse,
-        })
+    )).all()
+    line_cycles = await _line_cycle_times(session, company_id, schedule, tzname,
+                                          since=since, until=until)
+    warehouses = await _warehouse_ids(session, company_id)
 
+    out: dict = {}
+    for d in rows:
+        units = d.totalUnits or 0
+        working = d.totalWorking or 0.0
+        sid = str(d.stationId)
+        out[sid] = {
+            "stationId": sid,
+            "sessionCount": d.sessionCount,
+            "totalUnits": units,
+            "totalWorkingSec": working,
+            "cycleTimeSec": (working / units) if units > 0 else None,
+            "lineCycleTimeSec": line_cycles.get(sid),
+            "oee": None if d.stationId in warehouses
+                   else _oee(working, d.firstStart, d.lastEnd, schedule, tzname),
+            "isWarehouse": d.stationId in warehouses,
+        }
     # A station can have a measurable exit rate and no work sessions at all —
     # nobody runs a timer at a shipping bench, and an automated cell may never
     # have one. Listing only stations with sessions dropped them from the
     # statistics table entirely, which reads as "nothing happens here" for a
     # station that is in fact shipping every order. Line cycle time is built
     # from departures, not sessions, so it stands on its own.
-    seen = {r["stationId"] for r in results}
-    for station_id, line_cycle in line_cycles.items():
-        if station_id in seen:
+    for sid, line_cycle in line_cycles.items():
+        if sid in out:
             continue
-        results.append({
-            "stationId": station_id,
-            "sessionCount": 0,
-            "totalUnits": 0,
-            "totalWorkingSec": 0.0,
-            "cycleTimeSec": None,
-            "lineCycleTimeSec": line_cycle,
-            "oee": None,
-            "isWarehouse": parse_uuid(station_id) in warehouses,
-        })
+        out[sid] = {
+            "stationId": sid, "sessionCount": 0, "totalUnits": 0, "totalWorkingSec": 0.0,
+            "cycleTimeSec": None, "lineCycleTimeSec": line_cycle, "oee": None,
+            "isWarehouse": parse_uuid(sid) in warehouses,
+        }
+    return out
+
+
+@router.get("/stats")
+async def all_station_stats(window: Optional[str] = None,
+                            ctx: CompanyContext = Depends(get_active_company),
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Per-station timing, optionally with a trend.
+
+    Without `window` this is the all-time-ish view it always was (a 30-day
+    departure lookback, every session). With one — 1h / 1d / 1w / 1m — each
+    station also carries `previous`: the same metrics over the window
+    immediately before, so a client can show which way the number is moving
+    without inventing a target to compare against.
+    """
+    schedule, tzname = await _work_schedule(session, ctx.company_id)
+    now = utcnow()
+
+    if window is None:
+        current = await _station_metrics(
+            session, ctx.company_id, schedule, tzname,
+            now - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS * 12), now)
+        return list(current.values())
+
+    span = _TREND_WINDOWS.get(window)
+    if span is None:
+        raise HTTPException(400, f"window must be one of {sorted(_TREND_WINDOWS)}")
+
+    current = await _station_metrics(session, ctx.company_id, schedule, tzname,
+                                     now - span, now)
+    prior = await _station_metrics(session, ctx.company_id, schedule, tzname,
+                                   now - span * 2, now - span)
+    results = []
+    for sid, row in current.items():
+        before = prior.get(sid)
+        results.append({**row, "window": window, "previous": None if before is None else {
+            "cycleTimeSec": before["cycleTimeSec"],
+            "lineCycleTimeSec": before["lineCycleTimeSec"],
+            "oee": before["oee"],
+            "totalUnits": before["totalUnits"],
+        }})
     return results
 
 

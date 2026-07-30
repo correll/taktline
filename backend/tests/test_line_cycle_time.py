@@ -154,3 +154,56 @@ def test_a_new_line_is_not_charged_for_the_morning_before_it_existed(actor=None)
     established = _line_cycle([(FRI_OPEN + timedelta(minutes=9), 1)], [FRI_OPEN],
                               first_activity=FRI_OPEN - timedelta(days=1))
     assert established == 9 * 60
+
+
+# ─── The trend window on /sessions/stats ─────────────────────────────────────
+
+def _mini_line(a):
+    """Two stations, one route, one lot — enough to record a session."""
+    st = lambda n: a.req("POST", "/stations/", {
+        "name": n, "description": "", "adapterType": None, "adapterConfig": {},
+        "color": None, "icon": None,
+        "position": {"x": 1, "y": 1, "width": 60, "height": 60}}).json()["_id"]
+    one, two = st("One"), st("Two")
+    proc = a.req("POST", "/processes/", {"name": "P"}).json()["_id"]
+    a.req("POST", "/routes/", {"processId": proc, "load": one, "unload": two, "quantity": 1})
+    tmpl = a.req("POST", "/lot-templates/", {"name": "Widget", "processId": proc,
+                                             "startStationId": one}).json()["_id"]
+    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl, "processId": proc,
+                                     "totalQuantity": 4, "bins": {one: {"count": 4}}}).json()
+    s = a.req("POST", "/sessions/", {"stationId": one, "cardId": card["_id"], "quantity": 4})
+    a.req("POST", f"/sessions/{s.json()['_id']}/end", {"quantity": 4})
+    a.req("POST", f"/cards/{card['_id']}/advance",
+          {"fromStationId": one, "toStationId": two, "quantity": 2})
+    a.req("POST", f"/cards/{card['_id']}/advance",
+          {"fromStationId": one, "toStationId": two, "quantity": 2})
+    return one, two
+
+
+def test_a_trend_window_narrows_the_numbers_and_carries_the_window_before(actor):
+    """Asking for a window returns that window's metrics plus `previous` — the
+    same metrics over the window immediately before, which is the only
+    comparison that says "better or worse" without inventing a target."""
+    a = actor()
+    from tests.helpers import bootstrap_admin
+    bootstrap_admin(a)
+    one, _two = _mini_line(a)
+
+    plain = {r["stationId"]: r for r in a.req("GET", "/sessions/stats").json()}
+    assert "window" not in plain[one], "the untrended shape must not change"
+
+    trended = {r["stationId"]: r for r in a.req("GET", "/sessions/stats?window=1h").json()}
+    row = trended[one]
+    assert row["window"] == "1h"
+    assert "previous" in row
+    # Work done seconds ago is inside the past hour, so the windowed numbers
+    # match the all-time ones on a line this young.
+    assert row["cycleTimeSec"] == plain[one]["cycleTimeSec"]
+    # Nothing happened in the hour before that, so there is nothing to compare
+    # against — and the API says so rather than inventing a zero.
+    assert row["previous"] is None or row["previous"]["totalUnits"] == 0
+
+    for w in ("1d", "1w", "1m"):
+        assert a.req("GET", f"/sessions/stats?window={w}").status_code == 200
+    bad = a.req("GET", "/sessions/stats?window=1y")
+    assert bad.status_code == 400 and "window must be one of" in bad.text

@@ -86,6 +86,20 @@ export const METRICS: Record<string, MetricDef> = {
     read: 'Useful when several products share the same stations: it shows '
         + 'which line is actually occupying the floor.',
   },
+  trend: {
+    title: 'Trend window',
+    what: 'Compares this window against the one immediately before it — the '
+        + 'past hour against the hour before, the past week against the week '
+        + 'before.',
+    how: 'It also narrows the numbers themselves to that window, so "past day" '
+        + 'means today\u2019s cycle time, not the all-time average.',
+    read: 'The arrow judges only where better is unambiguous: down is green on '
+        + 'cycle and line cycle time because faster is faster. OEE\u2019s arrow '
+        + 'stays neutral — a rising OEE can be a station working more, or a '
+        + 'bottleneck queueing work in front of it. A move under 5% reads as '
+        + 'sideways, so noise does not flip it every refresh.',
+    section: 'statistics',
+  },
   cycleTable: {
     title: 'Cycle time, line cycle time & OEE',
     what: 'The timing table. Each row is a station; the gap between cycle time '

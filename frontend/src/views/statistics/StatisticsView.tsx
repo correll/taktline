@@ -431,12 +431,13 @@ function CycleOeeTable({
             const starved = st?.lineCycleTimeSec != null && st?.cycleTimeSec != null
               && st.cycleTimeSec > 0 && st.lineCycleTimeSec > st.cycleTimeSec * 1.5
             const workMin = st ? `${(st.totalWorkingSec / 60).toFixed(0)} min` : '—'
-            const oeeColor = st?.isWarehouse ? color.textDim
-              : st?.oee != null
-              ? st.oee >= 0.8 ? color.statusRunning
-              : st.oee >= 0.5 ? color.statusWarning
-              : color.statusFault
-              : color.textDim
+            // OEE is never tinted good or bad, because it is neither. A high
+            // OEE usually means a bottleneck with work queueing in front of
+            // it; a low one means the station is starved from upstream. Only
+            // the constraint's OEE is worth raising, and a colour cannot know
+            // which station that is — so it reads as plain ink and the
+            // tooltip carries the judgement.
+            const oeeColor = st?.oee != null ? color.textPrimary : color.textDim
 
             return (
               <tr key={s._id} style={{ borderBottom: `1px solid ${color.border}` }}>
@@ -451,14 +452,15 @@ function CycleOeeTable({
                   {cycle}
                   {/* Faster work is plainly better, so the arrow may judge. */}
                   {trendWindow && <Trend now={st?.cycleTimeSec} before={st?.previous?.cycleTimeSec}
-                                         lowerIsBetter />}
+                                         lowerIsBetter windowLabel={TREND_WINDOWS[trendWindow]} />}
                 </td>
                 <td style={{ ...colStyle, color: starved ? color.statusWarning : color.textSecondary }}
                     title={starved ? 'Pieces leave much slower than the work takes — waiting, not working'
                                    : undefined}>
                   {lineCycle}
                   {trendWindow && <Trend now={st?.lineCycleTimeSec}
-                                         before={st?.previous?.lineCycleTimeSec} lowerIsBetter />}
+                                         before={st?.previous?.lineCycleTimeSec} lowerIsBetter
+                                         windowLabel={TREND_WINDOWS[trendWindow]} />}
                 </td>
                 <td style={{ ...colStyle, color: oeeColor, fontWeight: st?.oee != null ? 700 : 400 }}>
                   {oee}
@@ -466,7 +468,8 @@ function CycleOeeTable({
                       more OR a bottleneck queueing work in front of it, so the
                       arrow states the direction and passes on the verdict. */}
                   {trendWindow && !st?.isWarehouse
-                    && <Trend now={st?.oee} before={st?.previous?.oee} unit="%" />}
+                    && <Trend now={st?.oee} before={st?.previous?.oee} unit="%"
+                              windowLabel={TREND_WINDOWS[trendWindow]} />}
                 </td>
               </tr>
             )

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { track } from '../../analytics'
+import { TermsGate } from '../../legal/TermsGate'
+import { TERMS_VERSION } from '../../legal/terms'
 import { authApi } from '../../api/auth.api'
 import { AuthCard, AuthFooter, Field, FormError, FormInfo, PrimaryButton, linkStyle } from './authUi'
 import { useAuthStore } from '../../store/auth.store'
@@ -22,6 +24,7 @@ export default function SignupView() {
   const stationCount = useStationsStore((s) => Object.keys(s.stations).length)
   const markAnon     = useAuthStore((s) => s.markAnon)
   const [adopt, setAdopt] = useState(true)
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [companyName, setCompanyName] = useState('')
   const [adoptedOnSubmit, setAdoptedOnSubmit] = useState(false)
   // This page lives outside the app shell, so the stations were never fetched —
@@ -33,11 +36,15 @@ export default function SignupView() {
     e.preventDefault()
     setError('')
     if (password.length < 10) { setError('Password must be at least 10 characters.'); return }
+    if (!acceptedTerms) { setError('Please read and accept the end-user agreement.'); return }
     setBusy(true)
     try {
       const keep = hasSandbox && adopt
-      const res = await authApi.signup(email, password, name || undefined,
-        keep ? { adoptSandbox: true, companyName: companyName.trim() || undefined } : undefined)
+      const res = await authApi.signup(email, password, name || undefined, {
+        ...(keep ? { adoptSandbox: true, companyName: companyName.trim() || undefined } : {}),
+        // Recorded against the exact version this screen displayed.
+        acceptedTermsVersion: TERMS_VERSION,
+      })
       track('signup_completed', { adopted_sandbox: keep })
       // The sandbox account is gone once its line has been handed over, so the
       // cookie in this browser is dead — don't leave a stale session on screen.
@@ -109,8 +116,13 @@ export default function SignupView() {
             )}
           </div>
         )}
+        <div style={{ marginTop: size.sp4 }}>
+          <TermsGate accepted={acceptedTerms} onAccept={setAcceptedTerms} />
+        </div>
         <FormError>{error}</FormError>
-        <PrimaryButton type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create account'}</PrimaryButton>
+        <PrimaryButton type="submit" disabled={busy || !acceptedTerms}>
+          {busy ? 'Creating…' : 'Create account'}
+        </PrimaryButton>
       </form>
       <AuthFooter>Already have an account? <Link to="/login" style={linkStyle}>Sign in</Link></AuthFooter>
     </AuthCard>

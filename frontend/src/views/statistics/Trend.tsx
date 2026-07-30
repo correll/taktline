@@ -13,14 +13,32 @@ import { color, font } from '../../theme/tokens'
  *  A move under `deadband` reads as sideways. Without one, noise flips the
  *  arrow every refresh and it stops meaning anything.
  */
-export function Trend({ now, before, lowerIsBetter, unit = '', deadband = 0.05 }: {
+export function Trend({ now, before, lowerIsBetter, unit = '', deadband = 0.05, windowLabel }: {
   now: number | null | undefined
   before: number | null | undefined
   lowerIsBetter?: boolean
   unit?: string
   deadband?: number
+  /** e.g. "past day" — named so the "nothing to compare with" marker can say
+   *  which window came up empty. */
+  windowLabel?: string
 }) {
-  if (now == null || before == null || before === 0) return null
+  // A missing comparison is *said*, not left blank. Rendering nothing looked
+  // exactly like the feature being broken: you pick a window, the table does
+  // not visibly change, and there is no way to tell whether the line was
+  // steady or simply idle in the window before.
+  if (now == null || before == null || before === 0) {
+    if (now == null) return null           // nothing measured here at all
+    return (
+      <span
+        title={`No history from the ${windowLabel ? windowLabel.replace('past', 'previous') : 'previous window'} to compare with`}
+        style={{ marginLeft: 5, color: color.textDim, fontFamily: font.mono,
+                 fontSize: 11, cursor: 'help', opacity: 0.6 }}
+      >
+        ·
+      </span>
+    )
+  }
   const change = (now - before) / Math.abs(before)
   const flat = Math.abs(change) < deadband
   const up = change > 0

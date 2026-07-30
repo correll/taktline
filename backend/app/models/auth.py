@@ -23,6 +23,10 @@ class SignupBody(BaseModel):
     # the sandbox session cookie the browser already holds — no code to copy.
     adoptSandbox: bool = False
     companyName: Optional[str] = None   # rename the adopted company
+    # Which version of the end-user agreement the signup screen displayed and
+    # the person accepted. Recorded on the user so "they agreed" can later be
+    # answered with "to this text, on this date".
+    acceptedTermsVersion: Optional[str] = None
 
     _pw = field_validator("password")(_validate_password)
 

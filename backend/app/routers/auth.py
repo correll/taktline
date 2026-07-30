@@ -162,7 +162,9 @@ async def signup(request: Request, body: SignupBody, session: AsyncSession = Dep
     adopted = False
     if existing is None:
         user = User(email=email, passwordHash=hash_password(body.password),
-                    emailVerified=False, name=body.name)
+                    emailVerified=False, name=body.name,
+                    termsVersion=body.acceptedTermsVersion,
+                    termsAcceptedAt=utcnow() if body.acceptedTermsVersion else None)
         session.add(user)
         await session.flush()
         if body.adoptSandbox:

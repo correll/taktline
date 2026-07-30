@@ -5,6 +5,7 @@ import { track } from '../../analytics'
 import { authApi } from '../../api/auth.api'
 import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
+import { ContactForm } from './ContactForm'
 import { featuredTips } from '../../help/leanTips'
 import { useAuthStore } from '../../store/auth.store'
 import { useThemeStore } from '../../store/theme.store'
@@ -79,6 +80,7 @@ export default function LandingView() {
         <Questions />
         <FinalCta />
       </main>
+      <ContactForm />
       <Footer />
     </div>
   )
@@ -565,6 +567,7 @@ function Footer() {
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: size.sp5, fontSize: 13 }}>
           <Link to="/manual" style={{ color: color.textSecondary, textDecoration: 'none' }}>User manual</Link>
+          <Link to="/terms" style={{ color: color.textSecondary, textDecoration: 'none' }}>Terms</Link>
           <Link to="/login" style={{ color: color.textSecondary, textDecoration: 'none' }}>Sign in</Link>
           <Link to="/signup" style={{ color: color.blueBright, textDecoration: 'none' }}
                 onClick={() => track('cta_click', { cta: 'signup', where: 'footer-nav' })}>Create account</Link>

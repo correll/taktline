@@ -48,7 +48,8 @@ export interface MessageResponse {
 
 export const authApi = {
   signup: (email: string, password: string, name?: string,
-           opts?: { adoptSandbox?: boolean; companyName?: string }): Promise<MessageResponse> =>
+           opts?: { adoptSandbox?: boolean; companyName?: string
+                    acceptedTermsVersion?: string }): Promise<MessageResponse> =>
     client.post('/auth/signup', { email, password, name, ...opts }),
   verifyEmail: (token: string): Promise<MessageResponse> =>
     client.post('/auth/verify-email', { token }),

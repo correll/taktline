@@ -90,6 +90,13 @@ class User(Base):
     # platform owner (PLATFORM_OWNER_EMAILS). NULL for everyone else. Owners
     # are defined by the env allowlist, never by a DB value — no API can mint one.
     platformRole: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Which version of the end-user agreement this person accepted, and when.
+    # Versioned rather than a boolean: when the terms change, existing users
+    # must be asked again, and "they agreed" has to mean "they agreed to THIS",
+    # which a bare flag cannot answer months later.
+    termsVersion: Mapped[str | None] = mapped_column(String, nullable=True)
+    termsAcceptedAt: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
     # Anonymous try-it accounts from the landing page. Permanently restricted:
     # no floor-plan uploads, invitations, API keys, orders, or extra companies.
     isSandbox: Mapped[bool] = mapped_column(

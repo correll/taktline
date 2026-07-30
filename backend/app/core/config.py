@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
     smtp_from: str = "Taktline <no-reply@taktline.local>"
+    # Where the landing page's contact form delivers.
+    contact_email: str = "nikolaus.correll@gmail.com"
     smtp_starttls: bool = True
     # None = decide from the port: 465/2465 are implicit TLS, everything else
     # upgrades with STARTTLS. Set explicitly only for a non-standard listener.

@@ -37,6 +37,7 @@ const ResetPasswordView  = lazyView(() => import('./views/auth/ResetPasswordView
 const AcceptInviteView   = lazyView(() => import('./views/auth/AcceptInviteView'))
 const CreateCompanyView  = lazyView(() => import('./views/company/CreateCompanyView'))
 const LandingView        = lazyView(() => import('./views/landing/LandingView'))
+const TermsView  = lazyView(() => import('./views/landing/TermsView'))
 const ManualView         = lazyView(() => import('./views/landing/ManualView'))
 
 /** Publish the *visual* viewport height as --tk-vvh.
@@ -67,6 +68,7 @@ export default function App() {
           <Routes>
             <Route path="/"                element={<RootGate />} />
             <Route path="/manual"          element={<ManualView />} />
+              <Route path="/terms"    element={<TermsView />} />
             <Route path="/login"           element={<LoginView />} />
             <Route path="/signup"          element={<SignupView />} />
             <Route path="/verify-email"    element={<VerifyEmailView />} />

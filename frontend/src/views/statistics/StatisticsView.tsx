@@ -3,6 +3,8 @@ import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } 
 import { statsApi } from '../../api/cards.api'
 import { sessionsApi, TREND_WINDOWS, type SessionStats, type TrendWindow } from '../../api/sessions.api'
 import { Trend } from './Trend'
+import { client } from '../../api/client'
+import { useRole } from '../../auth/useRole'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { STATUS_CSS } from '../../components/map/mapColors'
 import type { MachineStatus } from '../../models'
@@ -135,6 +137,7 @@ export default function StatisticsView() {
             </button>
           ))}
         </span>
+        <StatsFileMenu window={trendWindow} onWiped={fetchOverview} />
         <button
           onClick={fetchOverview}
           style={{
@@ -520,6 +523,157 @@ function SparklineChart({ data, labels }: { data: number[]; labels: string[] }) 
           )
         })}
       </svg>
+    </div>
+  )
+}
+
+
+/** Take the statistics away as a spreadsheet, or clear them and start again.
+ *
+ *  Behind the same file icon the floor plan uses for the line document — the
+ *  two are the same gesture ("this page, as a file") and should not look like
+ *  different features.
+ */
+function StatsFileMenu({ window: trendWindow, onWiped }: {
+  window: TrendWindow | null
+  onWiped: () => void
+}) {
+  const { isSuperAdmin } = useRole()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const doExport = async () => {
+    setBusy('export')
+    try {
+      const blob = await client.get('/reports/export.xlsx', {
+        responseType: 'blob',
+        params: trendWindow ? { window: trendWindow } : undefined,
+      }) as unknown as Blob
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `taktline-statistics-${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      setOpen(false)
+    } catch (e) { setNote(String(e)) } finally { setBusy(null) }
+  }
+
+  const doWipe = async () => {
+    setBusy('wipe')
+    try {
+      const r = await client.post('/admin/reset-statistics', {}) as
+        { workSessionsDeleted: number; cardEventsDeleted: number }
+      setNote(`Cleared ${r.workSessionsDeleted} work session${r.workSessionsDeleted === 1 ? '' : 's'}`
+              + ` and ${r.cardEventsDeleted} lot event${r.cardEventsDeleted === 1 ? '' : 's'}.`)
+      setConfirming(false)
+      setOpen(false)
+      onWiped()
+    } catch (e) { setNote(String(e)) } finally { setBusy(null) }
+  }
+
+  const item: React.CSSProperties = {
+    display: 'block', width: '100%', textAlign: 'left', background: 'transparent',
+    border: 'none', color: color.textPrimary, padding: '7px 10px', fontSize: 12.5,
+    cursor: 'pointer', borderRadius: 4, fontFamily: font.sans,
+  }
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex' }}>
+      {open && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setOpen(false)} />
+          <div style={{
+            position: 'absolute', top: 34, right: 0, zIndex: 61, width: 250,
+            background: color.bgPanel, border: `1px solid ${color.border}`,
+            borderRadius: size.radiusMd, boxShadow: shadow.lg, padding: 5,
+          }}>
+            <button style={item} disabled={busy !== null} onClick={doExport}>
+              ⬇ {busy === 'export' ? 'Building…' : 'Export spreadsheet (.xlsx)'}
+              <div style={{ fontSize: 11, color: color.textDim, marginTop: 2, lineHeight: 1.45 }}>
+                Stations, sessions, lot history, lots and orders — one sheet each.
+                {trendWindow && ` Stations cover the ${TREND_WINDOWS[trendWindow]}.`}
+              </div>
+            </button>
+            {isSuperAdmin && (
+              <button style={{ ...item, color: color.statusFault }}
+                      onClick={() => setConfirming(true)}>
+                ⌫ Clear all statistics
+                <div style={{ fontSize: 11, color: color.textDim, marginTop: 2, lineHeight: 1.45 }}>
+                  Deletes the measured history. The line and its lots stay.
+                </div>
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {confirming && (
+        <div onClick={(e) => { if (e.target === e.currentTarget) setConfirming(false) }}
+             style={{ position: 'fixed', inset: 0, zIndex: 1000, background: color.backdrop,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: color.bgPanel, border: `1px solid ${color.border}`,
+                        borderRadius: size.radiusMd, padding: size.sp6, width: 420,
+                        boxShadow: shadow.lg, display: 'flex', flexDirection: 'column',
+                        gap: size.sp4 }}>
+            <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>
+              Clear all statistics?
+            </div>
+            <div style={{ fontSize: 12.5, color: color.textSecondary, lineHeight: 1.6 }}>
+              This deletes every <b>work session</b> and every <b>lot movement</b> ever
+              recorded — so cycle time, line cycle time, OEE and each lot’s history start
+              from nothing. It cannot be undone.
+              <br /><br />
+              Your stations, routes, products, the lots on the floor and your production
+              orders are <b>not</b> touched. Export first if you want to keep the numbers.
+            </div>
+            <div style={{ display: 'flex', gap: size.sp2, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirming(false)}
+                      style={{ padding: '6px 14px', background: 'transparent',
+                               border: `1px solid ${color.border}`, borderRadius: size.radius,
+                               color: color.textSecondary, cursor: 'pointer', fontSize: 12 }}>
+                Cancel
+              </button>
+              <button onClick={doWipe} disabled={busy === 'wipe'}
+                      style={{ padding: '6px 14px', background: color.statusFault,
+                               border: 'none', borderRadius: size.radius, color: '#fff',
+                               cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                {busy === 'wipe' ? 'Clearing…' : 'Clear statistics'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={() => { setNote(null); setOpen((v) => !v) }}
+        title="Export or clear the statistics"
+        style={{
+          width: 26, height: 24, background: 'none',
+          border: `1px solid ${color.border}`, borderRadius: size.radius,
+          color: color.textSecondary, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        {/* The same document mark the floor plan uses for its line file. */}
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+      </button>
+
+      {note && (
+        <span style={{ position: 'absolute', top: 30, right: 0, whiteSpace: 'nowrap',
+                       fontSize: 11, color: color.textSecondary, background: color.bgPanel,
+                       border: `1px solid ${color.border}`, borderRadius: size.radius,
+                       padding: '4px 8px', zIndex: 61 }}
+              onClick={() => setNote(null)}>
+          {note}
+        </span>
+      )}
     </div>
   )
 }

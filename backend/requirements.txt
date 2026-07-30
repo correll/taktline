@@ -11,3 +11,4 @@ argon2-cffi>=23.1.0
 slowapi>=0.1.9
 email-validator>=2.1.0
 aiosmtplib>=3.0.0
+openpyxl>=3.1

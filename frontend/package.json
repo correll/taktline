@@ -10,7 +10,9 @@
     "lint": "eslint src/ --ext .ts,.tsx",
     "ios": "npm run build && npx cap sync ios && npx cap open ios",
     "ios:sync": "npm run build && npx cap sync ios",
-    "ios:open": "npx cap open ios"
+    "ios:open": "npx cap open ios",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@capacitor/core": "^8.4.2",
@@ -46,6 +48,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "eslint": "^8.57.0",
     "typescript": "^5.4.5",
-    "vite": "^5.3.1"
+    "vite": "^5.3.1",
+    "vitest": "^2.1.9"
   }
 }

@@ -278,6 +278,57 @@ Two invariants every client must hold: **walk all pages** (page one alone silent
 
 - **Boundaries**: the ERP owns the BoM + inventory; Taktline owns the flow graph + execution. Keep them joined only through the product→template mapping (in the connector), not by auto-generating the graph from the BoM.
 
+## What the tests are for
+
+The suite is 331 backend tests plus a frontend one, and it is organised around
+the ways this codebase has actually been wrong rather than around its modules.
+Five of these files were written after auditing where the bugs came from, and
+each of them found one on its first run:
+
+- **`test_fuzz_line.py` carries a material ledger.** After every operation it
+  checks the delta against the three shapes a step is allowed to have — a 1:1
+  transfer, a forward fan (a split minting `n × weight` down every branch), or
+  a backward fan (the mirror). Anything else is material from nowhere. It used
+  to assert conservation only between two non-fan stations, which is the one
+  case that has never been wrong. **Measure the coverage, not just the pass:**
+  the walk crossed a fan once in 220 random steps and never at all on the
+  battery line, so it now aims at fans deliberately and asserts it got there.
+- **`test_inverses.py`** does a thing and undoes it — split/un-split,
+  advance/merge/unmerge — exactly on a purpose-built line and by product across
+  every shipped example. The two halves are written by different code and read
+  the weights for opposite reasons, which is how they came to disagree.
+- **`test_concurrency.py`** fires genuinely parallel requests (threads, so
+  separate event loops and separate transactions). The code is full of
+  `with_for_update` and nothing exercised any of it. A race usually returns two
+  200s and corrupts the floor, so the assertions are about the *outcome* being
+  one of the legal serial ones.
+- **`test_tenancy_sweep.py`** and **`test_authz_matrix.py`** enumerate the
+  app's own routing table, so an endpoint added next month is covered the day
+  it lands. The tenancy property is **indistinguishability**, not a status
+  code: several endpoints answer 2xx for another company's id and are perfectly
+  safe doing it, and what must never happen is a *different* answer for a real
+  foreign id than for one that exists nowhere. The authz expectations are
+  **derived from each route's declared dependency**, so the only way to be
+  wrong is to declare the wrong thing.
+- **`test_graph_reads.py`** keeps an inventory, with a reason per entry, of who
+  may read the route table without the boundary-filtered helpers. Four bugs
+  have had one shape — a graph question that counted an edge touching an
+  integration node — and the rule lived only in people's heads.
+- **`test_migrations.py`** runs the migrations on a scratch database. The suite
+  builds its schema from the ORM metadata, which is the one path production
+  never takes, so nothing had ever executed a `downgrade`.
+- **`contracts/station-roles.json`** is the backend's own view of the shipped
+  lines, checked in where the frontend's `graph.test.ts` reads it. The frontend
+  re-derives graph judgements the backend owns — it must, to draw labels
+  without asking about every station — and the two have drifted three times.
+  Neither side can move alone now.
+
+Two habits worth keeping. **Guard the guard:** a glob that matches nothing, a
+sweep whose substitution silently skipped every route, a ledger that only ever
+saw the easy shape — each turns a green suite into a decorative one, so each of
+these files asserts its own coverage. And **a test that passes before the fix
+is worth nothing**: check it fails first.
+
 ## Commit before the response (SESSION_SCOPE)
 
 Every `Depends(get_session)` carries `**SESSION_SCOPE` (`scope="function"`). FastAPI closes *request*-scoped dependency stacks only **after** the response has been sent, so a commit living there races the client's next request — a tablet 404s the card whose creation it just saw succeed, or a fresh login 401s on its first authenticated call (reproduced ~2 times per 120 writes on a keep-alive connection). Function scope closes the stack **before** the response bytes leave the server: commit first, respond second. The first declaration FastAPI solves decides which stack the shared session lands in, so one stray unscoped `Depends(get_session)` reintroduces the race — `tests/test_reman_line.py::test_every_session_dependency_commits_before_the_response` walks the app and fails on any.

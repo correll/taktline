@@ -1,0 +1,39 @@
+{
+  "battery-remanufacturing": {
+    "Busbar Clean": true,
+    "Cleaning solution": false,
+    "Intake": false,
+    "Module Test": false,
+    "Odoo": false,
+    "QA": false,
+    "Reassembly": true,
+    "ShipStation": false,
+    "Spare Modules": false,
+    "Teardown": false
+  },
+  "cut-and-sew-sweatshirts": {
+    "Fleece rolls": false,
+    "Front & back": false,
+    "Hood panels": false,
+    "Offcuts": false,
+    "Print & pack": false,
+    "Ribbing": false,
+    "Seam & hem": false,
+    "Sewing line": true,
+    "Shopify": false,
+    "Sleeves": false,
+    "Spread & cut": false
+  },
+  "window-fabrication": {
+    "Cut & mitre": false,
+    "Cut-offs": false,
+    "Glass store": false,
+    "Glazing": true,
+    "Hardware": false,
+    "NetSuite": false,
+    "QC & load": false,
+    "Sealed units": false,
+    "Weld & clean": false,
+    "uPVC profile": false
+  }
+}

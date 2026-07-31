@@ -244,13 +244,33 @@ async def list_routes(ctx: CompanyContext = Depends(get_active_company),
     return [_to_route(r) for r in rows]
 
 
+def _not_a_boundary_link(stmt, company_id):
+    """Drop every edge that touches a bound integration station.
+
+    Degree is the question these counters answer, and an edge to a partner is
+    not material flow — it is where the line meets somebody else's system. The
+    engine has excluded them from degree since the day `/advance` walked
+    finished goods onto a ShipStation node, but these two counters never got
+    the memo, so the *editor* and the *engine* disagreed about what a merge is:
+    a station with one real feed plus an Odoo demand link counted as two feeds
+    here, which made a weight legal on that single feed. The map then drew a
+    ×3 badge on a route that `merge.py` — counting the same station's degree as
+    one — would never consume three of. A weight nothing honours is worse than
+    a refused one: the line reads as configured, and it is not.
+    """
+    partners = select(StationRow.id).where(
+        StationRow.companyId == company_id,
+        StationRow.integrationProvider.isnot(None))
+    return stmt.where(RouteRow.load.notin_(partners), RouteRow.unload.notin_(partners))
+
+
 async def _other_incoming_count(session, company_id, unload_uuid, exclude_id=None,
                                 process_id=None) -> int:
     """How many routes (other than exclude_id) feed this station within the
     same process — a sibling process's feed into a shared station is a
     different value stream, not a merge partner."""
-    stmt = select(func.count()).select_from(RouteRow).where(
-        RouteRow.companyId == company_id, RouteRow.unload == unload_uuid)
+    stmt = _not_a_boundary_link(select(func.count()).select_from(RouteRow).where(
+        RouteRow.companyId == company_id, RouteRow.unload == unload_uuid), company_id)
     if exclude_id is not None:
         stmt = stmt.where(RouteRow.id != exclude_id)
     if process_id is not None:
@@ -263,8 +283,8 @@ async def _other_outgoing_count(session, company_id, load_uuid, exclude_id=None,
     """How many routes (other than exclude_id) leave this station within the
     same process — alternative routings live in their own process, so they are
     not siblings of a split."""
-    stmt = select(func.count()).select_from(RouteRow).where(
-        RouteRow.companyId == company_id, RouteRow.load == load_uuid)
+    stmt = _not_a_boundary_link(select(func.count()).select_from(RouteRow).where(
+        RouteRow.companyId == company_id, RouteRow.load == load_uuid), company_id)
     if exclude_id is not None:
         stmt = stmt.where(RouteRow.id != exclude_id)
     if process_id is not None:

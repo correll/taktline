@@ -48,9 +48,32 @@ def _naive(dt):
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _append(ws, row):
+    """Append a row, pinning every string cell to TEXT.
+
+    openpyxl types a string beginning with `=` as a **formula**, and most of
+    what lands in these cells is written by someone else: lot codes come from
+    the ERP's reference, station and product names from whoever set the line
+    up, and order attributes straight off a connector or a CSV. A lot code of
+    `=HYPERLINK("http://…","Invoice")` — or the DDE form, `=cmd|' /C …'!A0` —
+    would be exported as live content that evaluates when the customer opens
+    the file on their own machine. That is spreadsheet formula injection, and
+    the export is the perfect carrier: it is *meant* to be opened.
+
+    Pinning the cell type keeps the text exactly as typed (the reader still
+    sees `=1+1`) while making it inert. Numbers, dates and percentages keep
+    their own types, so the workbook stays pivotable — the whole reason it is
+    xlsx and not CSV.
+    """
+    ws.append(row)
+    for c in ws[ws.max_row]:
+        if c.data_type == "f":
+            c.data_type = "s"
+
+
 def _sheet(wb, title: str, headers: list, widths: list):
     ws = wb.create_sheet(title)
-    ws.append(headers)
+    _append(ws, headers)
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = w
     return ws
@@ -112,14 +135,14 @@ async def export_workbook(window: Optional[str] = None,
         ["Durations are in seconds. Cycle time and line cycle time are per piece."],
         ["OEE is a fraction of open work time, formatted as a percentage."],
     ]:
-        ws.append(row)
+        _append(ws, row)
     ws["A1"].font = Font(bold=True, size=14)
     ws.column_dimensions["A"].width = 30
     ws.column_dimensions["B"].width = 26
 
     # ── 2. Stations — the timing table as shown ─────────────────────────────
     ws = wb.create_sheet("Stations")
-    ws.append(["Station", "Process(es)", "Storage", "Sessions", "Units",
+    _append(ws, ["Station", "Process(es)", "Storage", "Sessions", "Units",
                "Working time (s)", "Cycle time (s/piece)",
                "Line cycle time (s/piece)", "OEE"])
     proc_of_station: dict = {}
@@ -129,7 +152,7 @@ async def export_workbook(window: Optional[str] = None,
                 processes[str(t.processId)].name if str(t.processId) in processes else "")
     for sid, st in sorted(stations.items(), key=lambda kv: kv[1].name):
         m = metrics.get(sid, {})
-        ws.append([
+        _append(ws, [
             st.name,
             ", ".join(sorted(p for p in proc_of_station.get(sid, set()) if p)),
             "yes" if st.isStorage else "",
@@ -147,7 +170,7 @@ async def export_workbook(window: Optional[str] = None,
 
     # ── 3. Work sessions — what the timers recorded ─────────────────────────
     ws = wb.create_sheet("Work sessions")
-    ws.append(["Started (UTC)", "Ended (UTC)", "Station", "Operator", "Units",
+    _append(ws, ["Started (UTC)", "Ended (UTC)", "Station", "Operator", "Units",
                "Duration (s)", "Seconds per piece", "Lot code", "Product"])
     rows = (await session.execute(
         select(SessionRow).where(SessionRow.companyId == ctx.company_id)
@@ -157,7 +180,7 @@ async def export_workbook(window: Optional[str] = None,
         card = cards.get(str(r.cardId)) if r.cardId else None
         tmpl = templates.get(str(card.lotTemplateId)) if card else None
         st = stations.get(str(r.stationId))
-        ws.append([
+        _append(ws, [
             _naive(r.startedAt), _naive(r.endedAt), st.name if st else "",
             r.operatorId, r.quantity, round(r.durationSec, 1) if r.durationSec else None,
             round(r.durationSec / r.quantity, 2) if r.durationSec and r.quantity else None,
@@ -167,7 +190,7 @@ async def export_workbook(window: Optional[str] = None,
 
     # ── 4. Lot history — every movement, the audit trail ────────────────────
     ws = wb.create_sheet("Lot history")
-    ws.append(["When (UTC)", "Event", "Lot code", "Product", "From", "To",
+    _append(ws, ["When (UTC)", "Event", "Lot code", "Product", "From", "To",
                "Units", "Note", "Lot id"])
     events = (await session.execute(
         select(CardEventRow).where(CardEventRow.companyId == ctx.company_id)
@@ -177,7 +200,7 @@ async def export_workbook(window: Optional[str] = None,
         tmpl = templates.get(str(card.lotTemplateId)) if card else None
         frm = stations.get(e.fromStation) if e.fromStation else None
         to = stations.get(e.toStation) if e.toStation else None
-        ws.append([
+        _append(ws, [
             _naive(e.timestamp), e.type, card.lotNum if card else "",
             tmpl.name if tmpl else "", frm.name if frm else "", to.name if to else "",
             e.quantity, e.note, e.cardId,
@@ -186,7 +209,7 @@ async def export_workbook(window: Optional[str] = None,
 
     # ── 5. Lots on the floor now ────────────────────────────────────────────
     ws = wb.create_sheet("Lots now")
-    ws.append(["Lot code", "Product", "Process", "Station", "Units",
+    _append(ws, ["Lot code", "Product", "Process", "Station", "Units",
                "Status", "Flagged", "Created (UTC)", "Order"])
     orders = await named(OrderRow)
     for c in sorted(cards.values(), key=lambda c: c.createdAt or now):
@@ -195,7 +218,7 @@ async def export_workbook(window: Optional[str] = None,
         order = orders.get(str(c.orderId)) if c.orderId else None
         for station_id, bin_ in (c.bins or {}).items():
             st = stations.get(station_id)
-            ws.append([
+            _append(ws, [
                 c.lotNum, tmpl.name if tmpl else "", proc.name if proc else "",
                 st.name if st else station_id, bin_.get("count"), c.status,
                 "yes" if c.flagged else "", _naive(c.createdAt),
@@ -205,11 +228,11 @@ async def export_workbook(window: Optional[str] = None,
 
     # ── 6. Production orders ────────────────────────────────────────────────
     ws = wb.create_sheet("Orders")
-    ws.append(["Reference", "Source", "Product", "Ordered", "Done", "Status",
+    _append(ws, ["Reference", "Source", "Product", "Ordered", "Done", "Status",
                "Released (UTC)", "Completed (UTC)"])
     for o in sorted(orders.values(), key=lambda o: o.createdAt or now):
         tmpl = templates.get(str(o.productTemplateId)) if o.productTemplateId else None
-        ws.append([o.externalRef, o.source, tmpl.name if tmpl else "",
+        _append(ws, [o.externalRef, o.source, tmpl.name if tmpl else "",
                    o.quantity, o.quantityDone, o.status,
                    _naive(o.createdAt), _naive(getattr(o, "completedAt", None))])
     finish(ws, [18, 14, 22, 10, 8, 12, 21, 21])

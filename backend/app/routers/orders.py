@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
@@ -89,8 +90,30 @@ async def _release_order(session, company_id, body: OrderCreate) -> tuple[OrderR
         quantityDone=0, status="pending", note=body.note,
         attributes=body.attributes or {},
     )
-    session.add(order)
-    await session.flush()
+    # The look-up above is not the guarantee — it is the fast path. Two
+    # deliveries of the same webhook arriving together both find nothing, both
+    # insert, and the unique index rejects one of them. That is the index doing
+    # its job, but it surfaced as a 500 out of an endpoint whose contract is
+    # "idempotent on (source, externalRef)", and a connector reading a 500 has
+    # every reason to believe the release failed. A savepoint turns the loser
+    # of that race into what it actually is: a re-post of an order that exists.
+    try:
+        async with session.begin_nested():
+            session.add(order)
+            await session.flush()
+    except IntegrityError:
+        if not body.externalRef:
+            raise
+        existing = (await session.execute(
+            select(OrderRow).where(
+                OrderRow.companyId == company_id,
+                OrderRow.source == body.source,
+                OrderRow.externalRef == body.externalRef,
+            )
+        )).scalars().first()
+        if existing is None:
+            raise
+        return existing, False
 
     # The lot code comes from the ERP order: an explicit lotCode if the connector
     # sent one, else the externalRef, so every released Kanban card traces back to

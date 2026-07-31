@@ -647,6 +647,22 @@ async def _unsplit_back(session, company_id, row: CardRow, from_id: str, to_id: 
     if mine is None:
         return None                       # not coming back down one of the branches
 
+    # This lot has to actually be carrying the pieces it claims to bring back.
+    # The ordinary move path checks that for itself, so before this branch
+    # existed nobody could move units they did not have — but an un-split takes
+    # its own path, and `_take_units` clamps at zero rather than complaining.
+    # A drag from a station where the lot held nothing therefore consumed the
+    # *siblings'* twins and minted a re-formed source unit while the dragged
+    # card sat untouched: material transmuted out of somebody else's lot by a
+    # gesture that moved nothing. Found by the fuzzer's ledger on two different
+    # lines, from opposite ends of the graph.
+    have = (row.bins or {}).get(from_id, {}).get("count", 0)
+    if have < quantity:
+        station = await session.get(StationRow, from_uuid)
+        raise HTTPException(400,
+            f"This lot has {have} at {station.name if station else 'that station'}, "
+            f"not {quantity}. Move back what is actually there.")
+
     weight = max(1, mine.quantity or 1)
     if quantity % weight != 0:
         raise HTTPException(400,
@@ -721,8 +737,21 @@ async def _unsplit_back(session, company_id, row: CardRow, from_id: str, to_id: 
 
 
 def _take_units(card: CardRow, station_id: str, n: int) -> None:
+    """Remove `n` units from a bin. Refuses to take more than is there.
+
+    It used to clamp — `left = have - n`, and anything ≤ 0 dropped the bin —
+    which quietly turned "take 3 from a bin holding 1" into "take 1" and let a
+    caller believe it had collected units that never existed. Every caller here
+    is careful, but the failure that costs is the one where a *future* caller
+    is not, and the symptom (material appearing elsewhere) shows up nowhere
+    near the cause.
+    """
     bins = dict(card.bins or {})
-    left = bins.get(station_id, {}).get("count", 0) - n
+    have = bins.get(station_id, {}).get("count", 0)
+    if n > have:
+        raise HTTPException(409,
+            "Those units are no longer there — someone moved them. Try again.")
+    left = have - n
     if left <= 0:
         bins.pop(station_id, None)
     else:

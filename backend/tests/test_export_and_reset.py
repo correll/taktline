@@ -191,3 +191,74 @@ def test_detail_honours_the_window_and_refuses_a_stranger(actor):
 
     other = actor(); bootstrap_admin(other)
     assert other.req("GET", f"/sessions/stats/{one}/detail").status_code == 404
+
+
+# ── Formula injection ───────────────────────────────────────────────────────
+# openpyxl writes a string starting with `=` as a FORMULA. Almost every string
+# in this workbook was typed by someone else — the ERP picks the lot code, the
+# customer names the stations and products, a connector or a CSV supplies order
+# attributes. Exporting them as live content means the attack runs on the
+# machine of whoever opens the file, which is the one person the export exists
+# to serve. These pin the behaviour at the two places it could regress: the
+# cell type, and the text itself.
+
+HOSTILE = [
+    '=1+1',                                  # the simplest proof it evaluates
+    '=HYPERLINK("http://evil.example","Invoice")',   # exfiltration on click
+    "=cmd|' /C calc'!A0",                    # the classic DDE payload
+    '@SUM(A1)', '+1+1', '-1+2',              # the other three CSV-injection sigils
+]
+
+
+def _hostile_line(a: Actor):
+    """A line whose every user-controlled string is an attack."""
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()["_id"]
+    one, two = st(HOSTILE[0]), st(HOSTILE[1])
+    proc = a.req("POST", "/processes/", {"name": HOSTILE[2]}).json()["_id"]
+    a.req("POST", "/routes/", {"processId": proc, "load": one, "unload": two, "quantity": 1})
+    tmpl = a.req("POST", "/lot-templates/", {"name": HOSTILE[3], "processId": proc,
+                                             "startStationId": one}).json()["_id"]
+    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl, "processId": proc,
+                                     "lotNum": HOSTILE[4], "totalQuantity": 2,
+                                     "bins": {one: {"count": 2}}}).json()
+    s = a.req("POST", "/sessions/", {"stationId": one, "cardId": card["_id"],
+                                     "operatorId": HOSTILE[5], "quantity": 2})
+    a.req("POST", f"/sessions/{s.json()['_id']}/end", {"quantity": 2})
+    a.req("POST", f"/cards/{card['_id']}/advance",
+          {"fromStationId": one, "toStationId": two, "quantity": 2})
+    return card
+
+
+def test_no_cell_in_the_workbook_is_a_formula(actor):
+    a = actor(); bootstrap_admin(a)
+    _hostile_line(a)
+    wb = _workbook(a)
+    live = [(ws.title, c.coordinate, c.value)
+            for ws in wb.worksheets
+            for row in ws.iter_rows() for c in row
+            if c.data_type == "f"]
+    assert live == [], f"live formulas exported: {live[:5]}"
+
+
+def test_the_hostile_text_survives_verbatim(actor):
+    """Neutralising must not mean mangling: a station really called `=1+1`
+    still reads as `=1+1`. A fix that prefixed an apostrophe would pass the
+    test above and quietly corrupt every legitimate lot code."""
+    a = actor(); bootstrap_admin(a)
+    _hostile_line(a)
+    wb = _workbook(a)
+    seen = {c.value for ws in wb.worksheets for row in ws.iter_rows()
+            for c in row if isinstance(c.value, str)}
+    for s in HOSTILE:
+        assert s in seen, f"{s!r} was altered or dropped on export"
+
+
+def test_typed_cells_are_still_typed(actor):
+    """The guard pins only strings. If it had pinned everything, timestamps
+    would arrive as text and the workbook would be a CSV with extra steps."""
+    a = actor(); bootstrap_admin(a)
+    _line(a)
+    ws = _workbook(a)["Work sessions"]
+    started, units, dur = ws["A2"], ws["E2"], ws["F2"]
+    assert started.is_date, f"start time exported as {started.data_type}"
+    assert isinstance(units.value, int) and isinstance(dur.value, (int, float))

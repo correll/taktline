@@ -88,6 +88,74 @@ def _assert_structural(a, integrations, log):
         assert c["totalQuantity"] >= 1
 
 
+def _by_station(a):
+    """Units standing on each station, all products together."""
+    out: dict = {}
+    for c in _cards(a):
+        for sid, b in c["bins"].items():
+            out[sid] = out.get(sid, 0) + b["count"]
+    return out
+
+
+def _delta(before, after):
+    keys = set(before) | set(after)
+    return {k: after.get(k, 0) - before.get(k, 0)
+            for k in keys if after.get(k, 0) != before.get(k, 0)}
+
+
+def _fan_maps(a, integrations):
+    """Every fan in the line as `{target: weight}`, one map per (process,
+    station). Read from the DECLARATION — the route rows — never re-derived,
+    so the ledger below checks the arithmetic without re-implementing the
+    decision of which arithmetic applies."""
+    per: dict = {}
+    for r in a.req("GET", "/routes/").json():
+        if r["load"] in integrations or r["unload"] in integrations:
+            continue
+        per.setdefault((r["processId"], r["load"]), {})[r["unload"]] = r["quantity"]
+    out: dict = {}
+    for (_proc, load), targets in per.items():
+        if len(targets) >= 2:
+            out.setdefault(load, []).append(targets)
+    return out
+
+
+def _explains(delta, frm, to, fans):
+    """Is this the delta of a LEGAL step?
+
+    A move of material may take exactly three shapes, and the domain admits no
+    fourth:
+
+      1. a 1:1 transfer — n leaves one station and the same n arrives at another
+         (a plain move, and every step out of a *choice* station);
+      2. a forward fan — a split consumes n and mints n × weight down each of
+         its branches, all of them, in one gesture;
+      3. a backward fan — the mirror, where pieces returning to a split re-form
+         n source units and the twins on every sibling branch are consumed in
+         the ratio the weights describe.
+
+    Anything else is material appearing from nowhere or vanishing without being
+    consumed. The old check only looked at moves between two non-fan stations,
+    which is precisely the case least likely to be wrong; every interesting bug
+    this line has had lived in shapes 2 and 3.
+    """
+    if not delta:
+        return "still"                    # a zero-unit step changes nothing
+    if (len(delta) == 2 and delta.get(frm, 0) < 0
+            and delta.get(to, 0) == -delta.get(frm, 0)):
+        return "transfer"
+    for branches in fans.get(frm, []):    # forward fan out of `frm`
+        n = -delta.get(frm, 0)
+        if n > 0 and delta == {frm: -n, **{t: n * w for t, w in branches.items()}}:
+            return "split"
+    for split, maps in fans.items():      # backward fan onto any split
+        for branches in maps:
+            n = delta.get(split, 0)
+            if n > 0 and delta == {split: n, **{t: -n * w for t, w in branches.items()}}:
+                return "unsplit"
+    return None
+
+
 def _shape(a, integrations):
     """What this particular line offers to abuse — derived, never named. The
     walk has to work on any of the three, and a body that hardcodes "Busbar
@@ -115,27 +183,70 @@ def test_random_abuse_never_breaks_the_line(actor, seed, example):
     a = actor(); bootstrap_admin(a)
     st, tm, pr, integrations, fans = _import_line(a, example)
     merges, orderable, sink = _shape(a, integrations)
+    fan_maps = _fan_maps(a, integrations)
+    outs: dict = {}
+    for r in a.req("GET", "/routes/").json():
+        if r["load"] in integrations or r["unload"] in integrations:
+            continue
+        outs.setdefault((r["processId"], r["load"]), []).append(r["unload"])
     rng = random.Random(seed)
     stations = list(st.values())
     procs = list(pr.values())
     log: list = []
+    shapes: dict = {}
 
     def do(method, path, body):
         before = _snapshot(a)
-        totals_before = _totals(a)
+        units_before = _by_station(a)
+        before_card = [c for c in _cards(a) if c["_id"] == path.split("/")[2]] \
+            if path.startswith("/cards/") else []
         r = a.req(method, path, body)
         log.append((method, path, json.dumps(body, default=str)[:120], r.status_code))
         if r.status_code >= 400:
             assert _snapshot(a) == before, f"a {r.status_code} half-applied: {log[-1]}"
-        else:
-            _assert_structural(a, integrations, log)
-            # Conservation: a successful plain step between two non-fan
-            # stations must not change any product's total.
-            if (method == "POST" and ("/advance" in path or "/move" in path)
-                    and body.get("fromStationId") not in fans
-                    and body.get("toStationId") not in fans):
-                assert _totals(a) == totals_before, \
-                    f"a plain move changed material totals: {log[-1]}"
+            return r
+
+        _assert_structural(a, integrations, log)
+        delta = _delta(units_before, _by_station(a))
+
+        # ── The ledger: every operation must move material the way it says ──
+        if "/advance" in path or "/move" in path:
+            shape = _explains(delta, body["fromStationId"], body["toStationId"], fan_maps)
+            if not shape:
+                nm = {v: k for k, v in st.items()}
+                raise AssertionError(
+                    "ILLEGAL SHAPE\n"
+                    f"  op       : {method} {path} {body}\n"
+                    f"  from/to  : {nm.get(body['fromStationId'])} -> {nm.get(body['toStationId'])}\n"
+                    f"  delta    : { {nm.get(k, k): v for k, v in delta.items()} }\n"
+                    f"  fans     : { {nm.get(k): [{nm.get(t): w for t, w in m.items()} for m in v] for k, v in fan_maps.items()} }\n"
+                    f"  card was : {json.dumps(before_card)}\n"
+                    f"  card now : {json.dumps([c for c in _cards(a) if c['_id'] == path.split('/')[2]])}\n")
+            shapes[shape] = shapes.get(shape, 0) + 1
+
+        elif path.endswith("/handoff"):
+            # Goods leave the line. Nothing is minted on the way out, and
+            # nothing moves anywhere else.
+            q = -delta.get(body["fromStationId"], 0)
+            assert delta == ({body["fromStationId"]: -q} if q else {}), \
+                f"a handoff disturbed the floor: {delta} after {log[-1]}"
+
+        elif path.startswith("/merge/") and not path.endswith("/pull"):
+            # Precursors are consumed where they stand and the assembly is
+            # minted in their place: a merge touches its own station and no
+            # other, and always costs more units than it makes (a merge has
+            # two feeds or it is not a merge).
+            station = path.split("/")[2]
+            assert set(delta) <= {station}, \
+                f"a merge changed units away from its own station: {delta} after {log[-1]}"
+            assert delta.get(station, 0) < 0, \
+                f"a merge did not consume: {delta} after {log[-1]}"
+
+        elif path.endswith("/pull") or path == "/orders/":
+            # Demand seeds material; it may never remove any.
+            assert all(v > 0 for v in delta.values()), \
+                f"a pull/release destroyed material: {delta} after {log[-1]}"
+
         return r
 
     n_orders = 0
@@ -152,6 +263,40 @@ def test_random_abuse_never_breaks_the_line(actor, seed, example):
             do("POST", f"/merge/{rng.choice(stations)}/pull",
                {"quantity": rng.randint(1, 3),
                 **({"processId": rng.choice(procs)} if rng.random() < 0.5 else {})})
+        elif op < 0.34:                                  # work a fan on purpose
+            # Pure randomness almost never lands a legal step out of a split:
+            # measured over 220 steps it managed one, and none at all on the
+            # battery line. Left to chance the ledger below only ever sees 1:1
+            # transfers — the one shape that has never been wrong. So the walk
+            # aims at fans deliberately, in both directions.
+            on_fan = [(c, s) for c in cards for s in c["bins"] if s in fan_maps]
+            back = [(c, s, split) for c in cards for s in c["bins"]
+                    for split, maps in fan_maps.items()
+                    for m in maps if s in m]
+            if on_fan and rng.random() < 0.7:
+                c, s = rng.choice(on_fan)
+                target = rng.choice(list(rng.choice(fan_maps[s])))
+                do("POST", f"/cards/{c['_id']}/advance",
+                   {"fromStationId": s, "toStationId": target,
+                    "quantity": rng.choice([1, c["bins"][s]["count"]])})
+            elif back:
+                c, s, split = rng.choice(back)
+                do("POST", f"/cards/{c['_id']}/move",
+                   {"fromStationId": s, "toStationId": split,
+                    "quantity": rng.choice([1, c["bins"][s]["count"]])})
+
+        elif op < 0.44:                                  # follow a real route
+            # Material that only ever moves at random never reaches the
+            # interesting stations. This walks a lot one legal step downstream,
+            # which is how anything gets to a fan or a merge in the first place.
+            legal = [(c, s, t) for c in cards for s in c["bins"]
+                     for t in outs.get((c.get("processId"), s), ())]
+            if legal:
+                c, s, t = rng.choice(legal)
+                do("POST", f"/cards/{c['_id']}/advance",
+                   {"fromStationId": s, "toStationId": t,
+                    "quantity": c["bins"][s]["count"]})
+
         elif op < 0.55:                                  # advance: often nonsense
             c = rng.choice(cards)
             frm = (rng.choice(list(c["bins"])) if c["bins"] and rng.random() < 0.85
@@ -206,3 +351,11 @@ def test_random_abuse_never_breaks_the_line(actor, seed, example):
         assert a.req("GET", f"/merge/{m}").status_code == 200
     assert a.req("GET", "/sessions/stats").status_code == 200
     assert a.req("GET", "/reports/export.xlsx").status_code == 200
+
+    # Guard the guard. A ledger that only ever saw 1:1 transfers proves nothing
+    # about the shapes that actually break — so the walk must have driven real
+    # material through a fan, in at least one direction, or it did not test the
+    # thing it exists to test.
+    print(f"\n{example.stem} seed={seed} ledger shapes: {shapes}")
+    assert shapes.get("split", 0) or shapes.get("unsplit", 0), \
+        f"the walk never crossed a fan; the ledger was never exercised: {shapes}"

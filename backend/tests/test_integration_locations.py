@@ -241,19 +241,28 @@ def test_bound_locations_report_no_oee_or_takt(actor):
 
 # ─── Where an integration may attach ─────────────────────────────────────────
 
-def test_demand_belongs_on_the_location_where_the_product_is_made(actor):
-    """An order asks for one finished product. Pointing the ERP at a location
-    where nothing is made says nothing about what was ordered — and a line can
-    have many material entry points but only one finished product, which is
-    why "where material starts" is the wrong test."""
+def test_demand_must_land_where_the_line_can_answer_it(actor):
+    """An order has to arrive somewhere the line can act on: where the product
+    is made, or somewhere the line already feeds (ordering into stock). A
+    station that is neither cannot answer it — and a line can have many
+    material entry points but only one finished product, which is why "where
+    material starts" was never the test either.
+
+    Cell A, fed by Intake, IS answerable and is allowed: pressing "pull
+    precursors" there already walks back and seeds the queues. Refusing the
+    link to a station whose pull button worked was the app disagreeing with
+    itself."""
     a = actor(); bootstrap_admin(a)
     odoo, intake, cell, ship, proc, tmpl = _line(a)   # product is made at Intake
+    assert a.req("POST", "/routes/", {"processId": proc, "load": odoo["_id"],
+                                      "unload": cell["_id"], "quantity": 1}).status_code == 201
+
+    # A station with no product and nothing feeding it stays refused.
+    orphan = _station(a, "Nowhere")
     r = a.req("POST", "/routes/", {"processId": proc, "load": odoo["_id"],
-                                   "unload": cell["_id"], "quantity": 1})
+                                   "unload": orphan["_id"], "quantity": 1})
     assert r.status_code == 400, r.text
-    detail = r.json()["detail"]
-    assert "starts a pull" in detail, detail
-    assert "No product of this process is made at Cell A" in detail, detail
+    assert "nothing upstream feeds it" in r.json()["detail"], r.text
 
 
 def test_demand_into_a_products_own_location_is_allowed(actor):
@@ -324,3 +333,83 @@ def test_handoff_may_only_leave_the_end_of_the_flow(actor):
     detail = r.json()["detail"]
     assert "last station of this process" in detail, detail
     assert "still sends work on to Cell A" in detail, detail
+
+
+# ─── Where demand may land ───────────────────────────────────────────────────
+
+def _stock_line(a):
+    """Steel + Motor → Assembly → Testing → Warehouse, with an ERP and a
+    shipper standing by. Products start at the queues and at Assembly."""
+    st = lambda n, **kw: a.req("POST", "/stations/", {
+        "name": n, "description": "", "adapterType": None, "adapterConfig": {},
+        "color": None, "icon": None,
+        "position": {"x": 1, "y": 1, "width": 60, "height": 60}, **kw}).json()["_id"]
+    g = {}
+    for n in ("Steel", "Motor", "Assembly", "Testing", "Warehouse"):
+        g[n] = st(n, **({"isStorage": True} if n == "Warehouse" else {}))
+    g["Odoo"] = st("Odoo", integrationProvider="odoo", integrationRole="both")
+    g["ShipStation"] = st("ShipStation", integrationProvider="shipstation",
+                          integrationRole="sink")
+    g["proc"] = a.req("POST", "/processes/", {"name": "Main"}).json()["_id"]
+    for load, unload in (("Steel", "Assembly"), ("Motor", "Assembly"),
+                         ("Assembly", "Testing"), ("Testing", "Warehouse")):
+        r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g[load],
+                                       "unload": g[unload], "quantity": 1})
+        assert r.status_code == 201, r.text
+    for name, station in (("Bar", "Steel"), ("Motor", "Motor"), ("Machine", "Assembly")):
+        a.req("POST", "/lot-templates/", {"name": name, "processId": g["proc"],
+                                          "startStationId": g[station]})
+    return g
+
+
+def test_demand_may_land_on_a_warehouse_the_line_feeds(actor):
+    """Ordering INTO STOCK. The board already offers "pull precursors" at a
+    station the line feeds — pressing it walks back and seeds the source
+    queues — so demand may be raised there too. The map used to refuse the link
+    to the very station whose pull button worked, which meant the app
+    contradicted itself about one station."""
+    a = actor(); bootstrap_admin(a)
+    g = _stock_line(a)
+
+    r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["Odoo"],
+                                   "unload": g["Warehouse"], "quantity": 1})
+    assert r.status_code == 201, r.text
+
+    # And the button that made the argument still works there.
+    p = a.req("POST", f"/merge/{g['Warehouse']}/pull", {"quantity": 1})
+    assert p.status_code == 201, p.text
+
+
+def test_demand_may_still_land_where_the_product_is_made(actor):
+    a = actor(); bootstrap_admin(a)
+    g = _stock_line(a)
+    r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["Odoo"],
+                                   "unload": g["Assembly"], "quantity": 1})
+    assert r.status_code == 201, r.text
+
+
+def test_demand_on_a_station_with_nothing_upstream_is_still_refused(actor):
+    """The genuinely wrong case survives: a source queue makes no finished
+    product and nothing feeds it, so an order landing there cannot be answered."""
+    a = actor(); bootstrap_admin(a)
+    g = _stock_line(a)
+    orphan = a.req("POST", "/stations/", {
+        "name": "Nowhere", "description": "", "adapterType": None, "adapterConfig": {},
+        "color": None, "icon": None,
+        "position": {"x": 1, "y": 1, "width": 60, "height": 60}}).json()["_id"]
+    r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["Odoo"],
+                                   "unload": orphan, "quantity": 1})
+    assert r.status_code == 400
+    assert "nothing upstream feeds it" in r.json()["detail"], r.text
+
+
+def test_two_integrations_cannot_be_linked_to_each_other(actor):
+    """No material crosses an edge between two external systems, so the line
+    would mean nothing. The refusal says so rather than talking about products."""
+    a = actor(); bootstrap_admin(a)
+    g = _stock_line(a)
+    r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["Odoo"],
+                                   "unload": g["ShipStation"], "quantity": 1})
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "both integrations" in detail and "no material moves" in detail, detail

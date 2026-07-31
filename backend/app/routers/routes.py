@@ -98,11 +98,17 @@ async def _check_boundary_placement(session, company_id, process_uuid,
     station's routes across all processes, which broke the moment two value
     streams shared a station.
 
-    * A **demand link** (integration → station) targets the location where the
-      ordered product is *made in this process*: creating the order there
-      starts a pull, and the pull orders every precursor by itself. (Checked
-      only once this process has products, so a line can be drawn before its
-      products are named.)
+    * A **demand link** (integration → station) lands somewhere the line can
+      answer it: either the location where the ordered product is *made in this
+      process*, or a station the line already **feeds** — which is what
+      ordering into stock means, and is the same test the board's "pull
+      precursors" button uses. (Checked only once this process has products, so
+      a line can be drawn before its products are named.) The link is
+      documentary: a release keys off the order's own product template, never
+      off this edge.
+
+    * **Partner → partner** is refused outright. No material crosses an edge
+      between two integrations.
 
     * A **handoff link** (station → integration) may only leave the **end of
       this process's flow** — a station that sends work nowhere else *in this
@@ -125,6 +131,18 @@ async def _check_boundary_placement(session, company_id, process_uuid,
                                     StationRow.integrationProvider.isnot(None))
     )).scalars().all())
 
+    # Two partners with a line between them is not flow of any kind: no material
+    # crosses it, and Taktline has nothing to contribute to two external systems talking
+    # to each other. Whatever was meant is already expressible as demand into the
+    # station that makes the product, plus a handoff out of the last one.
+    if (load is not None and load.integrationProvider
+            and unload is not None and unload.integrationProvider):
+        raise HTTPException(400,
+            f"{load.name} and {unload.name} are both integrations, so no material moves "
+            f"along this link — it would draw a line on the floor plan that nothing "
+            f"travels. Connect {load.name} to the station whose product it orders, and "
+            f"connect the station that finishes the work to {unload.name}.")
+
     if load is not None and load.integrationProvider:      # a link carrying demand
         any_templates = (await session.execute(
             select(LotTemplateRow.id)
@@ -139,13 +157,26 @@ async def _check_boundary_placement(session, company_id, process_uuid,
                 LotTemplateRow.processId == process_uuid,
                 LotTemplateRow.startStationId == unload_uuid).limit(1)
         )).first()
-        if makes_a_product is None:
+        # …or the station is simply somewhere the line already feeds. Pressing
+        # "pull precursors" there walks the graph back and seeds the source
+        # queues, so it is a place demand can be raised — which is exactly what
+        # ordering **into stock** is: an ERP asking for finished goods to be put
+        # on a warehouse shelf. The board offered that button at a warehouse
+        # while this check refused the link to the same station, so the app
+        # disagreed with itself about one station; the button was right.
+        feeds = (await session.execute(
+            select(RouteRow.load).where(RouteRow.companyId == company_id,
+                                        RouteRow.processId == process_uuid,
+                                        RouteRow.unload == unload_uuid)
+        )).scalars().all()
+        is_pull_point = any(f not in bound for f in feeds)
+        if makes_a_product is None and not is_pull_point:
             where = unload.name if unload else "that station"
             raise HTTPException(400,
-                f"An order from {load.name} asks for a finished product, so connect it to the "
-                f"station where that product is made — creating the order there starts a pull "
-                f"that orders every precursor for you. No product of this process is made at "
-                f"{where}. Set a product's station under Settings → Templates.")
+                f"An order from {load.name} has to land somewhere the line can answer it. "
+                f"Connect it either to the station where the ordered product is made, or to "
+                f"one the line already feeds — a warehouse, for stock. {where} is neither: "
+                f"no product of this process starts there and nothing upstream feeds it.")
 
     if unload is not None and unload.integrationProvider:   # a link carrying finished goods
         onward = (await session.execute(

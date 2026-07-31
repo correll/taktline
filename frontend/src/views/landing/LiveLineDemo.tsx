@@ -2,76 +2,110 @@ import React, { useEffect, useState } from 'react'
 import FlowScene, { useFlowSimulation, type SceneEdge, type SceneStation, type Wip }
   from '../../components/demo/FlowScene'
 
-// The landing hero: a small e-bike line drawn with the app's own map
-// primitives, driven by a toy flow simulation. The assembly station cycles
-// between starved and productive, so material piles up at the merge feeds and
-// drains again — the heatmap breathes like a real line.
+// The landing hero: a battery remanufacturing line, drawn with the app's own
+// map primitives and driven by a toy flow simulation.
+//
+// Chosen over a straight assembly line because it is the shape Taktline can
+// draw that a spreadsheet cannot. A pack is TORN DOWN — one lot fans out into
+// four modules and two busbars at once, which the weight badges say out loud —
+// the two streams are worked in parallel, and a merge recombines them into a
+// reman pack. Fan out, then converge. An assembly line only ever shows the
+// second half of that.
+//
+// It also tells the truth about itself: Module Test receives four modules a
+// cycle and passes on three, so work visibly banks up there and the heat
+// climbs. That surplus is exactly what the accumulation warning flags on a
+// real map, and setting it aside to a spares shelf is what drains it.
 
 const STATIONS: SceneStation[] = [
-  { id: 'steel',    name: 'Steel inventory',   icon: 'Box',        color: '#6B7280', x: 10,   y: 30 },
-  { id: 'cut',      name: 'Tube cutting',      icon: 'Scissors',   color: '#F59E0B', x: 250,  y: 30 },
-  { id: 'weld',     name: 'Frame welding',     icon: 'Hammer',     color: '#EF4444', x: 490,  y: 30 },
-  { id: 'parts',    name: 'Parts inventory',   icon: 'Box',        color: '#6B7280', x: 10,   y: 278 },
-  { id: 'drive',    name: 'Drivetrain',        icon: 'Cog',        color: '#3B82F6', x: 250,  y: 278 },
-  { id: 'qc',       name: 'Drivetrain QC',     icon: 'ScanSearch', color: '#10B981', x: 490,  y: 278 },
-  { id: 'assembly', name: 'Frame integration', icon: 'Factory',    color: '#8B5CF6', x: 750,  y: 154 },
-  { id: 'ship',     name: 'Finished goods',    icon: 'Warehouse',  color: '#6B7280', x: 1005, y: 154 },
+  { id: 'intake',   name: 'Used packs',       icon: 'Truck',        color: '#6B7280', x: 10,   y: 152 },
+  { id: 'teardown', name: 'Teardown',         icon: 'Hammer',       color: '#B45309', x: 232,  y: 152 },
+  { id: 'modules',  name: 'Module test',      icon: 'FlaskConical', color: '#2D5B8E', x: 462,  y: 12  },
+  { id: 'solution', name: 'Cleaning solution', icon: 'Box',         color: '#0E7490', x: 232,  y: 292 },
+  { id: 'busbars',  name: 'Busbar clean',     icon: 'Wrench',       color: '#0E7490', x: 462,  y: 292 },
+  { id: 'reasm',    name: 'Reassembly',       icon: 'Factory',      color: '#8B5CF6', x: 700,  y: 152 },
+  { id: 'qa',       name: 'QA & dispatch',    icon: 'ScanSearch',   color: '#10B981', x: 938,  y: 152 },
 ]
 
+// The weights are the story: one pack yields four modules and two busbars,
+// and one reman pack consumes three modules and two clean busbars.
 const EDGES: SceneEdge[] = [
-  { from: 'steel', to: 'cut',      qty: 1 },
-  { from: 'cut',   to: 'weld',     qty: 1 },
-  { from: 'weld',  to: 'assembly', qty: 1 },
-  { from: 'parts', to: 'drive',    qty: 2 },   // weight badge: 2 parts per drivetrain
-  { from: 'drive', to: 'qc',       qty: 1 },
-  { from: 'qc',    to: 'assembly', qty: 1 },
-  { from: 'assembly', to: 'ship',  qty: 1 },
+  { from: 'intake',   to: 'teardown', qty: 1 },
+  { from: 'teardown', to: 'modules',  qty: 4 },   // a pack yields 4 modules
+  { from: 'teardown', to: 'busbars',  qty: 2 },   // …and 2 busbars
+  { from: 'solution', to: 'busbars',  qty: 1 },
+  { from: 'modules',  to: 'reasm',    qty: 3 },   // a reman pack takes 3
+  { from: 'busbars',  to: 'reasm',    qty: 2 },
+  { from: 'reasm',    to: 'qa',       qty: 1 },
 ]
 
-const MAX_WIP = 6
-const CYCLE = 26   // ticks per starve/drain cycle at the assembly
+// Heat is a RATIO against this, so it sets what counts as "piling up". Held
+// well above the resting level of the queues on purpose: with it tight, every
+// station glowed at once and the heatmap said nothing. Only the module bench,
+// which really does bank a surplus, should run hot.
+const MAX_WIP = 9
+const CYCLE = 24   // ticks per starve/drain cycle at the reassembly bench
 
-const INITIAL: Wip = { steel: 5, cut: 0, weld: 0, parts: 6, drive: 0, qc: 0, assembly: 0, ship: 0 }
+const INITIAL: Wip = {
+  intake: 2, teardown: 0, modules: 0, solution: 2, busbars: 0, reasm: 0, qa: 0,
+}
 
 function step(prev: Wip, tick: number): Wip {
   const w = { ...prev }
-  const move = (from: string, to: string, take = 1, p = 1) => {
-    if (w[from] >= take && Math.random() < p) { w[from] -= take; w[to] += 1 }
-  }
-  // The assembly works only in the second half of the cycle → upstream WIP
-  // builds at the merge feeds (heat grows), then drains.
   const phase = (tick % CYCLE) / CYCLE
-  const assemblyActive = phase > 0.45
+  // The bench works only in the back half of the cycle, so the feeds fill and
+  // drain and the heat breathes the way a real line does.
+  const assembling = phase > 0.45
 
-  if (assemblyActive && w.weld >= 1 && w.qc >= 1 && Math.random() < 0.9) {
-    w.weld -= 1; w.qc -= 1; w.assembly += 1
+  // Reassembly: 3 modules + 2 clean busbars → one reman pack.
+  if (assembling && w.modules >= 3 && w.busbars >= 2 && Math.random() < 0.9) {
+    w.modules -= 3; w.busbars -= 2; w.reasm += 1
   }
-  move('assembly', 'ship', 1, 0.7)
-  move('cut', 'weld', 1, w.weld < MAX_WIP ? 0.75 : 0)
-  move('steel', 'cut', 1, w.cut < 2 ? 0.8 : 0)
-  move('drive', 'qc', 1, w.qc < MAX_WIP ? 0.75 : 0)
-  move('parts', 'drive', 2, w.drive < 2 ? 0.8 : 0)   // consumes 2 (edge weight)
-  if (w.steel < 5 && tick % 2 === 0) w.steel += 1
-  if (w.parts < 6) w.parts += 1
-  if (w.ship > 4) w.ship = 1
+  if (w.reasm >= 1 && Math.random() < 0.7) { w.reasm -= 1; w.qa += 1 }
+
+  // The wash consumes solution to clean what the teardown sent.
+  if (w.solution >= 1 && w.busbars < 5 && Math.random() < 0.6) w.solution -= 1
+
+  // The teardown: ONE pack becomes four modules and two busbars, at once.
+  // This is the split, and it is the only place the counts jump by more than
+  // one — which is what makes the fan-out legible rather than decorative.
+  if (w.intake >= 1 && w.modules < 7 && Math.random() < 0.55) {
+    w.intake -= 1
+    w.modules += 4
+    w.busbars += 2
+  }
+
+  // Four modules arrive per pack and three leave, so the fourth banks up. Set
+  // the spares aside now and then, or the shelf would fill without end.
+  if (w.modules > 6 && tick % 3 === 0) w.modules -= 2
+
+  // Fresh packs keep arriving; solution is replenished.
+  // The queues are kept shallow: a supermarket that is always full is not a
+  // queue, and its heat would drown the bench that is genuinely accumulating.
+  if (w.intake < 2 && tick % 2 === 0) w.intake += 1
+  if (w.solution < 2) w.solution += 1
+  if (w.qa > 3) w.qa = 1
   return w
 }
 
 // On a phone the full line renders at ~4px per station label — unreadable. A
-// narrow viewport gets a shorter line at a larger relative node size instead,
-// so the idea (flow, heat, a weighted merge) still reads.
+// narrow viewport gets the essential shape at a larger relative node size: the
+// teardown fanning out, and the merge pulling the two streams back together.
+// Labels are kept to one short word: at phone width a tile is ~43px across and
+// anything longer is simply cut off mid-word, which reads as a rendering fault
+// rather than a name. Margins on both ends for the same reason — a tile flush
+// against the container edge looks clipped even when it is whole.
 const COMPACT: SceneStation[] = [
-  { id: 'steel',    name: 'Steel',    icon: 'Box',        color: '#6B7280', x: 10,  y: 30 },
-  { id: 'weld',     name: 'Welding',  icon: 'Hammer',     color: '#EF4444', x: 250, y: 30 },
-  { id: 'parts',    name: 'Parts',    icon: 'Box',        color: '#6B7280', x: 10,  y: 250 },
-  { id: 'qc',       name: 'QC',       icon: 'ScanSearch', color: '#10B981', x: 250, y: 250 },
-  { id: 'assembly', name: 'Assembly', icon: 'Factory',    color: '#8B5CF6', x: 500, y: 140 },
+  { id: 'teardown', name: 'Teardown', icon: 'Hammer',       color: '#B45309', x: 28,  y: 140 },
+  { id: 'modules',  name: 'Modules',  icon: 'FlaskConical', color: '#2D5B8E', x: 276, y: 12  },
+  { id: 'busbars',  name: 'Busbars',  icon: 'Wrench',       color: '#0E7490', x: 276, y: 268 },
+  { id: 'reasm',    name: 'Rebuild',  icon: 'Factory',      color: '#8B5CF6', x: 524, y: 140 },
 ]
 const COMPACT_EDGES: SceneEdge[] = [
-  { from: 'steel', to: 'weld',     qty: 1 },
-  { from: 'weld',  to: 'assembly', qty: 1 },
-  { from: 'parts', to: 'qc',       qty: 2 },
-  { from: 'qc',    to: 'assembly', qty: 1 },
+  { from: 'teardown', to: 'modules', qty: 4 },
+  { from: 'teardown', to: 'busbars', qty: 2 },
+  { from: 'modules',  to: 'reasm',   qty: 3 },
+  { from: 'busbars',  to: 'reasm',   qty: 2 },
 ]
 
 function useIsNarrow(breakpoint = 720): boolean {
@@ -90,7 +124,7 @@ export default function LiveLineDemo() {
   const narrow = useIsNarrow()
   return narrow
     ? <FlowScene stations={COMPACT} edges={COMPACT_EDGES} wip={wip}
-                 worldW={702} worldH={372} node={92} maxWip={MAX_WIP} />
+                 worldW={644} worldH={400} node={92} maxWip={MAX_WIP} />
     : <FlowScene stations={STATIONS} edges={EDGES} wip={wip}
-                 worldW={1180} worldH={400} node={92} maxWip={MAX_WIP} />
+                 worldW={1180} worldH={424} node={92} maxWip={MAX_WIP} />
 }

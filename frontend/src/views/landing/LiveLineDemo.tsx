@@ -75,11 +75,15 @@ export default function LiveLineDemo() {
       {/* Which trade this is, and how to reach the others. Named rather than
           left to the station labels: the whole point is that three different
           industries are the same graph, which only lands if the industries are
-          said out loud. */}
+          said out loud.
+          Given its own row UNDER the scene rather than floated over it. The
+          three layouts differ on purpose — the cut-and-sew fan reaches both the
+          top and the bottom of its frame — so there is no corner all of them
+          leave clear, and every overlay position collided with one of them. */}
       <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0,
         display: 'flex', alignItems: 'center', gap: size.sp3,
-        padding: `${size.sp2} ${size.sp4}`, pointerEvents: 'none',
+        padding: `${size.sp2} ${size.sp4}`,
+        borderTop: `1px solid ${color.border}`, background: color.bgPanel,
       }}>
         <span style={{
           fontSize: 11.5, fontFamily: font.mono, color: color.textSecondary,
@@ -88,7 +92,7 @@ export default function LiveLineDemo() {
           {line.label}
           <span style={{ color: color.textDim }}> · {line.blurb}</span>
         </span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, pointerEvents: 'auto' }}>
+        <span style={{ display: 'flex', gap: 5, marginLeft: 'auto' }}>
           {DEMO_LINES.map((l, n) => (
             <button
               key={l.id}

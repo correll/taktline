@@ -12,6 +12,7 @@ import { useThemeStore } from '../../store/theme.store'
 import { color, font, size, shadow } from '../../theme/tokens'
 import LiveLineDemo from './LiveLineDemo'
 import DeviceSyncDemo from './DeviceSyncDemo'
+import KanbanDemo from './KanbanDemo'
 
 /** "Take the five-minute tutorial" — one click into an anonymous sandbox
  *  account (server-restricted: no uploads, invites, API keys, or orders). */
@@ -72,6 +73,7 @@ export default function LandingView() {
       <main>
         <Hero />
         <Thesis />
+        <TheBoard />
         <Steps />
         <OnEveryDevice />
         <Features />
@@ -250,6 +252,38 @@ function Steps() {
               </p>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── The board ───────────────────────────────────────────────────────────────
+// Every task board moves a card one column right, so showing that proves
+// nothing. What a manufacturing board does that a task board cannot is carry
+// material: cards hold counts, several are consumed to make one, one becomes
+// several. So the loop is a teardown and a merge, not a drag.
+
+function TheBoard() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={eyebrowStyle}>The lots board</div>
+          <h2 style={h2Style}>A card is attached to real material</h2>
+          <p style={{
+            margin: `${size.sp4} auto 0`, maxWidth: 640, fontSize: 16,
+            lineHeight: 1.7, color: color.textSecondary,
+          }}>
+            One column per station, every lot where it actually is. The difference
+            from a task board is that these cards carry counts and obey a recipe:
+            tearing a pack down yields eight modules and sixteen busbars, and
+            assembling one consumes them again. Drag a card and the material moves
+            with it.
+          </p>
+        </div>
+        <div style={{ marginTop: size.sp8 }}>
+          <KanbanDemo />
         </div>
       </div>
     </section>
@@ -529,6 +563,17 @@ function FromTheBook() {
 // ─── Questions a plant manager actually asks ─────────────────────────────────
 
 const FAQ: { q: string; a: React.ReactNode }[] = [
+  {
+    q: 'Is it safe to let operators use their own phones?',
+    a: <>An operator account is the lowest tier there is: it can run a timer, merge at
+      its own bench and advance a lot along a route you defined. It cannot change the
+      line, delete lots or move material anywhere it likes — so a lost handset is a
+      low-privilege credential, not the keys to your shop. Passwords are hashed with
+      argon2id and never stored; session tokens are held only as a hash, so even a
+      database leak yields nothing you could sign in with. Sessions are cookie-based,
+      unreadable to JavaScript, and expire after eight idle hours — about a shift.
+      Changing a password signs every device out at once.</>,
+  },
   { q: 'How long until it is running?',
     a: <>Minutes. Draw your stations and routes on the floor plan and the board is live —
         there is nothing to print or install. The five-minute tutorial builds a line end

@@ -70,7 +70,7 @@ export default function DeviceSyncDemo() {
           gap: 'clamp(16px, 4vw, 44px)', flexWrap: 'wrap',
         }}
       >
-        <Device label="iPhone · operator" caption="the worker's own phone">
+        <Device label="iPhone · operator" caption="the operator's handset">
           <Phone phase={p} />
         </Device>
 

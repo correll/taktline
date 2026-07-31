@@ -146,12 +146,13 @@ function Hero() {
           Free forever · no credit card · your data exports any time
         </div>
 
-        {/* Live demo — a battery remanufacturing line drawn with the app's own
-            map primitives: animated routes, station tiles, weight badges, and a
-            heatmap that breathes as material banks up and drains. It shows a
-            teardown fanning one pack out into four modules and two busbars and
-            a merge pulling them back together, because that round trip is the
-            thing a spreadsheet cannot hold. */}
+        {/* Live demo — three lines from three trades, rotating, drawn with the
+            app's own map primitives: animated routes in each value stream's
+            colour, station tiles pulsing at their own beat, weight badges, and
+            a heatmap that breathes as material banks up and drains. A battery
+            teardown, a lay of fleece and a mitred window frame are the same
+            graph, which is the argument the page is making and the reason
+            there are three rather than one. */}
         <div style={{
           margin: `${size.sp10} auto 0`, maxWidth: 1000,
           border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
@@ -165,7 +166,7 @@ function Hero() {
               <span key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: color.border }} />
             ))}
             <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: font.mono, color: color.textDim }}>
-              live demo · a battery reman line, simulated
+              live demo · three real lines, simulated
             </span>
           </div>
           <LiveLineDemo />

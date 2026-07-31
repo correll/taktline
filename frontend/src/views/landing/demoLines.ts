@@ -137,27 +137,33 @@ const sweatshirt: DemoLine = {
     { id: 'finish',  name: 'Print & pack', icon: 'Printer',  color: '#10B981',
       x: 954, y: 174, pulseMs: 3000 },
   ],
-  // The hood branch belongs to ONE style: a crew neck is cut without it. Two
-  // processes over one cutting table that do not even use the same branches —
-  // which a single-process drawing cannot express at all.
+  // No weights here, deliberately. The four-branch fan put six badges within a
+  // few centimetres of the cutting table, and at narrower widths they touched —
+  // so the numbers were competing with the shape rather than explaining it. The
+  // battery and the window lines carry the ratios; this one carries the SHAPE,
+  // and the shape is the argument: a wide fan into a deep chain.
+  //
+  // The hood branch still belongs to ONE style — a crew neck is cut without it
+  // — so the two processes over this cutting table do not even use the same
+  // branches, which reads from the colours alone.
   edges: [
     { from: 'shopify', to: 'sewing',   qty: 1,  process: 'crew' },
     { from: 'fleece',  to: 'cutting',  qty: 1,  process: 'crew' },
     { from: 'fleece',  to: 'cutting',  qty: 1,  process: 'hood' },
-    { from: 'cutting', to: 'front',    qty: 24, process: 'crew' },
-    { from: 'cutting', to: 'front',    qty: 24, process: 'hood' },
-    { from: 'cutting', to: 'sleeves',  qty: 24, process: 'crew' },
-    { from: 'cutting', to: 'sleeves',  qty: 24, process: 'hood' },
-    { from: 'cutting', to: 'ribbing',  qty: 24, process: 'crew' },
-    { from: 'cutting', to: 'ribbing',  qty: 12, process: 'hood' },
-    { from: 'cutting', to: 'hoods',    qty: 24, process: 'hood' },
-    { from: 'front',   to: 'sewing',   qty: 24, process: 'crew' },
-    { from: 'front',   to: 'sewing',   qty: 24, process: 'hood' },
-    { from: 'sleeves', to: 'sewing',   qty: 24, process: 'crew' },
-    { from: 'sleeves', to: 'sewing',   qty: 24, process: 'hood' },
-    { from: 'ribbing', to: 'sewing',   qty: 24, process: 'crew' },
-    { from: 'ribbing', to: 'sewing',   qty: 12, process: 'hood' },
-    { from: 'hoods',   to: 'sewing',   qty: 24, process: 'hood' },
+    { from: 'cutting', to: 'front',    qty: 1, process: 'crew' },
+    { from: 'cutting', to: 'front',    qty: 1, process: 'hood' },
+    { from: 'cutting', to: 'sleeves',  qty: 1, process: 'crew' },
+    { from: 'cutting', to: 'sleeves',  qty: 1, process: 'hood' },
+    { from: 'cutting', to: 'ribbing',  qty: 1, process: 'crew' },
+    { from: 'cutting', to: 'ribbing',  qty: 1, process: 'hood' },
+    { from: 'cutting', to: 'hoods',    qty: 1, process: 'hood' },
+    { from: 'front',   to: 'sewing',   qty: 1, process: 'crew' },
+    { from: 'front',   to: 'sewing',   qty: 1, process: 'hood' },
+    { from: 'sleeves', to: 'sewing',   qty: 1, process: 'crew' },
+    { from: 'sleeves', to: 'sewing',   qty: 1, process: 'hood' },
+    { from: 'ribbing', to: 'sewing',   qty: 1, process: 'crew' },
+    { from: 'ribbing', to: 'sewing',   qty: 1, process: 'hood' },
+    { from: 'hoods',   to: 'sewing',   qty: 1, process: 'hood' },
     { from: 'sewing',  to: 'overlock', qty: 1,  process: 'crew' },
     { from: 'sewing',  to: 'overlock', qty: 1,  process: 'hood' },
     { from: 'overlock', to: 'finish',  qty: 1,  process: 'crew' },
@@ -178,14 +184,14 @@ const sweatshirt: DemoLine = {
       x: 490, y: 154, pulseMs: 2800 },
   ],
   compactEdges: [
-    { from: 'cutting', to: 'front',   qty: 24, process: 'crew' },
-    { from: 'cutting', to: 'sleeves', qty: 24, process: 'crew' },
-    { from: 'cutting', to: 'ribbing', qty: 24, process: 'crew' },
-    { from: 'cutting', to: 'ribbing', qty: 12, process: 'hood' },
-    { from: 'front',   to: 'sewing',  qty: 24, process: 'crew' },
-    { from: 'sleeves', to: 'sewing',  qty: 24, process: 'crew' },
-    { from: 'ribbing', to: 'sewing',  qty: 24, process: 'crew' },
-    { from: 'ribbing', to: 'sewing',  qty: 12, process: 'hood' },
+    { from: 'cutting', to: 'front',   qty: 1, process: 'crew' },
+    { from: 'cutting', to: 'sleeves', qty: 1, process: 'crew' },
+    { from: 'cutting', to: 'ribbing', qty: 1, process: 'crew' },
+    { from: 'cutting', to: 'ribbing', qty: 1, process: 'hood' },
+    { from: 'front',   to: 'sewing',  qty: 1, process: 'crew' },
+    { from: 'sleeves', to: 'sewing',  qty: 1, process: 'crew' },
+    { from: 'ribbing', to: 'sewing',  qty: 1, process: 'crew' },
+    { from: 'ribbing', to: 'sewing',  qty: 1, process: 'hood' },
   ],
   initial: {
     shopify: 0, fleece: 2, cutting: 0, front: 0, sleeves: 0, ribbing: 0, hoods: 0,

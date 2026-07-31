@@ -413,3 +413,28 @@ def test_two_integrations_cannot_be_linked_to_each_other(actor):
     assert r.status_code == 400
     detail = r.json()["detail"]
     assert "both integrations" in detail and "no material moves" in detail, detail
+
+
+def test_a_shipper_cannot_raise_demand_by_drawing_the_link_backwards(actor):
+    """ShipStation is sink-only: goods leave through it, orders do not start
+    there. Binding already refuses the source role — but nothing asked the
+    DRAWING, so an outgoing link from a shipper was accepted, which is exactly
+    the demand link only a source would draw. The capability check existed two
+    files away and the map walked round it."""
+    a = actor(); bootstrap_admin(a)
+    g = _stock_line(a)
+
+    # The binding half of the rule, for contrast: still refused.
+    r = a.req("PUT", f"/stations/{g['ShipStation']}", {"integrationRole": "source"})
+    assert r.status_code == 400, r.text
+
+    # And now the drawing half too.
+    r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["ShipStation"],
+                                   "unload": g["Assembly"], "quantity": 1})
+    assert r.status_code == 400, r.text
+    assert "orders do not start there" in r.json()["detail"], r.text
+
+    # The direction that does mean something is unaffected.
+    r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["Warehouse"],
+                                   "unload": g["ShipStation"], "quantity": 1})
+    assert r.status_code == 201, r.text

@@ -10,6 +10,7 @@ from ..db.tables import (Route as RouteRow, Process as ProcessRow, Station as St
 from ..deps.auth import CompanyContext, get_active_company, require_super_admin
 from ..models.route import Route, RouteCreate, RouteUpdate
 from ..models.common import utcnow
+from ..core.integrations import can_sink, can_source
 
 router = APIRouter(prefix="/routes", tags=["routes"])
 
@@ -110,6 +111,12 @@ async def _check_boundary_placement(session, company_id, process_uuid,
     * **Partner → partner** is refused outright. No material crosses an edge
       between two integrations.
 
+    * **Direction must match capability.** A link out of a partner is demand, so
+      the partner must be able to *source*; a link into one is a handoff, so it
+      must be able to *sink*. Binding already refuses a role a provider cannot
+      play, but nothing asked the drawing — so an outgoing link from a shipper
+      was accepted, which is the demand link only a source would draw.
+
     * A **handoff link** (station → integration) may only leave the **end of
       this process's flow** — a station that sends work nowhere else *in this
       process*. Ship-or-stock is not an exception, it is two processes: one
@@ -142,6 +149,23 @@ async def _check_boundary_placement(session, company_id, process_uuid,
             f"along this link — it would draw a line on the floor plan that nothing "
             f"travels. Connect {load.name} to the station whose product it orders, and "
             f"connect the station that finishes the work to {unload.name}.")
+
+    # Direction has to match what the partner can BE. Binding already refuses a
+    # role a provider cannot play — ShipStation may not be bound as a source —
+    # but the drawing was never asked, so an outgoing link from a shipper (the
+    # demand link only a source would draw) slipped straight past the capability
+    # check that exists two files away.
+    if load is not None and load.integrationProvider and not can_source(
+            load.integrationProvider, load.integrationRole):
+        raise HTTPException(400,
+            f"Goods leave through {load.name}; orders do not start there. It cannot raise "
+            f"demand, so this link has no meaning drawn this way — connect a station TO "
+            f"{load.name} to hand finished goods over.")
+    if unload is not None and unload.integrationProvider and not can_sink(
+            unload.integrationProvider, unload.integrationRole):
+        raise HTTPException(400,
+            f"{unload.name} raises demand but does not take goods back, so nothing can be "
+            f"handed to it. Connect {unload.name} TO the station whose product it orders.")
 
     if load is not None and load.integrationProvider:      # a link carrying demand
         any_templates = (await session.execute(

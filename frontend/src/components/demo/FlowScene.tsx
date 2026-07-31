@@ -4,6 +4,8 @@ import * as PIXI from 'pixi.js'
 import type { Route, Station } from '../../models'
 import RouteEdge from '../map/RouteEdge'
 import { getStationIcon } from '../map/StationNode'
+import { processColorsFor, hexToInt } from '../../domain/processColors'
+import { integrationProvider } from '../../domain/integrations'
 import { useThemeStore } from '../../store/theme.store'
 import { hasWebGL } from './webgl'
 import PixiBoundary from './PixiBoundary'
@@ -21,12 +23,25 @@ export interface SceneStation {
   color: string
   x: number
   y: number
+  /** An integration partner: drawn as its letter mark in the partner's colour
+   *  rather than an icon, because on a map of a shop floor it should read as a
+   *  foreign object — which is exactly what it is. */
+  provider?: string
+  /** Measured beat, time-compressed, in ms. The station pulses at it, the way
+   *  the real map shows whether a line is in step. */
+  pulseMs?: number
 }
 
 export interface SceneEdge {
   from: string
   to: string
   qty: number
+  /** Which value stream this route belongs to. Two lines over one floor is the
+   *  case the map exists for, so the demo draws it: each process takes its own
+   *  colour, and where both connect the same pair the lines are shifted apart
+   *  — drawn on top of each other the second one is invisible, and so is the
+   *  fact that there are two. */
+  process?: string
 }
 
 export type Wip = Record<string, number>
@@ -40,6 +55,10 @@ interface Props {
   node?: number
   showHeat?: boolean
   maxWip?: number
+  /** Names for the value streams, keyed by the ids used on the edges. With
+   *  more than one, a legend is drawn: identity must never rest on hue alone,
+   *  and two unexplained colours read as decoration rather than as two lines. */
+  processNames?: Record<string, string>
 }
 
 const CANVAS_BG: Record<'night' | 'day', number> = { night: 0x121110, day: 0xF7F6F2 }
@@ -51,9 +70,31 @@ const stationOf = (s: SceneStation, node: number): Station => ({
 } as unknown as Station)
 
 const routeOf = (e: SceneEdge, i: number): Route => ({
-  _id: `scene-${i}`, processId: 'scene', load: e.from, unload: e.to, quantity: e.qty,
-  createdAt: '', updatedAt: '',
+  _id: `scene-${i}`, processId: e.process ?? 'scene', load: e.from, unload: e.to,
+  quantity: e.qty, createdAt: '', updatedAt: '',
 } as unknown as Route)
+
+/** Lane offsets and badge stagger for routes sharing a pair of stations — the
+ *  same treatment MapCanvas gives them, so the demo and the product agree. */
+function laneLayout(edges: SceneEdge[], node: number) {
+  const byPair = new Map<string, number[]>()
+  edges.forEach((e, i) => {
+    const key = [e.from, e.to].sort().join('|')
+    byPair.set(key, [...(byPair.get(key) ?? []), i])
+  })
+  const gap = Math.max(3, node * 0.055)
+  const spacing = Math.max(9, node * 0.13) * 2.4
+  const lane: Record<number, number> = {}
+  const badge: Record<number, number> = {}
+  for (const idxs of byPair.values()) {
+    idxs.forEach((i, k) => { lane[i] = (k - (idxs.length - 1) / 2) * gap })
+    const weighted = idxs.filter((i) => edges[i].qty > 1)
+    if (weighted.length > 1) {
+      weighted.forEach((i, k) => { badge[i] = (k - (weighted.length - 1) / 2) * spacing })
+    }
+  }
+  return { lane, badge }
+}
 
 // Same violet ramp as the map (BRANDING.md §3).
 const HEAT_RAMP = [0xEEEDFE, 0xCECBF6, 0xAFA9EC, 0x7F77DD, 0x534AB7, 0x26215C] as const
@@ -77,12 +118,14 @@ function HeatBlob({ x, y, ratio, node }: { x: number; y: number; ratio: number; 
 
 function Tile({ s, count, scale, node }: { s: SceneStation; count: number; scale: number; node: number }) {
   const Icon = getStationIcon(s.icon)
+  const partner = integrationProvider(s.provider)
+  const tint = partner?.color ?? s.color
   const sz = node * scale
   return (
     <div style={{
       position: 'absolute', left: s.x * scale, top: s.y * scale, width: sz, height: sz,
       borderRadius: Math.max(4, sz * 0.08),
-      border: `1.5px solid ${s.color}`,
+      border: `1.5px solid ${tint}`,
       background: `rgba(var(--tk-map-node-bg-rgb), 0.9)`,
       boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -90,9 +133,32 @@ function Tile({ s, count, scale, node }: { s: SceneStation; count: number; scale
     }}>
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: Math.max(3, sz * 0.05),
-        background: s.color, opacity: 0.85,
+        background: tint, opacity: 0.85,
       }} />
-      <Icon size={Math.max(12, sz * 0.4)} color={s.color} strokeWidth={1.5} />
+      {/* The station's measured beat, time-compressed. Low contrast on purpose:
+          this runs on a wall display for a whole shift, so it has to be
+          readable at a glance and invisible to someone working next to it. */}
+      {s.pulseMs != null && (
+        <div aria-hidden className="tk-cycle-pulse" style={{
+          position: 'absolute', inset: 0, borderRadius: 'inherit',
+          boxShadow: `inset 0 0 0 ${Math.max(1.5, sz * 0.028)}px ${tint}`,
+          animationDuration: `${s.pulseMs}ms`, pointerEvents: 'none',
+        }} />
+      )}
+      {partner ? (
+        // Letters, not logos: partner artwork is trademarked, unreadable at
+        // this size, and would need re-licensing at every rebrand.
+        <div style={{
+          flexShrink: 0, width: sz * 0.44, height: sz * 0.44,
+          borderRadius: Math.max(3, sz * 0.09), background: partner.color,
+          color: partner.ink, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif',
+          fontWeight: 700, lineHeight: 1,
+          fontSize: sz * (partner.mark.length > 1 ? 0.18 : 0.24),
+        }}>{partner.mark}</div>
+      ) : (
+        <Icon size={Math.max(12, sz * 0.4)} color={s.color} strokeWidth={1.5} />
+      )}
       <span style={{
         fontSize: Math.max(8, Math.min(12, sz * 0.12)), fontWeight: 600,
         color: 'var(--tk-map-node-text)', fontFamily: 'Inter, system-ui, sans-serif',
@@ -115,6 +181,16 @@ function Tile({ s, count, scale, node }: { s: SceneStation; count: number; scale
   )
 }
 
+/** A route touching a partner is a boundary link, not flow: it wears the
+ *  partner's colour rather than its process's. */
+function boundaryTint(e: SceneEdge, stations: SceneStation[]): number | undefined {
+  const end = stations.find((s) => (s.id === e.from || s.id === e.to) && s.provider)
+  const p = integrationProvider(end?.provider)
+  if (!p) return undefined
+  const m = /^#?([0-9a-f]{6})$/i.exec(p.color.trim())
+  return m ? parseInt(m[1], 16) : undefined
+}
+
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`
 
 /** The same scene, drawn without a GPU.
@@ -133,11 +209,13 @@ function StaticScene({ stations, edges, wip, worldW, worldH, node, showHeat, max
   worldW: number; worldH: number; node: number
   showHeat: boolean; maxWip: number; mode: 'night' | 'day'
 }) {
+  const palette = processColorsFor(
+    [...new Set(edges.map((e) => e.process ?? 'scene'))], mode)
+  const lanes = laneLayout(edges, node)
   const at = (id: string) => {
     const s = stations.find((x) => x.id === id)
     return s ? { x: s.x + node / 2, y: s.y + node / 2 } : null
   }
-  const ink = mode === 'night' ? '#B4B1A9' : '#3D3B37'
   return (
     <svg
       viewBox={`0 0 ${worldW} ${worldH}`}
@@ -158,8 +236,20 @@ function StaticScene({ stations, edges, wip, worldW, worldH, node, showHeat, max
         )
       })}
       {edges.map((e, i) => {
-        const a = at(e.from), b = at(e.to)
-        if (!a || !b) return null
+        const a0 = at(e.from), b0 = at(e.to)
+        if (!a0 || !b0) return null
+        // Shift routes that share a pair apart, in a canonical frame so a route
+        // and its reverse move to opposite sides rather than each to its left.
+        const off = lanes.lane[i] ?? 0
+        const dx = b0.x - a0.x, dy = b0.y - a0.y
+        const len = Math.hypot(dx, dy) || 1
+        const flip = e.from > e.to ? -1 : 1
+        const nx = (-dy / len) * off * flip, ny = (dx / len) * off * flip
+        const a = { x: a0.x + nx, y: a0.y + ny }, b = { x: b0.x + nx, y: b0.y + ny }
+        const partnerEnd = boundaryTint(e, stations)
+        const ink = partnerEnd != null
+          ? hex(partnerEnd)
+          : (palette[e.process ?? 'scene'] ?? (mode === 'night' ? '#B4B1A9' : '#3D3B37'))
         const ang = Math.atan2(b.y - a.y, b.x - a.x)
         const tipX = b.x - Math.cos(ang) * 6, tipY = b.y - Math.sin(ang) * 6
         return (
@@ -171,9 +261,11 @@ function StaticScene({ stations, edges, wip, worldW, worldH, node, showHeat, max
               fill={ink} />
             {e.qty !== 1 && (
               <>
-                <circle cx={(a.x + b.x) / 2} cy={(a.y + b.y) / 2} r={node * 0.14}
+                <circle cx={(a.x + b.x) / 2 + (lanes.badge[i] ?? 0) * (dx / len)}
+                        cy={(a.y + b.y) / 2 + (lanes.badge[i] ?? 0) * (dy / len)} r={node * 0.14}
                         fill={mode === 'night' ? '#1D1C1A' : '#FFFFFF'} stroke={ink} strokeWidth={1.2} />
-                <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2} textAnchor="middle"
+                <text x={(a.x + b.x) / 2 + (lanes.badge[i] ?? 0) * (dx / len)}
+                      y={(a.y + b.y) / 2 + (lanes.badge[i] ?? 0) * (dy / len)} textAnchor="middle"
                       dominantBaseline="central" fontSize={node * 0.15} fontWeight={600}
                       fill={mode === 'night' ? '#EFEDE7' : '#1A1917'}
                       fontFamily="Inter, system-ui, sans-serif">{e.qty}</text>
@@ -189,6 +281,7 @@ function StaticScene({ stations, edges, wip, worldW, worldH, node, showHeat, max
 
 export default function FlowScene({
   stations, edges, wip, worldW, worldH, node = 92, showHeat = true, maxWip = 6,
+  processNames,
 }: Props) {
   const mode = useThemeStore((s) => s.mode)
   const [width, setWidth] = useState(0)
@@ -205,6 +298,11 @@ export default function FlowScene({
   const stationModels = React.useMemo(
     () => Object.fromEntries(stations.map((s) => [s.id, stationOf(s, node)])), [stations, node])
   const routeModels = React.useMemo(() => edges.map(routeOf), [edges])
+  // One colour per value stream, de-collided the same way the map does it.
+  const palette = React.useMemo(
+    () => processColorsFor([...new Set(edges.map((e) => e.process ?? 'scene'))], mode),
+    [edges, mode])
+  const lanes = React.useMemo(() => laneLayout(edges, node), [edges, node])
 
   const scale = width > 0 ? width / worldW : 0
   const height = worldH * scale
@@ -243,13 +341,17 @@ export default function FlowScene({
                 if (ratio === 0) return null
                 return <HeatBlob key={s.id} x={s.x + node / 2} y={s.y + node / 2} ratio={ratio} node={node} />
               })}
-              {routeModels.map((r) => (
+              {routeModels.map((r, i) => (
                 <RouteEdge
                   key={r._id}
                   route={r}
                   fromStation={stationModels[r.load]}
                   toStation={stationModels[r.unload]}
                   nodeSize={node}
+                  tint={hexToInt(palette[r.processId] ?? '#888888')}
+                  boundaryTint={boundaryTint(edges[i], stations)}
+                  offsetPx={lanes.lane[i] ?? 0}
+                  badgeShiftPx={lanes.badge[i] ?? 0}
                 />
               ))}
             </Container>
@@ -261,6 +363,26 @@ export default function FlowScene({
               <Tile key={s.id} s={s} count={wip[s.id] ?? 0} scale={scale} node={node} />
             ))}
           </div>
+          {processNames && Object.keys(processNames).length > 1 && (
+            <div style={{
+              position: 'absolute', top: 10, right: 10, display: 'flex',
+              flexDirection: 'column', gap: 3, padding: '6px 9px',
+              background: 'var(--tk-glass)', border: '1px solid var(--tk-glass-border)',
+              borderRadius: 4, pointerEvents: 'none',
+            }}>
+              {Object.entries(processNames).map(([id, name]) => (
+                <span key={id} style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: 10.5, fontFamily: '"JetBrains Mono", monospace',
+                  color: 'var(--tk-glass-text)', whiteSpace: 'nowrap',
+                }}>
+                  <span style={{ width: 12, height: 2.5, borderRadius: 2,
+                                 background: palette[id] ?? '#888' }} />
+                  {name}
+                </span>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

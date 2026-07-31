@@ -11,6 +11,7 @@ import { useAuthStore } from '../../store/auth.store'
 import { useThemeStore } from '../../store/theme.store'
 import { color, font, size, shadow } from '../../theme/tokens'
 import LiveLineDemo from './LiveLineDemo'
+import DeviceSyncDemo from './DeviceSyncDemo'
 
 /** "Take the five-minute tutorial" — one click into an anonymous sandbox
  *  account (server-restricted: no uploads, invites, API keys, or orders). */
@@ -72,6 +73,7 @@ export default function LandingView() {
         <Hero />
         <Thesis />
         <Steps />
+        <OnEveryDevice />
         <Features />
         <Integrations />
         <Founder />
@@ -144,6 +146,10 @@ function Hero() {
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
           Free forever · no credit card · your data exports any time
+        </div>
+        <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textSecondary }}>
+          Runs in the browser on <strong style={{ color: color.textPrimary }}>iPhone, iPad and
+          Android</strong> as well as the desktop — nothing to install, no app store.
         </div>
 
         {/* Live demo — three lines from three trades, rotating, drawn with the
@@ -240,6 +246,57 @@ function Steps() {
                 {title}
               </h3>
               <p style={{ margin: `${size.sp2} 0 0`, fontSize: 14.5, lineHeight: 1.65, color: color.textSecondary }}>
+                {body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── On every device ─────────────────────────────────────────────────────────
+// The page had one feature card saying "smartphones or tablets", which is a
+// sentence every SaaS site has. What a shop floor wants to know is whether the
+// phone in their hand is a real terminal or a read-only viewer, so this shows
+// a lot being advanced by thumb and every other screen following.
+
+function OnEveryDevice() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={eyebrowStyle}>On the floor</div>
+          <h2 style={h2Style}>The whole graph, in a back pocket</h2>
+          <p style={{
+            margin: `${size.sp4} auto 0`, maxWidth: 640, fontSize: 16,
+            lineHeight: 1.7, color: color.textSecondary,
+          }}>
+            Every station is a web address, so an iPhone is a full terminal — not a
+            viewer. Start and stop work, merge precursors, scan a lot label, advance
+            it down the line. Hold a phone upright and it becomes the operator
+            dashboard by itself; the floor plan and the board are the same app on the
+            tablet at the cell and the screen in the office.
+          </p>
+        </div>
+
+        <div style={{ marginTop: size.sp10 }}>
+          <DeviceSyncDemo />
+        </div>
+
+        <div style={{
+          display: 'grid', gap: size.sp4, marginTop: size.sp10,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        }}>
+          {[
+            ['No app store', 'A browser is the whole install. Add it to the home screen and it opens full-screen like a native app, because it is a progressive web app.'],
+            ['Bring any device', 'iPhone, iPad, Android, an old laptop, the shop PC. Nothing has to match, and a device that dies is replaced by whatever is to hand.'],
+            ['Keeps working offline', 'A phone that loses the wifi keeps showing the board from its own snapshot and reconnects on its own. Nothing is silently queued — changes fail loudly rather than replaying out of order.'],
+          ].map(([title, body]) => (
+            <div key={title} style={cardStyle}>
+              <div style={{ fontSize: 15, fontWeight: 500, color: color.textPrimary }}>{title}</div>
+              <p style={{ margin: `${size.sp2} 0 0`, fontSize: 14, lineHeight: 1.65, color: color.textSecondary }}>
                 {body}
               </p>
             </div>

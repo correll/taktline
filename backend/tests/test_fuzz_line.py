@@ -14,8 +14,12 @@ asserts the things that must hold no matter what a worker does:
   5. after a few hundred random gestures the line still WORKS: a fresh order
      pulls, washes, and assembles into a finished pack.
 
-The seeds are fixed, so a failure replays exactly. When one of these trips,
-print the op log it emits and the last op is the repro.
+The seed fixes which *kinds* of gesture the walk makes, but not the run: lot
+ids are random UUIDs and the walk picks lots out of a list, so consecutive runs
+of the same seed explore different paths. For a fuzzer that is a feature — CI
+keeps finding new ground — but it means a failure cannot be reproduced by
+rerunning it. So every failure prints the tail of the op log instead, which is
+the actual repro: the calls, in order, with their status codes.
 """
 
 import json
@@ -60,14 +64,25 @@ def _import_line(a: Actor, example: Path):
 
 
 def _cards(a):
-    return a.req("GET", "/cards/").json()
+    """Every lot, in a stable order.
+
+    `GET /cards/` has no ORDER BY, so without this the walk's choices depended
+    on whatever row order Postgres felt like returning — nondeterminism on top
+    of nondeterminism. Sorting does not make a run reproducible (the ids are
+    random UUIDs, so the order differs anyway); it just stops the same process
+    state from being explored differently for no reason."""
+    return sorted(a.req("GET", "/cards/").json(), key=lambda c: c["_id"])
 
 
 def _snapshot(a):
+    return _snapshot_of(_cards(a))
+
+
+def _snapshot_of(cards):
     return sorted(
         (c["_id"], c["lotTemplateId"], c["lotNum"], c["totalQuantity"],
          json.dumps(c["bins"], sort_keys=True), c["status"])
-        for c in _cards(a))
+        for c in cards)
 
 
 def _totals(a):
@@ -79,22 +94,53 @@ def _totals(a):
 
 
 def _assert_structural(a, integrations, log):
-    for c in _cards(a):
+    _assert_structural_of(_cards(a), integrations, log)
+
+
+def _tail(log, n=15):
+    """The repro, since rerunning the seed will not produce it."""
+    return "\n  ".join(f"{m} {p} {b} -> {c}" for m, p, b, c in log[-n:])
+
+
+def _assert_structural_of(cards, integrations, log):
+    for c in cards:
         for sid, b in c["bins"].items():
             assert sid not in integrations, \
-                f"units on an integration node after: {log[-3:]}"
+                f"units on an integration node.\nlast ops:\n  {_tail(log)}"
             assert isinstance(b["count"], int) and b["count"] >= 1, \
-                f"bin count {b['count']!r} after: {log[-3:]}"
+                f"bin count {b['count']!r}.\nlast ops:\n  {_tail(log)}"
         assert c["totalQuantity"] >= 1
 
 
 def _by_station(a):
     """Units standing on each station, all products together."""
+    return _by_station_of(_cards(a))
+
+
+def _by_station_of(cards):
     out: dict = {}
-    for c in _cards(a):
+    for c in cards:
         for sid, b in c["bins"].items():
             out[sid] = out.get(sid, 0) + b["count"]
     return out
+
+
+def _identity_of(cards):
+    """What each lot card *is*: its product and its line.
+
+    The ledger below counts units by place. That is only half of what has to be
+    conserved, because a card carries a physical label: relabel one and you
+    have mislabelled a real part on a real bench. On the battery line the two
+    chemistries are physically interchangeable and electrically incompatible,
+    so a module that changes identity — or a pack assembled from two lines'
+    parts — is not a reporting defect.
+    """
+    return {c["_id"]: (c["lotTemplateId"], c.get("processId")) for c in cards}
+
+
+def _placed_of(cards):
+    """Units per card per station, for working out what an operation consumed."""
+    return {(c["_id"], sid): b["count"] for c in cards for sid, b in c["bins"].items()}
 
 
 def _delta(before, after):
@@ -196,18 +242,50 @@ def test_random_abuse_never_breaks_the_line(actor, seed, example):
     shapes: dict = {}
 
     def do(method, path, body):
-        before = _snapshot(a)
-        units_before = _by_station(a)
-        before_card = [c for c in _cards(a) if c["_id"] == path.split("/")[2]] \
+        cards_before = _cards(a)
+        before = _snapshot_of(cards_before)
+        units_before = _by_station_of(cards_before)
+        ident_before = _identity_of(cards_before)
+        placed_before = _placed_of(cards_before)
+        before_card = [c for c in cards_before if c["_id"] == path.split("/")[2]] \
             if path.startswith("/cards/") else []
         r = a.req(method, path, body)
         log.append((method, path, json.dumps(body, default=str)[:120], r.status_code))
         if r.status_code >= 400:
-            assert _snapshot(a) == before, f"a {r.status_code} half-applied: {log[-1]}"
+            assert _snapshot(a) == before, f"a {r.status_code} half-applied.\nlast ops:\n  {_tail(log)}"
             return r
 
-        _assert_structural(a, integrations, log)
-        delta = _delta(units_before, _by_station(a))
+        cards_after = _cards(a)
+        _assert_structural_of(cards_after, integrations, log)
+        delta = _delta(units_before, _by_station_of(cards_after))
+
+        # ── A lot card never changes what it IS ──
+        # Transformations MINT cards; they do not relabel them. So any card id
+        # that survives an operation must still carry the same product and the
+        # same line. A silent relabel is a mislabelled physical part, and it
+        # conserves the unit count perfectly — the ledger below would not see it.
+        ident_after = _identity_of(cards_after)
+        for cid, was in ident_before.items():
+            if cid in ident_after:
+                assert ident_after[cid] == was, \
+                    f"lot {cid[:8]} was relabelled {was} -> {ident_after[cid]}.\nlast ops:\n  {_tail(log)}"
+
+        # ── Nothing is ever assembled from two lines at once ──
+        # Two chemistries share the reassembly bench. Consuming across
+        # processes is how an LFP pack acquires an NMC module.
+        placed_after = _placed_of(cards_after)
+        consumed = {cid for (cid, sid), n in placed_before.items()
+                    if n > placed_after.get((cid, sid), 0)}
+        if len(consumed) > 1:
+            procs = {ident_before[cid][1] for cid in consumed if cid in ident_before}
+            assert len(procs) <= 1, \
+                f"one operation consumed lots from {len(procs)} processes.\nlast ops:\n  {_tail(log)}"
+        minted = set(ident_after) - set(ident_before)
+        if consumed and minted:
+            made = {ident_after[cid][1] for cid in minted}
+            took = {ident_before[cid][1] for cid in consumed if cid in ident_before}
+            assert not (made - took) or not took, \
+                f"a lot was minted onto a line none of its inputs belonged to.\nlast ops:\n  {_tail(log)}"
 
         # ── The ledger: every operation must move material the way it says ──
         if "/advance" in path or "/move" in path:
@@ -229,7 +307,7 @@ def test_random_abuse_never_breaks_the_line(actor, seed, example):
             # nothing moves anywhere else.
             q = -delta.get(body["fromStationId"], 0)
             assert delta == ({body["fromStationId"]: -q} if q else {}), \
-                f"a handoff disturbed the floor: {delta} after {log[-1]}"
+                f"a handoff disturbed the floor: {delta}.\nlast ops:\n  {_tail(log)}"
 
         elif path.startswith("/merge/") and not path.endswith("/pull"):
             # Precursors are consumed where they stand and the assembly is
@@ -238,14 +316,14 @@ def test_random_abuse_never_breaks_the_line(actor, seed, example):
             # two feeds or it is not a merge).
             station = path.split("/")[2]
             assert set(delta) <= {station}, \
-                f"a merge changed units away from its own station: {delta} after {log[-1]}"
+                f"a merge changed units away from its own station: {delta}.\nlast ops:\n  {_tail(log)}"
             assert delta.get(station, 0) < 0, \
-                f"a merge did not consume: {delta} after {log[-1]}"
+                f"a merge did not consume: {delta}.\nlast ops:\n  {_tail(log)}"
 
         elif path.endswith("/pull") or path == "/orders/":
             # Demand seeds material; it may never remove any.
             assert all(v > 0 for v in delta.values()), \
-                f"a pull/release destroyed material: {delta} after {log[-1]}"
+                f"a pull/release destroyed material: {delta}.\nlast ops:\n  {_tail(log)}"
 
         return r
 

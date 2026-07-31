@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
-from ..db.tables import Route as RouteRow, Station as StationRow, StationFavorite as FavoriteRow
+from ..db.tables import (Card as CardRow, Route as RouteRow, Station as StationRow,
+                         StationFavorite as FavoriteRow)
 from ..deps.auth import CompanyContext, ensure_sandbox_quota, get_active_company, require_super_admin
 from ..models.station import Station, StationCreate, StationUpdate
 from ..models.common import utcnow
@@ -194,6 +195,32 @@ async def update_station(station_id: str, body: StationUpdate,
 async def delete_station(station_id: str, ctx: CompanyContext = Depends(require_super_admin),
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_owned(session, station_id, ctx)
+
+    # A station holding material may not be removed.
+    #
+    # `card.bins` is a JSONB map keyed by station id — the one reference in the
+    # schema with no foreign key, so the database cannot cascade or refuse on
+    # our behalf. Deleting the station therefore did neither: the units stayed,
+    # keyed to an id that now resolves to nothing. They vanish from the board
+    # (a deleted station draws no column) while still counting in every total,
+    # and nothing can move them, because the UI cannot offer a source that does
+    # not exist. Inventory that exists in the system and nowhere else.
+    #
+    # Refusing is the honest answer, and it matches the floor: you do not take
+    # a bench out while there are parts on it. Clearing the line wholesale is
+    # what `/admin/reset` and `/map-io/import` are for, and both delete lots
+    # before stations.
+    standing = (await session.execute(
+        select(CardRow).where(CardRow.companyId == ctx.company_id,
+                              CardRow.bins.has_key(str(row.id)))   # noqa: W601
+    )).scalars().all()
+    if standing:
+        units = sum((c.bins or {}).get(str(row.id), {}).get("count", 0) for c in standing)
+        raise HTTPException(400,
+            f"{units} unit{'s' if units != 1 else ''} on {len(standing)} lot"
+            f"{'s' if len(standing) != 1 else ''} are still at {row.name}. "
+            "Move or delete them first.")
+
     await session.delete(row)
     await session.flush()
     await plugin_registry.unregister(station_id)

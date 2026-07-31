@@ -323,6 +323,35 @@ each of them found one on its first run:
   without asking about every station — and the two have drifted three times.
   Neither side can move alone now.
 
+A second round went after *safety* rather than correctness — the ways a wrong
+answer reaches the floor or a customer loses something:
+
+- **`test_fuzz_line.py` also checks product identity now.** The ledger counted
+  units by place, which is only half of what is conserved: a lot card carries a
+  physical label, and relabelling one mislabels a real part while conserving
+  the count perfectly. So a surviving card id must keep its product and its
+  line, one operation may never consume across two processes, and a minted lot
+  must belong to a line its inputs came from. On the battery line the two
+  chemistries are physically interchangeable and electrically incompatible.
+- **`test_destructive.py`** deletes things a running floor is still using, and
+  checks the blast radius of every destructive endpoint against a second
+  company that must come through untouched. It also pins that `/map-io/import`
+  clears the floor — not a bug, but it is the closest thing to a restore and it
+  is not one.
+- **`test_metric_sanity.py`** asserts every reported number stays in its
+  physical range under randomised work, and that **null is not zero**: `oee: 0`
+  reads as *idle machine, go and look*, `oee: null` reads as *nobody ran a
+  timer here*, and they send someone to different ends of the building.
+- **`test_limits.py`** covers what no reasonable person types — quantities past
+  int32, a split whose multiply overflows, a line 200 stations deep, and a
+  stack of diamonds with billions of distinct paths. Scale matters because the
+  server is shared: one customer's pathological graph must not stall it for
+  everyone.
+
+Ceilings live in `models/common.py` (`MAX_UNITS`, `MAX_WEIGHT`), deliberately
+far below int32 so that the split multiply has headroom and the refusal happens
+where the person can still see what they typed.
+
 Two habits worth keeping. **Guard the guard:** a glob that matches nothing, a
 sweep whose substitution silently skipped every route, a ledger that only ever
 saw the easy shape — each turns a green suite into a decorative one, so each of

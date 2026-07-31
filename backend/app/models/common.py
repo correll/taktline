@@ -38,3 +38,22 @@ class TimestampedModel(BaseModel):
     updatedAt: datetime = Field(default_factory=utcnow)
 
     model_config = {"populate_by_name": True}
+
+
+# ── Ceilings on anything that counts units ──────────────────────────────────
+#
+# Quantities are Postgres `INTEGER` — four bytes. Nothing bounded them, so a
+# number past int32 reached the driver and came back as a 500 whose body was
+# the failed INSERT, SQL and bound parameters and all. Worse, a value *just
+# under* the limit was accepted happily and then overflowed later, because a
+# split MULTIPLIES: two numbers that each fit produce one that does not, and
+# the operation that discovers this is an ordinary advance on an ordinary
+# Tuesday.
+#
+# The limits are deliberately far below int32 rather than at it, so that the
+# split multiply has room and the refusal happens where the person can still
+# see what they typed. A Kanban lot of a million pieces is already past
+# anything a physical card is attached to, and a bill-of-materials ratio in the
+# thousands is past anything an assembly consumes.
+MAX_UNITS = 1_000_000
+MAX_WEIGHT = 10_000

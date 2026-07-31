@@ -5,10 +5,24 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, field_validator
 
+from .common import MAX_UNITS
+
 
 class OrderCreate(BaseModel):
     productTemplateId: str
     quantity: int
+
+    @field_validator('quantity')
+    @classmethod
+    def _sane_run_size(cls, v: int) -> int:
+        # A release runs the pull walk, multiplying demand by every weight on
+        # the way up the graph. An unbounded order is a denial of service
+        # written as a purchase order — and the lots it seeds are real rows.
+        if v < 1:
+            raise ValueError('quantity must be at least 1')
+        if v > MAX_UNITS:
+            raise ValueError(f'quantity may not exceed {MAX_UNITS:,}')
+        return v
     # Where to release the run. Defaults to the product template's origination
     # station (the top merge for an assembled product).
     mergeStationId: Optional[str] = None

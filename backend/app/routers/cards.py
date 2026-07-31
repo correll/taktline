@@ -18,7 +18,7 @@ from ..deps.auth import (CompanyContext, ensure_sandbox_quota, get_active_compan
                          require_admin, require_super_admin, require_scope)
 from ..models.card import Card, CardCreate, CardUpdate, LotStatus
 from ..models.card_event import CardEvent, EventType
-from ..models.common import utcnow
+from ..models.common import MAX_UNITS, utcnow
 from ..plugins.registry import plugin_registry
 from .merge import (_assembly_template, _boundary_station_ids, _ensure_origination_template,
                     _feed_consumption, _gen_lot_code, _incoming_routes, _leaf_sources,
@@ -298,6 +298,20 @@ async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id:
     from_count = old_bins.get(from_id, {}).get("count", 0)
     if quantity < 1 or quantity > from_count:
         raise HTTPException(400, f"Cannot move {quantity}: only {from_count} available at source")
+
+    # A split MULTIPLIES, so this is the one operation where two individually
+    # legal numbers make an illegal one — a lot at the ceiling times a weight at
+    # the ceiling is ten billion pieces, and `quantity` is a four-byte column.
+    # Nothing checked it, so the answer was a 500 whose body was the failed
+    # INSERT with its bound parameters. Checked here rather than at the edge
+    # because this is where the product exists.
+    for branch in branches:
+        yielded = quantity * max(1, branch.quantity or 1)
+        if yielded > MAX_UNITS:
+            raise HTTPException(400,
+                f"{quantity:,} units down a branch yielding {branch.quantity} each is "
+                f"{yielded:,} pieces, past the {MAX_UNITS:,} a single lot may hold. "
+                "Split a smaller quantity.")
 
     source_id = str(row.id)
     inherit_num = row.lotNum or _gen_lot_code()

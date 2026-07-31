@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
-from .common import PyObjectId, TimestampedModel
+from .common import MAX_WEIGHT, PyObjectId, TimestampedModel
 
 
 class Route(TimestampedModel):
@@ -24,6 +24,8 @@ class RouteCreate(BaseModel):
     def quantity_at_least_one(cls, v: int) -> int:
         if v < 1:
             raise ValueError('quantity must be at least 1')
+        if v > MAX_WEIGHT:
+            raise ValueError(f'quantity may not exceed {MAX_WEIGHT:,}')
         return v
 
     @model_validator(mode='after')
@@ -45,4 +47,6 @@ class RouteUpdate(BaseModel):
     def quantity_at_least_one(cls, v: Optional[int]) -> Optional[int]:
         if v is not None and v < 1:
             raise ValueError('quantity must be at least 1')
+        if v is not None and v > MAX_WEIGHT:
+            raise ValueError(f'quantity may not exceed {MAX_WEIGHT:,}')
         return v

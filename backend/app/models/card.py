@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional, Dict, Any
-from .common import PyObjectId, TimestampedModel
+from .common import MAX_UNITS, PyObjectId, TimestampedModel
 
 
 class Bin(BaseModel):
@@ -63,6 +63,8 @@ class CardCreate(BaseModel):
     @field_validator('totalQuantity')
     @classmethod
     def total_quantity_positive(cls, v: int) -> int:
+        if v is not None and v > MAX_UNITS:
+            raise ValueError(f'totalQuantity may not exceed {MAX_UNITS:,}')
         if v < 1:
             raise ValueError('totalQuantity must be at least 1')
         return v

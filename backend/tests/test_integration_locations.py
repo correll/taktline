@@ -438,3 +438,110 @@ def test_a_shipper_cannot_raise_demand_by_drawing_the_link_backwards(actor):
     r = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["Warehouse"],
                                    "unload": g["ShipStation"], "quantity": 1})
     assert r.status_code == 201, r.text
+
+
+# ─── Every provider, every direction ─────────────────────────────────────────
+
+def test_every_provider_binds_only_to_roles_it_can_play(actor):
+    """Walks the whole catalog rather than spot-checking, so a provider added
+    later is covered the day it appears."""
+    from app.core.integrations import PROVIDERS, ROLES
+    a = actor(); bootstrap_admin(a)
+    for provider, capability in PROVIDERS.items():
+        for role in sorted(ROLES):
+            legal = role in (("source", "sink", "both") if capability == "both"
+                             else (capability,))
+            r = a.req("POST", "/stations/", {
+                "name": f"{provider}-{role}", "description": "", "adapterType": None,
+                "adapterConfig": {}, "color": None, "icon": None,
+                "position": {"x": 1, "y": 1, "width": 60, "height": 60},
+                "integrationProvider": provider, "integrationRole": role})
+            assert (r.status_code == 201) is legal, \
+                f"{provider} as {role}: expected {'ok' if legal else '400'}, got {r.status_code}"
+
+
+def test_every_provider_draws_only_the_links_its_role_permits(actor):
+    """Demand out, handoff in — each allowed exactly when the bound role can
+    play that part. The bug this pins: the capability was enforced when binding
+    a node and never when drawing its link, so a sink-only shipper could still
+    draw the outgoing demand link a source draws."""
+    from app.core.integrations import PROVIDERS
+    a = actor(); bootstrap_admin(a)
+    g = _stock_line(a)
+
+    for provider, capability in PROVIDERS.items():
+        for role in (("source", "sink", "both") if capability == "both" else (capability,)):
+            node = a.req("POST", "/stations/", {
+                "name": f"{provider}·{role}", "description": "", "adapterType": None,
+                "adapterConfig": {}, "color": None, "icon": None,
+                "position": {"x": 1, "y": 1, "width": 60, "height": 60},
+                "integrationProvider": provider, "integrationRole": role}).json()["_id"]
+
+            # Demand: partner → the station that makes the product.
+            demand = a.req("POST", "/routes/", {"processId": g["proc"], "load": node,
+                                                "unload": g["Assembly"], "quantity": 1})
+            want_demand = role in ("source", "both")
+            assert (demand.status_code == 201) is want_demand, \
+                f"{provider}/{role} demand link: got {demand.status_code} {demand.text[:90]}"
+            if demand.status_code == 201:
+                a.req("DELETE", f"/routes/{demand.json()['_id']}")
+
+            # Handoff: the end of the flow → partner.
+            handoff = a.req("POST", "/routes/", {"processId": g["proc"], "load": g["Warehouse"],
+                                                 "unload": node, "quantity": 1})
+            want_handoff = role in ("sink", "both")
+            assert (handoff.status_code == 201) is want_handoff, \
+                f"{provider}/{role} handoff link: got {handoff.status_code} {handoff.text[:90]}"
+            if handoff.status_code == 201:
+                a.req("DELETE", f"/routes/{handoff.json()['_id']}")
+
+
+def test_no_two_integrations_may_be_linked_whatever_they_are(actor):
+    """Partner→partner is refused on the pairing, not on the capabilities — a
+    source-capable node pointing at a sink-capable one still moves no material
+    through Taktline."""
+    from app.core.integrations import PROVIDERS
+    a = actor(); bootstrap_admin(a)
+    g = _stock_line(a)
+    sources = [p for p, c in PROVIDERS.items() if c in ("source", "both")]
+    sinks = [p for p, c in PROVIDERS.items() if c in ("sink", "both")]
+    made = {}
+    for p in set(sources + sinks):
+        made[p] = a.req("POST", "/stations/", {
+            "name": f"pp-{p}", "description": "", "adapterType": None, "adapterConfig": {},
+            "color": None, "icon": None,
+            "position": {"x": 1, "y": 1, "width": 60, "height": 60},
+            "integrationProvider": p}).json()["_id"]
+    for src in sources:
+        for sink in sinks:
+            if src == sink:
+                continue
+            r = a.req("POST", "/routes/", {"processId": g["proc"], "load": made[src],
+                                           "unload": made[sink], "quantity": 1})
+            assert r.status_code == 400, f"{src} → {sink} was allowed: {r.text[:100]}"
+            assert "both integrations" in r.json()["detail"]
+
+
+def test_the_frontend_registry_agrees_with_the_backend_catalog():
+    """The UI decides which roles to offer from its own copy of the catalog
+    (domain/integrations.ts). If the two drift, a provider added to the backend
+    shows no controls, or the UI offers a role the server refuses — a dead
+    control, which is the exact failure the capability rule exists to prevent.
+    Checked by reading the file, because a build step cannot be assumed here.
+    """
+    import re
+    from pathlib import Path
+    from app.core.integrations import PROVIDERS
+
+    ts = (Path(__file__).resolve().parents[2]
+          / "frontend" / "src" / "domain" / "integrations.ts").read_text()
+    found = dict(re.findall(
+        r"\{\s*id:\s*'([a-z]+)'.*?defaultRole:\s*'(source|sink|both)'", ts, re.S))
+    assert found, "could not parse the frontend registry — has its shape changed?"
+    assert set(found) == set(PROVIDERS), (
+        f"catalogs differ — backend only: {sorted(set(PROVIDERS) - set(found))}, "
+        f"frontend only: {sorted(set(found) - set(PROVIDERS))}")
+    for provider, capability in PROVIDERS.items():
+        assert found[provider] == capability, (
+            f"{provider}: backend says {capability!r}, the UI says {found[provider]!r} — "
+            f"the UI would offer a role the server refuses, or hide one it allows")

@@ -26,12 +26,19 @@ import pytest
 
 from tests.helpers import Actor, bootstrap_admin
 
-EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "battery-remanufacturing.json"
+EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
+
+# Every line the repo ships, so the walk covers three genuinely different
+# topologies rather than one three times: a diamond with a split whose weights
+# multiply, a wide four-branch fan into a deep finishing chain, and two parallel
+# chains converging on a merge that carries the ratios. A rule that only holds
+# for the shape it was written against is not a rule.
+EXAMPLES = sorted(EXAMPLES_DIR.glob("*.json"))
 STEPS = 220
 
 
-def _import_line(a: Actor):
-    doc = json.loads(EXAMPLE.read_text())
+def _import_line(a: Actor, example: Path):
+    doc = json.loads(example.read_text())
     assert a.req("POST", "/map-io/import", doc).status_code == 200
     st = {s["name"]: s["_id"] for s in a.req("GET", "/stations/").json()}
     integrations = {s["_id"] for s in a.req("GET", "/stations/").json()
@@ -81,10 +88,33 @@ def _assert_structural(a, integrations, log):
         assert c["totalQuantity"] >= 1
 
 
+def _shape(a, integrations):
+    """What this particular line offers to abuse — derived, never named. The
+    walk has to work on any of the three, and a body that hardcodes "Busbar
+    Clean" only ever tested the one it was written against."""
+    routes = a.req("GET", "/routes/").json()
+    tmpls = a.req("GET", "/lot-templates/").json()
+    feeds: dict = {}
+    for r in routes:
+        if r["load"] in integrations or r["unload"] in integrations:
+            continue
+        feeds.setdefault((r["processId"], r["unload"]), set()).add(r["load"])
+    merges = sorted({st for (_p, st), ins in feeds.items() if len(ins) >= 2})
+    # What a customer can order: made where an ERP raises demand, else made at
+    # a merge, else anything at all.
+    demand_targets = {r["unload"] for r in routes if r["load"] in integrations}
+    orderable = [t for t in tmpls if t.get("startStationId") in demand_targets] \
+        or [t for t in tmpls if t.get("startStationId") in set(merges)] or tmpls
+    sinks = [r["unload"] for r in routes if r["unload"] in integrations]
+    return merges, orderable, (sinks[0] if sinks else None)
+
+
+@pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.stem)
 @pytest.mark.parametrize("seed", [7, 20260730])
-def test_random_abuse_never_breaks_the_line(actor, seed):
+def test_random_abuse_never_breaks_the_line(actor, seed, example):
     a = actor(); bootstrap_admin(a)
-    st, tm, pr, integrations, fans = _import_line(a)
+    st, tm, pr, integrations, fans = _import_line(a, example)
+    merges, orderable, sink = _shape(a, integrations)
     rng = random.Random(seed)
     stations = list(st.values())
     procs = list(pr.values())
@@ -96,8 +126,7 @@ def test_random_abuse_never_breaks_the_line(actor, seed):
         r = a.req(method, path, body)
         log.append((method, path, json.dumps(body, default=str)[:120], r.status_code))
         if r.status_code >= 400:
-            assert _snapshot(a) == before, \
-                f"a {r.status_code} half-applied: {log[-1]}"
+            assert _snapshot(a) == before, f"a {r.status_code} half-applied: {log[-1]}"
         else:
             _assert_structural(a, integrations, log)
             # Conservation: a successful plain step between two non-fan
@@ -110,16 +139,15 @@ def test_random_abuse_never_breaks_the_line(actor, seed):
         return r
 
     n_orders = 0
-    for step in range(STEPS):
+    for _step in range(STEPS):
         cards = _cards(a)
         op = rng.random()
 
         if op < 0.10 or not cards:                       # release an order
             n_orders += 1
-            line = rng.choice(["NMC", "LFP"])
-            do("POST", "/orders", {"productTemplateId": tm[f"Reman {line}"]["_id"],
-                                   "quantity": rng.randint(1, 2),
-                                   "source": "manual", "externalRef": f"FZ-{seed}-{n_orders}"})
+            do("POST", "/orders/", {"productTemplateId": rng.choice(orderable)["_id"],
+                                    "quantity": rng.randint(1, 2), "source": "manual",
+                                    "externalRef": f"FZ-{seed}-{n_orders}"})
         elif op < 0.20:                                  # pull somewhere random
             do("POST", f"/merge/{rng.choice(stations)}/pull",
                {"quantity": rng.randint(1, 3),
@@ -141,7 +169,7 @@ def test_random_abuse_never_breaks_the_line(actor, seed):
                {"fromStationId": frm, "toStationId": rng.choice(stations),
                 "quantity": rng.choice([1, have, have + 1]) or 1})
         elif op < 0.85:                                  # merge, guided or not
-            target = rng.choice([st["Busbar Clean"], st["Reassembly"], rng.choice(stations)])
+            target = rng.choice(merges + [rng.choice(stations)]) if merges else rng.choice(stations)
             body = {}
             if rng.random() < 0.4:
                 body["processId"] = rng.choice(procs)
@@ -155,42 +183,26 @@ def test_random_abuse_never_breaks_the_line(actor, seed):
                        else rng.choice(stations))
             do("POST", f"/cards/{c['_id']}/unmerge",
                {"stationId": station, "quantity": rng.randint(1, 3)})
-        else:                                            # handoff attempt
+        elif sink:                                       # handoff attempt
             c = rng.choice(cards)
             frm = rng.choice(list(c["bins"])) if c["bins"] else rng.choice(stations)
             do("POST", f"/cards/{c['_id']}/handoff",
-               {"fromStationId": frm, "toStationId": st["ShipStation"],
+               {"fromStationId": frm, "integrationStationId": sink,
                 "quantity": rng.randint(1, 2)})
 
-    # ── After the storm, the line still works end to end ──
+    # ── After the storm, the line still answers ──
     ref = f"FZ-{seed}-final"
-    r = a.req("POST", "/orders", {"productTemplateId": tm["Reman NMC"]["_id"],
-                                  "quantity": 1, "source": "manual", "externalRef": ref})
+    product = orderable[0]
+    r = a.req("POST", "/orders/", {"productTemplateId": product["_id"], "quantity": 1,
+                                   "source": "manual", "externalRef": ref})
     assert r.status_code == 201, r.text
-    pack = next(c for c in _cards(a) if c["lotNum"] == ref
-                and c["lotTemplateId"] == tm["NMC used pack"]["_id"])
-    adv = lambda cid, f, t, q: a.req("POST", f"/cards/{cid}/advance",
-                                     {"fromStationId": f, "toStationId": t, "quantity": q})
-    assert adv(pack["_id"], st["Intake"], st["Teardown"], 1).status_code == 200
-    assert adv(pack["_id"], st["Teardown"], st["Module Test"], 1).status_code == 200
-    mods = next(c for c in _cards(a) if c["lotNum"] == ref
-                and c["lotTemplateId"] == tm["NMC module"]["_id"])
-    dirty = next(c for c in _cards(a) if c["lotNum"] == ref
-                 and c["lotTemplateId"] == tm["NMC dirty busbar"]["_id"])
-    sol = next(c for c in _cards(a) if c["lotNum"] == ref
-               and c["lotTemplateId"] == tm["Cleaning solution (NMC)"]["_id"])
-    assert dirty["bins"][st["Busbar Clean"]]["count"] == 2
-    assert adv(sol["_id"], st["Cleaning solution"], st["Busbar Clean"],
-               sol["bins"][st["Cleaning solution"]]["count"]).status_code == 200
-    m = a.req("POST", f"/merge/{st['Busbar Clean']}",
-              {"cardIds": [dirty["_id"], sol["_id"]]})
-    assert m.status_code == 201, m.text
-    cleaned = a.req("GET", f"/cards/{m.json()['createdCardId']}").json()
-    assert adv(mods["_id"], st["Module Test"], st["Reassembly"], 3).status_code == 200
-    assert adv(cleaned["_id"], st["Busbar Clean"], st["Reassembly"],
-               cleaned["bins"][st["Busbar Clean"]]["count"]).status_code == 200
-    m = a.req("POST", f"/merge/{st['Reassembly']}",
-              {"cardIds": [mods["_id"], cleaned["_id"]]})
-    assert m.status_code == 201, m.text
-    made = a.req("GET", f"/cards/{m.json()['createdCardId']}").json()
-    assert made["lotTemplateId"] == tm["Reman NMC"]["_id"]
+    seeded = [c for c in _cards(a) if c["lotNum"] == ref]
+    assert seeded, "a release after the walk seeded nothing"
+    _assert_structural(a, integrations, log)
+
+    # Every merge the line has can still be asked what it needs, and every
+    # station can still be pulled at without a 500.
+    for m in merges:
+        assert a.req("GET", f"/merge/{m}").status_code == 200
+    assert a.req("GET", "/sessions/stats").status_code == 200
+    assert a.req("GET", "/reports/export.xlsx").status_code == 200

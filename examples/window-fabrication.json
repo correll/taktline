@@ -1,0 +1,430 @@
+{
+  "kind": "taktline-map",
+  "version": 1,
+  "name": "Window fabrication \u2014 casement and tilt & turn",
+  "mapSettings": {
+    "unit": "m",
+    "pixelsPerUnit": 36,
+    "stationSizeUnits": 2
+  },
+  "stations": [
+    {
+      "ref": "s1",
+      "name": "uPVC profile",
+      "description": "",
+      "position": {
+        "x": 180,
+        "y": 420,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Box",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s2",
+      "name": "Cut & mitre",
+      "description": "",
+      "position": {
+        "x": 540,
+        "y": 420,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Scissors",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s3",
+      "name": "Weld & clean",
+      "description": "",
+      "position": {
+        "x": 900,
+        "y": 420,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Thermometer",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s4",
+      "name": "Glass store",
+      "description": "",
+      "position": {
+        "x": 540,
+        "y": 1000,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Layers",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s5",
+      "name": "Sealed units",
+      "description": "",
+      "position": {
+        "x": 900,
+        "y": 1000,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Layers",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s6",
+      "name": "Glazing",
+      "description": "Frame and sealed unit come together.",
+      "position": {
+        "x": 1300,
+        "y": 700,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Factory",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s7",
+      "name": "Hardware",
+      "description": "",
+      "position": {
+        "x": 1660,
+        "y": 700,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Wrench",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s8",
+      "name": "QC & load",
+      "description": "",
+      "position": {
+        "x": 2020,
+        "y": 700,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Truck",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s9",
+      "name": "Cut-offs",
+      "description": "",
+      "position": {
+        "x": 540,
+        "y": 60,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "Box",
+      "isStorage": true,
+      "branchMode": null,
+      "integrationProvider": null,
+      "integrationRole": null
+    },
+    {
+      "ref": "s10",
+      "name": "NetSuite",
+      "description": "",
+      "position": {
+        "x": 1300,
+        "y": 300,
+        "width": 72,
+        "height": 72
+      },
+      "color": null,
+      "icon": "",
+      "isStorage": false,
+      "branchMode": null,
+      "integrationProvider": "netsuite",
+      "integrationRole": "both"
+    }
+  ],
+  "processes": [
+    {
+      "ref": "p1",
+      "name": "Casement",
+      "description": "",
+      "desiredTaktSec": 1800
+    },
+    {
+      "ref": "p2",
+      "name": "Tilt & turn",
+      "description": "",
+      "desiredTaktSec": 2400
+    }
+  ],
+  "templates": [
+    {
+      "ref": "t1",
+      "name": "Profile bar (casement)",
+      "description": "",
+      "process": "p1",
+      "startStation": "s1",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t2",
+      "name": "Casement frame",
+      "description": "",
+      "process": "p1",
+      "startStation": "s3",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t3",
+      "name": "Glass sheet (casement)",
+      "description": "",
+      "process": "p1",
+      "startStation": "s4",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t4",
+      "name": "Casement unit",
+      "description": "",
+      "process": "p1",
+      "startStation": "s5",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t5",
+      "name": "Casement window",
+      "description": "",
+      "process": "p1",
+      "startStation": "s6",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t6",
+      "name": "Profile bar (T&T)",
+      "description": "",
+      "process": "p2",
+      "startStation": "s1",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t7",
+      "name": "T&T frame",
+      "description": "",
+      "process": "p2",
+      "startStation": "s3",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t8",
+      "name": "Glass sheet (T&T)",
+      "description": "",
+      "process": "p2",
+      "startStation": "s4",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t9",
+      "name": "T&T unit",
+      "description": "",
+      "process": "p2",
+      "startStation": "s5",
+      "color": null,
+      "fields": []
+    },
+    {
+      "ref": "t10",
+      "name": "Tilt & turn window",
+      "description": "",
+      "process": "p2",
+      "startStation": "s6",
+      "color": null,
+      "fields": []
+    }
+  ],
+  "routes": [
+    {
+      "process": "p1",
+      "load": "s1",
+      "unload": "s2",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s2",
+      "unload": "s3",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s2",
+      "unload": "s9",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s4",
+      "unload": "s5",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s3",
+      "unload": "s6",
+      "quantity": 4,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s5",
+      "unload": "s6",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s6",
+      "unload": "s7",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s7",
+      "unload": "s8",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s1",
+      "unload": "s2",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s2",
+      "unload": "s3",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s2",
+      "unload": "s9",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s4",
+      "unload": "s5",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s3",
+      "unload": "s6",
+      "quantity": 8,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s5",
+      "unload": "s6",
+      "quantity": 2,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s6",
+      "unload": "s7",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s7",
+      "unload": "s8",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s10",
+      "unload": "s6",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s10",
+      "unload": "s6",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p1",
+      "load": "s8",
+      "unload": "s10",
+      "quantity": 1,
+      "outputTemplate": null
+    },
+    {
+      "process": "p2",
+      "load": "s8",
+      "unload": "s10",
+      "quantity": 1,
+      "outputTemplate": null
+    }
+  ]
+}

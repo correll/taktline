@@ -13,6 +13,7 @@ import { color, font, size, shadow } from '../../theme/tokens'
 import LiveLineDemo from './LiveLineDemo'
 import DeviceSyncDemo from './DeviceSyncDemo'
 import KanbanDemo from './KanbanDemo'
+import DoctorDemo from './DoctorDemo'
 
 /** "Take the five-minute tutorial" — one click into an anonymous sandbox
  *  account (server-restricted: no uploads, invites, API keys, or orders). */
@@ -76,6 +77,7 @@ export default function LandingView() {
         <TheBoard />
         <Steps />
         <OnEveryDevice />
+        <TheDoctor />
         <Features />
         <Integrations />
         <Founder />
@@ -248,6 +250,59 @@ function Steps() {
                 {title}
               </h3>
               <p style={{ margin: `${size.sp2} 0 0`, fontSize: 14.5, lineHeight: 1.65, color: color.textSecondary }}>
+                {body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── The line doctor ─────────────────────────────────────────────────────────
+// The findings shown are verbatim what the engine produces for a line of that
+// shape. A page that paraphrases its own product's output promises something
+// warmer and vaguer than what arrives, and the first real report reads as a
+// let-down.
+
+function TheDoctor() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={eyebrowStyle}>The line doctor</div>
+          <h2 style={h2Style}>It reads your line and tells you what is wrong</h2>
+          <p style={{
+            margin: `${size.sp4} auto 0`, maxWidth: 660, fontSize: 16,
+            lineHeight: 1.7, color: color.textSecondary,
+          }}>
+            Click the bulb and Taktline reports the constraint, where work piles up, how much of
+            your lead time is actually work, and what to do first — in the language of lean, with
+            the arithmetic shown. It works from the shape of your graph before anyone has run a
+            timer, and lights up once there is enough data to talk about pace.
+          </p>
+        </div>
+
+        <div style={{ marginTop: size.sp8 }}>
+          <DoctorDemo />
+        </div>
+
+        <div style={{
+          display: 'grid', gap: size.sp4, marginTop: size.sp8,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        }}>
+          {[
+            ['Nothing leaves your building',
+             'It is a rule engine on your own server — Little’s law, Kingman, Goldratt, Shewhart — not a chatbot. No production data is sent to anyone, because none needs to be.'],
+            ['It says when it cannot see',
+             '“Nobody has run a timer yet” is an answer it gives. A report that invents advice from three sessions is worse than one that admits it cannot see.'],
+            ['Useful on day one',
+             'A line that can never complete an order, a split feeding six pieces into a bench that takes one, a station every order must cross — all visible from the graph alone, before any work is recorded.'],
+          ].map(([title, body]) => (
+            <div key={title} style={cardStyle}>
+              <div style={{ fontSize: 15, fontWeight: 500, color: color.textPrimary }}>{title}</div>
+              <p style={{ margin: `${size.sp2} 0 0`, fontSize: 14, lineHeight: 1.65, color: color.textSecondary }}>
                 {body}
               </p>
             </div>
@@ -493,7 +548,11 @@ function Founder() {
               can’t automate a process nobody has measured. At Robotic Materials Inc
               (2016–2022), he and a small team built Optio, a digital value-stream-mapping
               system for high-mix, low-volume (re)manufacturers. Taktline is a fresh start
-              on the same idea, rebuilt from scratch.
+              on the same idea, rebuilt from scratch — and now carrying the part that was
+              always the point: <strong style={{ color: color.textPrimary }}>AI and advanced analytics on the
+              shop floor</strong>, reading
+              a line the way an experienced engineer would and saying what is wrong with it
+              in plain language.
             </p>
             <p style={{ margin: `${size.sp3} 0 0`, fontSize: 13, lineHeight: 1.6, color: color.textDim }}>
               His research has been funded by NSF, NIST, NASA, ARPA-E, ARO, AFOSR and DARPA.

@@ -12,3 +12,7 @@ slowapi>=0.1.9
 email-validator>=2.1.0
 aiosmtplib>=3.0.0
 openpyxl>=3.1
+# Used by map_settings to fetch a floor plan given as a URL. It arrives
+# transitively in dev (Starlette's TestClient pulls it in), which is exactly
+# why its absence here only showed up in production — as a 500.
+httpx>=0.27

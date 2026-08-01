@@ -6,6 +6,7 @@ import { color, shadow } from '../../theme/tokens'
 import { useCardsStore, useMapSettingsStore, useStationsStore, useProcessesStore, useThemeStore } from '../../store'
 import { client } from '../../api/client'
 import { useRole } from '../../auth/useRole'
+import { useAuthStore } from '../../store/auth.store'
 import StationNode, { type MapTool } from './StationNode'
 import MapStationEditModal from './MapStationEditModal'
 import RouteEdge from './RouteEdge'
@@ -1157,6 +1158,13 @@ function FloorPlanSprite({
  *  Super-admin only, like the endpoints behind it. */
 function MapFileButton() {
   const { isSuperAdmin } = useRole()
+  // A sandbox visitor is super-admin of their own throwaway company, so the
+  // role check alone showed them this menu — the picker opened, they chose a
+  // file, and the server refused it. An affordance that cannot work is worse
+  // than none: it reads as a broken product rather than a locked feature.
+  // Export stays open. It is read-only, and somebody who has built a line they
+  // like should be able to leave with it — that is the conversion, not a leak.
+  const isSandbox = useAuthStore((s) => s.user?.isSandbox === true)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<'export' | 'import' | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1211,10 +1219,18 @@ function MapFileButton() {
           <button style={item} disabled={busy !== null} onClick={doExport}>
             {busy === 'export' ? 'Exporting…' : '⬇ Export JSON'}
           </button>
-          <button style={item} disabled={busy !== null}
-                  onClick={() => fileRef.current?.click()}>
-            {busy === 'import' ? 'Importing…' : '⬆ Import JSON'}
-          </button>
+          {isSandbox ? (
+            <a href="/signup"
+               style={{ ...item, color: color.glassText, opacity: 0.65, textDecoration: 'none' }}
+               title="Loading a line file needs a free account">
+              ⬆ Import JSON · free account
+            </a>
+          ) : (
+            <button style={item} disabled={busy !== null}
+                    onClick={() => fileRef.current?.click()}>
+              {busy === 'import' ? 'Importing…' : '⬆ Import JSON'}
+            </button>
+          )}
         </div>
       )}
       <button

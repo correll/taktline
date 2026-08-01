@@ -16,6 +16,9 @@ from pathlib import Path
 
 from tests.helpers import Actor, bootstrap_admin
 
+STATION = {"description": "", "adapterType": None, "adapterConfig": {}, "color": None,
+           "icon": None, "position": {"x": 1, "y": 1, "width": 60, "height": 60}}
+
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "battery-remanufacturing.json"
 
 
@@ -389,3 +392,80 @@ def test_fragmented_lots_still_wash_and_assemble(actor):
     assert totals.get(g.tm["NMC busbar"]["_id"]) == 4
     assert g.tm["NMC dirty busbar"]["_id"] not in totals
     assert g.tm["Cleaning solution (NMC)"]["_id"] not in totals
+
+
+# ── Material that travels before it is assembled ────────────────────────────
+
+def test_a_merge_sees_through_a_transport_step(actor):
+    """Reported on a real line: `iron ore → shipment → smeltery` and
+    `carbon → shipment → smeltery`, with both materials standing on the
+    furnace and nothing able to assemble.
+
+    The merge matched precursors only against its IMMEDIATE feed, and nothing
+    originates at a shipment leg, so each branch accepted no product at all.
+    The furnace reported nothing to merge with the material sitting on it, and
+    the only visible thing to blame was the assembly template — which was fine.
+
+    A station with one route in and one out passes material along; it does not
+    transform it. What arrives from it is what entered it.
+    """
+    a = actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()["_id"]
+    ore, carbon = st("Iron ore"), st("Carbon")
+    leg1, leg2 = st("Shipment A"), st("Shipment B")
+    furnace = st("Smeltery")
+    proc = a.req("POST", "/processes/", {"name": "Main line"}).json()["_id"]
+    for load, unload in ((ore, leg1), (leg1, furnace), (carbon, leg2), (leg2, furnace)):
+        r = a.req("POST", "/routes/", {"processId": proc, "load": load,
+                                       "unload": unload, "quantity": 1})
+        assert r.status_code == 201, r.text
+
+    tm = {}
+    for name, station in (("Iron ore", ore), ("Carbon", carbon), ("Steel", furnace)):
+        tm[name] = a.req("POST", "/lot-templates/", {
+            "name": name, "processId": proc, "startStationId": station}).json()["_id"]
+    # Both materials have travelled and are standing on the furnace.
+    for name in ("Iron ore", "Carbon"):
+        a.req("POST", "/cards/", {"lotTemplateId": tm[name], "processId": proc,
+                                  "lotNum": f"{name[:2].upper()}-1", "totalQuantity": 1,
+                                  "bins": {furnace: {"count": 1}}})
+
+    preview = a.req("GET", f"/merge/{furnace}").json()
+    assert preview["isMergeStation"], preview
+    assert preview["assembliesPossible"] == 1, preview
+
+    made = a.req("POST", f"/merge/{furnace}", {})
+    assert made.status_code in (200, 201), made.text
+    assert made.json()["assemblies"] == 1
+
+
+def test_the_walk_back_stops_at_a_split(actor):
+    """The half that must NOT change. In a diamond both feeds trace back to one
+    source, and following the chain past the split would let either branch eat
+    the other's material — modules consumed as busbars. The walk stops at
+    anything that branches or converges."""
+    a = actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()["_id"]
+    src, left, right, asm = st("Teardown"), st("Modules"), st("Busbars"), st("Reassembly")
+    proc = a.req("POST", "/processes/", {"name": "Reman"}).json()["_id"]
+    for load, unload in ((src, left), (src, right), (left, asm), (right, asm)):
+        assert a.req("POST", "/routes/", {"processId": proc, "load": load,
+                                          "unload": unload, "quantity": 1}).status_code == 201
+
+    tm = {}
+    for name, station in (("Pack", src), ("Module", left), ("Busbar", right), ("Reman pack", asm)):
+        tm[name] = a.req("POST", "/lot-templates/", {
+            "name": name, "processId": proc, "startStationId": station}).json()["_id"]
+
+    # Only modules on the bench. If the walk crossed the split, the busbar feed
+    # would accept the Teardown product too and claim it could assemble.
+    a.req("POST", "/cards/", {"lotTemplateId": tm["Module"], "processId": proc,
+                              "lotNum": "M-1", "totalQuantity": 4,
+                              "bins": {asm: {"count": 4}}})
+    a.req("POST", "/cards/", {"lotTemplateId": tm["Pack"], "processId": proc,
+                              "lotNum": "P-1", "totalQuantity": 4,
+                              "bins": {asm: {"count": 4}}})
+
+    preview = a.req("GET", f"/merge/{asm}").json()
+    assert preview["assembliesPossible"] == 0, \
+        f"a feed reached past the split and claimed material that is not its own: {preview}"

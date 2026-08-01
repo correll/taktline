@@ -34,6 +34,21 @@ When two processes both merge at one bench, resolution is no longer blind: the w
 
 Merge order is **FIFO**: `_cards_with_bin` returns candidates oldest-first, and the proposal and the consumption both read that one order so they cannot disagree. The query used to have no ORDER BY and both callers sorted by bin count (smallest first, to avoid breaking a full lot) — but lots at one station usually hold identical counts, so that sort was one long tie decided by whatever physical row order Postgres returned, and where counts did differ it actively reached past older material. A running line showed module lots aging 10–14 minutes at the bench while lots minted seconds earlier were consumed in front of them.
 
+A merge **sees through pass-through stations**. A station with exactly one
+production route in and one out — a transport leg, a staging area, an
+inspection bench — does not transform anything: what leaves it is what entered
+it. `_precursor_template_ids` therefore walks the feed back along such a chain
+and accepts products originating anywhere on it. Without that,
+`iron ore → shipment → smeltery` broke the merge outright, because nothing
+originates at a shipment leg and so the branch accepted no product at all — the
+furnace sat with iron ore and carbon on it reporting nothing to assemble, and
+the only visible thing to blame was the assembly template, which was fine. The
+walk stops **in front of** any station that branches (checked on the *previous*
+station's outgoing count, not the current one's): from Module Test the chain
+reaches Teardown, which is a split, so the busbar feed cannot reach past it and
+start eating modules. A declared branch product stops it too — that feed has
+already said what it carries.
+
 Merging: some products are made from precursors. These result from merging two or or more precursor products. In this case, the precursor product lot cards are discarded (or optionally put back into the queue), and a new lot card is created. Only locations at ßwhich multiple branches come together can serve as originating stations for such lot cards. Conversely, such lot cards can not be created directly, and attempting to do so will create precursor lot cards in the queues that lead up to this location.
 
 Weight ownership at a combined split+merge: a split branch can land on a merge station (the battery example's wash — Teardown's busbar branch plus a cleaning-solution feed both enter Busbar Clean), and one number cannot mean yield AND consumption. **The split owns the weight**: the branch still yields its declared pieces per source unit, and the merge consumes ONE piece per assembly from a split-fed branch — a weight's meaning must never flip because someone drew a new feed into its target (that flip is exactly what once double-booked the ×2 and reported phantom accumulation upstream). A merge that truly consumes several split pieces per assembly is modelled with a buffer station between. `merge._feed_consumption` is the single authority — split/merge/pull/unmerge/preview and the frontend accumulation math all read it or mirror it. Corollary (`_validate_output_template`): a branch into a merge may not declare the merge's own assembly template as its product — a piece wearing it would masquerade as finished output — so the wash's input is a distinct "dirty" product, typically with no start station at all (a pure intermediate pollutes no origination lookup). The pull walk (`_leaf_sources`) is demand propagation over the process DAG, downstream-first: each fan combines its branches' demands by what it is (split → max, one unit feeds every branch; choice → sum, each unit feeds one), which replaced a per-path recursion whose terminal dedup could not tell WHY two demands reconverged. Accumulation warnings name the process (`Module Test (LFP) +5`), a choice's storage branches pull nothing, and a station with its own branch to storage is never flagged — it has the relief valve the warning exists to recommend. `tests/test_cleaning_line.py` pins the wash; `tests/test_fuzz_line.py` is a seeded random-abuse walk asserting after every op that a 4xx changed nothing, no unit sits on a partner node, and plain moves conserve material — its first two runs found a self-move that minted units and a pull aimed at a partner node that seeded a lot there.

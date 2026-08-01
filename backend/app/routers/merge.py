@@ -225,7 +225,59 @@ async def _precursor_template_ids(session, company_id, route: RouteRow) -> list[
     so a sibling process's product standing at the same bench is never eaten."""
     if route.outputTemplateId is not None:
         return [route.outputTemplateId]
-    return await _source_template_ids(session, company_id, route.load, route.processId)
+
+    # Follow the feed back through stations that merely PASS material along.
+    #
+    # A station with exactly one production route in and one out — a transport
+    # leg, a staging area, an inspection bench — is not a transformation: what
+    # leaves it is what entered it, wearing the same product. Matching only on
+    # the immediate feed meant that drawing `iron ore → shipment → smeltery`
+    # broke the merge outright, because nothing originates at "shipment" and so
+    # the branch accepted no product at all. The furnace sat there with iron ore
+    # and carbon on it reporting nothing to assemble, and no way to find out
+    # why — the natural conclusion being that the assembly template was wrong,
+    # which it was not.
+    #
+    # The walk stops at anything that branches or converges. That is what keeps
+    # a diamond correct: from Module Test the chain reaches Teardown, which is a
+    # split, so the feed still accepts only Module-Test products and cannot
+    # start eating its sibling's. It also stops at a declared branch product,
+    # which has already said what this feed carries.
+    ids: list = []
+    seen: set = set()
+    station = route.load
+    while station is not None and station not in seen:
+        seen.add(station)
+        for tid in await _source_template_ids(session, company_id, station, route.processId):
+            if tid not in ids:
+                ids.append(tid)
+        station = await _passes_through(session, company_id, station, route.processId)
+    return ids
+
+
+async def _passes_through(session, company_id, station_uuid, process_id):
+    """The station feeding this one, if material simply passes from it to here.
+
+    Two conditions, and the second is the one that keeps a diamond honest:
+
+    * this station has exactly ONE feed, so "the station before" is unambiguous;
+    * that station has exactly one route OUT, so it hands its material to this
+      one and nowhere else.
+
+    Checking only the first would walk straight through a split — from Module
+    Test back to Teardown — and the busbar feed would then accept the pack
+    product too, letting either branch eat the other's material. A station that
+    branches is where the identity of the product is decided, and the walk must
+    stop in front of it. So is a declared branch product, which has already
+    said what this feed carries.
+    """
+    incoming = await _incoming_routes(session, company_id, station_uuid, process_id)
+    if len(incoming) != 1 or incoming[0].outputTemplateId is not None:
+        return None
+    previous = incoming[0].load
+    if await _outgoing_count(session, company_id, previous, process_id) != 1:
+        return None
+    return previous
 
 
 async def _station_lock(session: AsyncSession, company_id, station_id: str) -> None:

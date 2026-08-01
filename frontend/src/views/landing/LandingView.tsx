@@ -74,6 +74,7 @@ export default function LandingView() {
       <main>
         <Hero />
         <Thesis />
+        <Outcomes />
         <TheBoard />
         <Steps />
         <OnEveryDevice />
@@ -216,6 +217,72 @@ function Thesis() {
         }}>
           You can’t optimize a process nobody has measured.
         </p>
+      </div>
+    </section>
+  )
+}
+
+// ─── What you actually get ───────────────────────────────────────────────────
+// Placed straight after the thesis, because outcomes are what a buyer shops
+// for and everything below this is mechanism. The page could previously say
+// how fast it is to set up and nothing at all about what changes afterwards.
+// Each of these is a pain someone feels weekly, and each names the part of the
+// product that delivers it — a benefit nobody can trace back to a feature
+// reads as a slogan.
+
+const OUTCOMES = [
+  {
+    Icon: Boxes,
+    title: 'Never search for a lot again',
+    body: `“Where is job 4471?” costs somebody a walk of the floor, two interruptions and a
+           guess — several times a day, usually the people whose time is worth most. Every lot
+           is on the board and on the floor plan, live, with the history of everywhere it has
+           been. This one needs no data and no setup: it is true the hour you draw your line.`,
+  },
+  {
+    Icon: TrendingUp,
+    title: 'Continuous improvement starts immediately',
+    body: `Lean normally begins with a value-stream map, which means a study, which means weeks
+           and often a consultant. Here the map is the thing you already drew, and it is live
+           from the first lot that moves. Map your line exactly as it runs today — change
+           nothing — and the bottleneck shows itself within a week, usually somewhere nobody
+           expected.`,
+  },
+  {
+    Icon: Gauge,
+    title: 'Workers who understand the line they are in',
+    body: `Most shop-floor software points downward: it measures people for somebody else to
+           read. Here the operator sees the whole flow — what feeds their bench, what waits on
+           it, and where the constraint actually is. The line doctor is readable by every
+           member on purpose. People who can see the system improve it; people who are only
+           measured by it learn to manage the measurement.`,
+  },
+]
+
+function Outcomes() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 104px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={eyebrowStyle}>What changes</div>
+          <h2 style={h2Style}>Three things that are true by the end of the first week</h2>
+        </div>
+        <div style={{
+          display: 'grid', gap: size.sp5, marginTop: size.sp8,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        }}>
+          {OUTCOMES.map(({ Icon, title, body }) => (
+            <div key={title} style={cardStyle}>
+              <Icon size={20} color={color.blueBright} strokeWidth={1.6} />
+              <div style={{ marginTop: size.sp3, fontSize: 16, fontWeight: 500, color: color.textPrimary }}>
+                {title}
+              </div>
+              <p style={{ margin: `${size.sp2} 0 0`, fontSize: 14, lineHeight: 1.65, color: color.textSecondary }}>
+                {body}
+              </p>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )

@@ -1,12 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { color, font, size, shadow } from '../theme/tokens'
 import { useHelpStore } from './helpStore'
 import { tipOfTheDay } from './leanTips'
-
-const LAST_KEY = 'taktline.tip.lastShown'      // YYYY-MM-DD of the last shown tip
-const OFF_KEY  = 'taktline.tip.disabled'       // '1' → user opted out of daily tips
-
-const todayKey = () => new Date().toISOString().slice(0, 10)
+import { disableTips, recordTipShown, shouldShowTip, todayKey } from './tipSchedule'
 
 /** Daily lean-tip splash: one tip per calendar day, dismissible, with a
  *  persistent opt-out. Stays out of the way of the first-run welcome and the
@@ -16,23 +12,24 @@ export function TipOfTheDay() {
   const tourActive = useHelpStore((s) => s.tourActive)
   const openManual = useHelpStore((s) => s.openManual)
 
-  const [visible, setVisible] = useState(() => {
-    try {
-      if (localStorage.getItem(OFF_KEY) === '1') return false
-      return localStorage.getItem(LAST_KEY) !== todayKey()
-    } catch { return false }
-  })
+  const [visible, setVisible] = useState(() => shouldShowTip(localStorage, todayKey()))
 
   // Welcome dialog and tour take precedence over the daily tip.
-  if (!visible || !calloutDismissed || tourActive) return null
+  const showing = visible && calloutDismissed && !tourActive
+
+  // Mark it seen the moment it is actually on screen. Recording this in
+  // `dismiss` instead meant a tip only counted as shown if the user clicked
+  // something, so it reappeared on every page load until they did.
+  useEffect(() => {
+    if (showing) recordTipShown(localStorage, todayKey())
+  }, [showing])
+
+  if (!showing) return null
 
   const tip = tipOfTheDay()
 
   const dismiss = (forever = false) => {
-    try {
-      localStorage.setItem(LAST_KEY, todayKey())
-      if (forever) localStorage.setItem(OFF_KEY, '1')
-    } catch { /* private mode */ }
+    if (forever) disableTips(localStorage)
     setVisible(false)
   }
 

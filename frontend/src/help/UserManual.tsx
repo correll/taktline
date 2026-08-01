@@ -444,12 +444,13 @@ function ToolkitChapter() {
 
       <H2 id="quality">Built-in quality</H2>
       <P>
-        Inspecting quality in at the end is the most expensive way to get it: every defect found
-        late carries all the value added since it was made. Build it in instead — check at the
-        step (<i>source inspection</i>), hand nothing defective forward, and treat every defect
-        found downstream as a process problem upstream. The arithmetic is stark: a fault caught at
-        its own station costs one cycle; the same fault caught at final test costs the whole line's
-        work, plus the hunt. WIP multiplies the damage, because a systematic defect fills every
+        Quality cannot be inspected into a product; inspection only sorts what has already been
+        made. And sorting at the end is the costliest moment to do it — every defect found at
+        final test carries all the value added since the fault occurred. Build quality into the
+        work instead: check at the step (<i>source inspection</i>), hand nothing defective
+        forward, and treat every defect found downstream as a process problem upstream. The
+        arithmetic is stark: a fault caught at its own station costs one cycle; the same fault
+        caught at final test costs the whole line's work, plus the hunt. WIP multiplies the damage, because a systematic defect fills every
         buffer before the first bad product reaches anyone who notices.
       </P>
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useCardsStore, useStationsStore, useProcessesStore } from '../../store'
 import { cardsApi, type CardEvent } from '../../api/cards.api'
 import { color, font, size, shadow } from '../../theme/tokens'
-import type { Card } from '../../models'
+import type { Card, Station } from '../../models'
 import { formatDistanceToNow } from 'date-fns'
 import { lotLabel } from './LotCard'
 
@@ -79,6 +79,16 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
+      {/* The card keeps its own width and the history sits BESIDE it, because
+          a lot that has been through a dozen stations produces a timeline
+          longer than everything else on the card put together — as a tab it
+          pushed the details out of view, and as a list inside the card it
+          buried them. Collapsed to the last few by default, with the rest one
+          click away, so a long history stays legible instead of becoming the
+          whole dialog. */}
+      <div className="tk-lot-detail" style={{ display: 'flex', alignItems: 'stretch',
+                    gap: size.sp3, maxWidth: '96vw', maxHeight: '85vh' }}
+           onClick={(e) => e.stopPropagation()}>
       <div className="tk-modal-card" style={{
         background:    color.bgPanel,
         border:        `1px solid ${color.border}`,
@@ -89,6 +99,7 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
         boxShadow:     shadow.lg,
         display:       'flex',
         flexDirection: 'column',
+        flexShrink:    0,
       }}>
         {/* Header */}
         <div style={{
@@ -134,9 +145,6 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
           gap:          size.sp1,
         }}>
           <button style={TAB_STYLE(tab === 'info')}    onClick={() => setTab('info')}>Info</button>
-          <button style={TAB_STYLE(tab === 'history')} onClick={() => setTab('history')}>
-            History {events.length > 0 ? `(${events.length})` : ''}
-          </button>
         </div>
 
         <div style={{ padding: size.sp5, display: 'flex', flexDirection: 'column', gap: size.sp4 }}>
@@ -314,20 +322,78 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
             </>
           )}
 
-          {tab === 'history' && (
-            <div>
-              {loadingEvts ? (
-                <div style={{ fontSize: 11, color: color.textDim }}>Loading…</div>
-              ) : events.length === 0 ? (
-                <div style={{ fontSize: 11, color: color.textDim }}>No events yet.</div>
-              ) : (
-                [...events].reverse().map((evt, i) => (
-                  <EventRow key={evt._id ?? i} evt={evt} stations={stations} />
-                ))
-              )}
-            </div>
-          )}
         </div>
+      </div>
+
+      <HistoryPanel events={events} loading={loadingEvts} stations={stations} />
+      </div>
+    </div>
+  )
+}
+
+/** Everything that has happened to this lot, newest first. */
+function HistoryPanel({ events, loading, stations }: {
+  events: CardEvent[]; loading: boolean; stations: Record<string, Station>
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const COLLAPSED = 6
+  const ordered = [...events].reverse()
+  const shown = expanded ? ordered : ordered.slice(0, COLLAPSED)
+  const hidden = ordered.length - shown.length
+
+  return (
+    <div className="tk-history-panel" style={{
+      width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column',
+      background: color.bgPanel, border: `1px solid ${color.border}`,
+      borderRadius: size.radiusMd, boxShadow: shadow.lg, maxHeight: '85vh',
+    }}>
+      <div style={{
+        padding: `${size.sp4} ${size.sp5}`, borderBottom: `1px solid ${color.border}`,
+        display: 'flex', alignItems: 'baseline', gap: size.sp2, flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 10, fontFamily: font.mono, letterSpacing: '0.12em',
+                       color: color.textDim }}>
+          HISTORY
+        </span>
+        {events.length > 0 && (
+          <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: font.mono,
+                         color: color.textDim }}>
+            {events.length}
+          </span>
+        )}
+      </div>
+
+      <div style={{ overflowY: 'auto', padding: `${size.sp3} ${size.sp5} ${size.sp4}` }}>
+        {loading ? (
+          <div style={{ fontSize: 11, color: color.textDim }}>Loading…</div>
+        ) : ordered.length === 0 ? (
+          <div style={{ fontSize: 11, color: color.textDim }}>Nothing has happened yet.</div>
+        ) : (
+          <>
+            {shown.map((evt, i) => (
+              <EventRow key={evt._id ?? i} evt={evt} stations={stations} />
+            ))}
+            {hidden > 0 && (
+              <button onClick={() => setExpanded(true)} style={{
+                width: '100%', marginTop: size.sp2, padding: `${size.sp2} 0`,
+                background: 'transparent', border: `1px dashed ${color.border}`,
+                borderRadius: size.radius, color: color.blueBright,
+                fontSize: 12, cursor: 'pointer',
+              }}>
+                Show {hidden} earlier {hidden === 1 ? 'event' : 'events'}
+              </button>
+            )}
+            {expanded && ordered.length > COLLAPSED && (
+              <button onClick={() => setExpanded(false)} style={{
+                width: '100%', marginTop: size.sp2, padding: `${size.sp2} 0`,
+                background: 'transparent', border: 'none',
+                color: color.textDim, fontSize: 12, cursor: 'pointer',
+              }}>
+                Show less
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   )
@@ -364,11 +430,13 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 function EventRow({ evt, stations }: { evt: CardEvent; stations: Record<string, import('../../models').Station> }) {
   const ICONS: Record<string, string> = {
     created: '✦', moved: '→', flagged: '⚑', unflagged: '⚐', updated: '✎', deleted: '✕',
+    worked: '⏱',
   }
   const COLORS: Record<string, string> = {
     created: color.statusRunning, moved: color.blueBright,
     flagged: color.statusWarning, unflagged: color.textSecondary,
     updated: color.textSecondary, deleted: color.statusFault,
+    worked: color.statusRunning,
   }
   const icon  = ICONS[evt.type]  ?? '·'
   const col   = COLORS[evt.type] ?? color.textDim
@@ -386,7 +454,31 @@ function EventRow({ evt, stations }: { evt: CardEvent; stations: Record<string, 
       <span style={{ color: col, fontFamily: font.mono, fontSize: 12, marginTop: 1, flexShrink: 0 }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12, color: color.textPrimary }}>
-          {evt.type.charAt(0).toUpperCase() + evt.type.slice(1)}
+          {evt.type === 'worked'
+            ? 'Worked'
+            : evt.type.charAt(0).toUpperCase() + evt.type.slice(1)}
+          {/* A work session says who and how long — the half of "history" that
+              movements alone never answered, and the half people ask about
+              when something has gone wrong. */}
+          {evt.type === 'worked' && (
+            <span style={{ color: color.textSecondary }}>
+              {evt.fromStation && <>{' '}at {stationName(evt.fromStation)}</>}
+              {evt.operatorId && <span style={{ color: color.textDim }}> · {evt.operatorId}</span>}
+              {/* Below a second there is no number worth printing — "0s"
+                  reads as a broken timer rather than a very quick one. */}
+              {evt.durationSec != null && evt.durationSec >= 1 && (
+                <span style={{ color: color.textDim }}>
+                  {' · '}{evt.durationSec >= 90
+                    ? `${Math.round(evt.durationSec / 60)}m`
+                    : `${Math.round(evt.durationSec)}s`}
+                  {evt.quantity != null && ` for ${evt.quantity}`}
+                </span>
+              )}
+              {evt.quantity != null && (evt.durationSec == null || evt.durationSec < 1) && (
+                <span style={{ color: color.textDim }}> · {evt.quantity} units</span>
+              )}
+            </span>
+          )}
           {evt.type === 'moved' && evt.fromStation && evt.toStation && (
             <span style={{ color: color.textSecondary }}>
               {' '}{stationName(evt.fromStation)} → {stationName(evt.toStation)}

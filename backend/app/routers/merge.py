@@ -534,7 +534,7 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
 
     # Lazy import: cards.py imports from this module at load time, so the emit
     # helpers can only be pulled in at call time.
-    from .cards import _emit_card_update, _emit_card_delete
+    from .cards import _emit_card_update, _emit_card_delete, _record_event
 
     consumed_order_ids: set = set()   # to attribute the assembly back to its order
     consumed_codes: set = set()       # to carry the lot code through when all agree
@@ -560,6 +560,15 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
                 consumed_codes.add(card.lotNum)
 
             new_bins = dict(card.bins or {})
+            if take > 0:
+                # A merge is the largest thing that happens to a lot — consumed
+                # into something else — and it wrote nothing to the audit trail
+                # at all, so a lot's history simply stopped at the bench that
+                # ate it. The card is gone; the record of where it went is the
+                # only thing left to trace.
+                _record_event(session, ctx.company_id, str(card.id), "updated",
+                              fromStation=station_id, quantity=take,
+                              note=f"merged into {assembly_tmpl.name}")
             if new_count <= 0:
                 new_bins.pop(station_id, None)
                 if not new_bins:
@@ -609,6 +618,9 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     )
     session.add(new_card)
     await session.flush()
+    _record_event(session, ctx.company_id, str(new_card.id), "created",
+                  toStation=station_id, quantity=assemblies,
+                  note=f"merged from {len(incoming)} feeds")
     _emit_card_update(session, ctx.company_id, new_card)
     return MergeResult(assemblies=assemblies, createdCardId=str(new_card.id))
 

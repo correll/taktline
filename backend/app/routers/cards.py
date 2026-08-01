@@ -13,6 +13,7 @@ from ..db.tables import (
     Card as CardRow, CardEvent as CardEventRow,
     LotTemplate as LotTemplateRow, Process as ProcessRow, Route as RouteRow,
     ProductionOrder as OrderRow, IntegrationOutbox as OutboxRow, Station as StationRow,
+    WorkSession as SessionRow,
 )
 from ..deps.auth import (CompanyContext, ensure_sandbox_quota, get_active_company,
                          require_admin, require_super_admin, require_scope)
@@ -1128,9 +1129,34 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
 @router.get("/{card_id}/events", response_model=List[CardEvent])
 async def get_card_events(card_id: str, ctx: CompanyContext = Depends(get_active_company),
                           session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Everything that ever happened to this lot, oldest first.
+
+    Movements come from `card_events`; the work itself comes from the work
+    sessions and is synthesised into the same timeline rather than duplicated
+    into the audit table. Without it a lot's history said where it had been and
+    nothing about who worked it or for how long — which is half the story, and
+    the half people ask about when something went wrong.
+    """
     rows = (await session.execute(
         select(CardEventRow)
         .where(CardEventRow.cardId == card_id, CardEventRow.companyId == ctx.company_id)
         .order_by(CardEventRow.timestamp.asc())
     )).scalars().all()
-    return [_to_event(r) for r in rows]
+    events = [_to_event(r) for r in rows]
+
+    card_uuid = parse_uuid(card_id)
+    if card_uuid is not None:
+        sessions = (await session.execute(
+            select(SessionRow).where(SessionRow.companyId == ctx.company_id,
+                                     SessionRow.cardId == card_uuid))).scalars().all()
+        for w in sessions:
+            events.append(CardEvent(
+                _id=str(w.id), cardId=card_id, type="worked",
+                fromStation=str(w.stationId) if w.stationId else None,
+                quantity=w.quantity, operatorId=w.operatorId,
+                durationSec=w.durationSec,
+                note="in progress" if w.endedAt is None else "",
+                timestamp=w.startedAt,
+            ))
+    events.sort(key=lambda e: e.timestamp)
+    return events

@@ -4,11 +4,13 @@ import type { Card } from '../models'
 export interface CardEvent {
   _id:         string
   cardId:      string
-  type:        'created' | 'moved' | 'flagged' | 'unflagged' | 'updated' | 'deleted'
+  type:        'created' | 'moved' | 'flagged' | 'unflagged' | 'updated' | 'deleted' | 'worked'
   fromStation: string | null
   toStation:   string | null
   quantity:    number | null
   note:        string
+  operatorId?: string | null
+  durationSec?: number | null
   timestamp:   string
 }
 

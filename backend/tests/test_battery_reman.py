@@ -631,3 +631,72 @@ def test_line_cycle_time_and_session_autoclose(actor):
     listed = {s["_id"]: s for s in a.req("GET", f"/sessions/?stationId={g.modtest}").json()}
     assert listed[s1["_id"]]["endedAt"] is not None, "the dangling session stayed open"
     assert listed[s2["_id"]]["endedAt"] is None
+
+
+# ── A lot's history has to include what happened TO it ──────────────────────
+
+def test_a_merge_writes_itself_into_both_histories(actor):
+    """A merge is the largest thing that happens to a lot — consumed into
+    something else — and it recorded nothing at all. A precursor's history
+    simply stopped at the bench that ate it, and the assembly appeared from
+    nowhere. The card is gone; the record of where it went is all that is left
+    to trace."""
+    a = actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()["_id"]
+    x, y, m = st("Frames"), st("Glass"), st("Glazing")
+    proc = a.req("POST", "/processes/", {"name": "Windows"}).json()["_id"]
+    for load in (x, y):
+        a.req("POST", "/routes/", {"processId": proc, "load": load, "unload": m,
+                                   "quantity": 1})
+    tm = {}
+    for name, station in (("Frame", x), ("Pane", y), ("Window", m)):
+        tm[name] = a.req("POST", "/lot-templates/", {
+            "name": name, "processId": proc, "startStationId": station}).json()["_id"]
+    pre_ids = []
+    for name in ("Frame", "Pane"):
+        pre_ids.append(a.req("POST", "/cards/", {
+            "lotTemplateId": tm[name], "processId": proc, "lotNum": f"{name}-1",
+            "totalQuantity": 2, "bins": {m: {"count": 2}}}).json()["_id"])
+
+    res = a.req("POST", f"/merge/{m}", {})
+    assert res.status_code in (200, 201), res.text
+    asm = res.json()["createdCardId"]
+
+    for pid in pre_ids:
+        ev = a.req("GET", f"/cards/{pid}/events").json()
+        assert any("merged into" in e["note"] for e in ev), \
+            f"a consumed precursor has no record of where it went: {ev}"
+    born = a.req("GET", f"/cards/{asm}/events").json()
+    assert any("merged from" in e["note"] for e in born), \
+        f"the assembly appeared from nowhere: {born}"
+
+
+def test_the_history_includes_who_worked_it_and_for_how_long(actor):
+    """The claim is "everywhere it has been" AND who worked it. Movements came
+    from the audit table; the work itself was nowhere in the timeline."""
+    a = actor(); bootstrap_admin(a)
+    st = lambda n: a.req("POST", "/stations/", {**STATION, "name": n}).json()["_id"]
+    one, two = st("Cutting"), st("Welding")
+    proc = a.req("POST", "/processes/", {"name": "Frames"}).json()["_id"]
+    a.req("POST", "/routes/", {"processId": proc, "load": one, "unload": two,
+                               "quantity": 1})
+    tmpl = a.req("POST", "/lot-templates/", {"name": "Frame", "processId": proc,
+                                             "startStationId": one}).json()["_id"]
+    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl, "processId": proc,
+                                     "lotNum": "F-1", "totalQuantity": 4,
+                                     "bins": {one: {"count": 4}}}).json()["_id"]
+    s = a.req("POST", "/sessions/", {"stationId": one, "cardId": card,
+                                     "operatorId": "ana", "quantity": 2})
+    a.req("POST", f"/sessions/{s.json()['_id']}/end", {"quantity": 2})
+    a.req("POST", f"/cards/{card}/advance",
+          {"fromStationId": one, "toStationId": two, "quantity": 4})
+
+    ev = a.req("GET", f"/cards/{card}/events").json()
+    worked = [e for e in ev if e["type"] == "worked"]
+    assert worked, f"no work session in the lot's history: {[e['type'] for e in ev]}"
+    assert worked[0]["operatorId"] == "ana"
+    assert worked[0]["durationSec"] is not None
+    # And it sits in the timeline in the order it happened.
+    stamps = [e["timestamp"] for e in ev]
+    assert stamps == sorted(stamps), "the timeline is out of order"
+    assert any(e["type"] == "moved" for e in ev), "the advance is missing"

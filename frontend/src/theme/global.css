@@ -366,3 +366,19 @@ html, body {
      zoomed. Raising the floor is the only thing that prevents it. */
   input, select, textarea { font-size: max(16px, 1em); }
 }
+
+/* The lot detail puts its history beside the card — 500px of card plus 320px
+   of panel needs roughly 860px of room. Below that the two stack, so a phone
+   gets the card first and scrolls to the history rather than losing half of
+   each to a horizontal scrollbar. */
+@media (max-width: 900px) {
+  .tk-lot-detail {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .tk-lot-detail .tk-modal-card,
+  .tk-lot-detail .tk-history-panel {
+    width: 100%;
+    max-height: none;
+  }
+}

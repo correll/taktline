@@ -2,40 +2,44 @@ import { useEffect, useState } from 'react'
 import { color, font, shadow, size } from '../../theme/tokens'
 
 /**
- * One swipe on a phone, every screen in the shop.
+ * One job finished on a phone, every screen in the shop.
  *
  * The page already claimed "works on phones and tablets" in a feature card,
  * which is the kind of sentence every SaaS site has and nobody believes. What
  * a shop floor actually wants to know is whether the thing in their hand is a
  * real terminal or a cut-down viewer — so this shows the answer instead of
- * asserting it: a worker advances a lot with their thumb, and the floor plan
- * and the board move on every other device before they have put the phone
- * down.
+ * asserting it.
+ *
+ * It shows the ACTUAL operator flow: tap a lot, press start, work while the
+ * timer runs, press stop, and the lot moves on. An earlier version had the
+ * worker flick the card away with a swipe — a gesture this product does not
+ * have, and one that skipped the entire point of the operator view, which is
+ * that the timer is where cycle time comes from. A demo that teaches the wrong
+ * gesture costs more than no demo, because trying it is the first thing a new
+ * user does.
  *
  * Drawn in plain SVG and CSS rather than with the map's Pixi primitives.
  * WebGL is not guaranteed — privacy extensions block it, GPU blocklists and
  * remote desktops disable it, and it is exactly the locked-down office PC a
- * prospect browses from — and a hero that apologises instead of rendering is
- * worse than a simpler hero. See `components/demo/webgl.ts` for the same
- * lesson learned the expensive way.
- *
- * The sequence is honest about the product: the phone commits the move, the
- * server broadcasts it, and the other screens follow. That is the real order
- * of events on the websocket, not a decorative shimmer.
+ * prospect browses from. See `components/demo/webgl.ts`.
  */
 
-type Phase = 'idle' | 'swipe' | 'sync' | 'settled'
+type Phase = 'idle' | 'picked' | 'starting' | 'running' | 'stopped' | 'sync' | 'settled'
 
 const TIMINGS: Record<Phase, number> = {
-  idle: 900,
-  swipe: 1100,
+  idle: 1100,
+  picked: 800,
+  starting: 600,
+  running: 3000,     // the work itself — the only part that should feel long
+  stopped: 700,
   sync: 700,
-  settled: 2100,
+  settled: 1900,
 }
-const ORDER: Phase[] = ['idle', 'swipe', 'sync', 'settled']
+const ORDER: Phase[] = ['idle', 'picked', 'starting', 'running', 'stopped', 'sync', 'settled']
 
 export default function DeviceSyncDemo() {
   const [phase, setPhase] = useState<Phase>('idle')
+  const [elapsed, setElapsed] = useState(0)
   const [still, setStill] = useState(false)
 
   useEffect(() => {
@@ -55,9 +59,16 @@ export default function DeviceSyncDemo() {
     return () => clearTimeout(t)
   }, [phase, still])
 
-  // With motion disabled the scene rests in its finished state: the lot has
-  // moved and every screen agrees, which is the point being made. Nothing is
-  // lost but the travel.
+  // The clock ticks only while the work is running, which is what the real
+  // timer does — and what cycle time is computed from.
+  useEffect(() => {
+    if (phase === 'running') {
+      const i = setInterval(() => setElapsed((s) => s + 1), 1000)
+      return () => clearInterval(i)
+    }
+    if (phase === 'idle') setElapsed(0)
+  }, [phase])
+
   const p: Phase = still ? 'settled' : phase
   const moved = p === 'sync' || p === 'settled'
 
@@ -71,7 +82,7 @@ export default function DeviceSyncDemo() {
         }}
       >
         <Device label="iPhone · operator" caption="the operator's handset">
-          <Phone phase={p} />
+          <Phone phase={p} elapsed={still ? 3 : elapsed} />
         </Device>
 
         <Sync active={p === 'sync'} />
@@ -97,10 +108,11 @@ export default function DeviceSyncDemo() {
         margin: `${size.sp6} auto 0`, maxWidth: 620, textAlign: 'center',
         fontSize: 15, lineHeight: 1.7, color: color.textSecondary,
       }}>
-        An operator swipes a lot forward on an iPhone. The floor plan on the
-        tablet at the next cell and the board in the office both move —
-        instantly, over the same live connection, with no refresh and nothing to
-        install.
+        An operator picks a lot on an iPhone, presses start, does the work, and
+        presses stop — that timer is where cycle time comes from. When the lot
+        moves on, the floor plan on the tablet at the next cell and the board in
+        the office follow over the same live connection, with no refresh and
+        nothing to install.
       </p>
     </div>
   )
@@ -145,11 +157,30 @@ function Sync({ active }: { active: boolean }) {
   )
 }
 
-// ─── The phone: the operator view, mid-swipe ─────────────────────────────────
+// ─── The phone: the operator view, running a job ─────────────────────────────
 
-function Phone({ phase }: { phase: Phase }) {
-  const swiping = phase === 'swipe'
+const LOTS = [
+  { code: 'LFP-0042', units: '4 modules', tint: '#3B82F6' },
+  { code: 'LFP-0043', units: '4 modules', tint: '#10B981' },
+  { code: 'NMC-0088', units: '8 modules', tint: '#8B5CF6' },
+]
+
+function Phone({ phase, elapsed }: { phase: Phase; elapsed: number }) {
+  const chosen = phase !== 'idle'
+  const running = phase === 'running' || phase === 'stopped'
   const gone = phase === 'sync' || phase === 'settled'
+
+  // Which control the thumb is over. Three taps — the lot, start, stop — which
+  // is the whole interaction.
+  const tap =
+    phase === 'picked' ? 'lot'
+      : phase === 'starting' || phase === 'stopped' ? 'button'
+        : null
+
+  const label = gone ? 'Sent to Pack Test'
+    : running ? 'Stop'
+      : chosen ? 'Start'
+        : 'Tap a lot to begin'
 
   return (
     <div style={{
@@ -166,62 +197,74 @@ function Phone({ phase }: { phase: Phase }) {
         overflow: 'hidden', display: 'flex', flexDirection: 'column',
       }}>
         <div style={{
-          padding: '18px 9px 7px', borderBottom: `1px solid ${color.border}`,
+          padding: '18px 9px 6px', borderBottom: `1px solid ${color.border}`,
           fontSize: 10, color: color.textSecondary, fontFamily: font.mono,
         }}>
           Reassembly
         </div>
 
-        <div style={{ padding: 7, display: 'flex', flexDirection: 'column', gap: 5, flex: 1 }}>
-          <LotChip
-            code="LFP-0042"
-            units="8 modules"
-            tint={color.lotBlue}
-            style={{
-              transform: gone ? 'translateX(150%)' : swiping ? 'translateX(58%)' : 'translateX(0)',
-              opacity: gone ? 0 : 1,
-              transition: gone ? 'all 260ms ease-in' : 'transform 620ms cubic-bezier(.2,.7,.3,1)',
-            }}
-          />
-          <LotChip code="LFP-0043" units="8 modules" tint={color.lotGreen}
-                   style={{ transform: gone ? 'translateY(-38px)' : 'none',
-                            transition: 'transform 320ms ease 120ms' }} />
-          <LotChip code="NMC-0088" units="6 modules" tint={color.lotPurple}
-                   style={{ transform: gone ? 'translateY(-38px)' : 'none',
-                            transition: 'transform 320ms ease 160ms' }} />
+        <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+          {LOTS.map((lot, i) => {
+            const selected = i === 0 && chosen && !gone
+            const hidden = i === 0 && gone
+            return (
+              <div key={lot.code} style={{
+                background: selected ? color.bgElevated : color.bgCard,
+                border: `1px solid ${selected ? color.borderActive : color.border}`,
+                borderLeft: `3px solid ${lot.tint}`, borderRadius: size.radius,
+                padding: '5px 6px',
+                opacity: hidden ? 0 : 1,
+                transform: hidden ? 'translateY(-6px)' : 'none',
+                transition: 'all 260ms ease',
+              }}>
+                <div style={{ fontSize: 9, fontFamily: font.mono, color: color.textPrimary }}>
+                  {lot.code}
+                </div>
+                <div style={{ fontSize: 8, color: color.textDim, marginTop: 1 }}>{lot.units}</div>
+              </div>
+            )
+          })}
         </div>
 
+        {/* The timer. Visible only once a lot is being worked, because that is
+            when it exists — and it is the number the statistics are built on. */}
         <div style={{
-          padding: '6px 8px 9px', fontSize: 9, color: color.textDim,
-          textAlign: 'center', letterSpacing: '0.04em',
+          textAlign: 'center', fontSize: 15, fontFamily: font.mono, height: 19,
+          color: running ? color.statusRunning : color.textDim,
+          letterSpacing: '0.04em',
+          opacity: chosen && !gone ? 1 : 0, transition: 'opacity 200ms ease',
         }}>
-          {gone ? 'sent to Pack Test' : 'swipe to advance →'}
+          0:{String(elapsed).padStart(2, '0')}
+        </div>
+
+        <div style={{ padding: '4px 8px 9px' }}>
+          <div style={{
+            borderRadius: size.radius, textAlign: 'center', padding: '6px 0',
+            fontSize: 9, fontWeight: 600, letterSpacing: '0.05em',
+            background: gone ? 'transparent'
+              : running ? color.statusFault
+                : chosen ? color.statusRunning
+                  : 'transparent',
+            color: gone || !chosen ? color.textDim : color.white,
+            transform: tap === 'button' ? 'scale(0.94)' : 'scale(1)',
+            transition: 'all 180ms ease',
+          }}>
+            {label}
+          </div>
         </div>
       </div>
 
-      {/* The thumb. Present only while the gesture is happening. */}
+      {/* The thumb, over whatever is being tapped. */}
       <div style={{
-        position: 'absolute', left: 26, top: 74,
-        width: 30, height: 30, borderRadius: '50%',
-        background: color.textPrimary, opacity: swiping ? 0.16 : 0,
-        transform: swiping ? 'translateX(56px) scale(1)' : 'translateX(0) scale(0.7)',
-        transition: 'all 620ms cubic-bezier(.2,.7,.3,1)', pointerEvents: 'none',
+        position: 'absolute',
+        left: tap === 'lot' ? 44 : 52,
+        top: tap === 'lot' ? 66 : 212,
+        width: 28, height: 28, borderRadius: '50%',
+        background: color.textPrimary,
+        opacity: tap ? 0.2 : 0,
+        transform: tap ? 'scale(1)' : 'scale(0.7)',
+        transition: 'all 240ms ease', pointerEvents: 'none',
       }} />
-    </div>
-  )
-}
-
-function LotChip({ code, units, tint, style }: {
-  code: string; units: string; tint: string; style?: React.CSSProperties
-}) {
-  return (
-    <div style={{
-      background: color.bgCard, border: `1px solid ${color.border}`,
-      borderLeft: `3px solid ${tint}`, borderRadius: size.radius,
-      padding: '6px 7px', ...style,
-    }}>
-      <div style={{ fontSize: 9, fontFamily: font.mono, color: color.textPrimary }}>{code}</div>
-      <div style={{ fontSize: 8, color: color.textDim, marginTop: 1 }}>{units}</div>
     </div>
   )
 }

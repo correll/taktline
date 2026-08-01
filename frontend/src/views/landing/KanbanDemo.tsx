@@ -22,11 +22,15 @@ type Card = { id: string; code: string; units: number; tint: string; col: number
 
 const COLUMNS = ['Teardown', 'Module Test', 'Busbar Clean', 'Reassembly', 'Pack Test']
 
+// The LFP recipe, matching the hero animation on the same page: a pack tears
+// down into 4 modules and 16 busbars. Two figures on one page disagreeing about
+// the same line is the kind of detail a manufacturing buyer notices first.
+
 // Where each step leaves the board. Written out rather than computed so the
 // sequence reads as what a shift actually does.
 const START: Card[] = [
   { id: 'a', code: 'LFP-0042', units: 1, tint: '#F59E0B', col: 0, row: 0 },
-  { id: 'b', code: 'LFP-0041', units: 8, tint: '#3B82F6', col: 1, row: 0 },
+  { id: 'b', code: 'LFP-0041', units: 4, tint: '#3B82F6', col: 1, row: 0 },
   { id: 'c', code: 'LFP-0041', units: 16, tint: '#10B981', col: 2, row: 0 },
   { id: 'd', code: 'NMC-0088', units: 1, tint: '#8B5CF6', col: 0, row: 1 },
 ]
@@ -38,21 +42,21 @@ const SEQUENCE: Step[] = [
   {
     // The teardown fans out: one pack becomes modules and busbars at once.
     cards: [
-      { id: 'b', code: 'LFP-0041', units: 8, tint: '#3B82F6', col: 1, row: 0 },
+      { id: 'b', code: 'LFP-0041', units: 4, tint: '#3B82F6', col: 1, row: 0 },
       { id: 'c', code: 'LFP-0041', units: 16, tint: '#10B981', col: 2, row: 0 },
-      { id: 'a1', code: 'LFP-0042', units: 8, tint: '#3B82F6', col: 1, row: 1 },
+      { id: 'a1', code: 'LFP-0042', units: 4, tint: '#3B82F6', col: 1, row: 1 },
       { id: 'a2', code: 'LFP-0042', units: 16, tint: '#10B981', col: 2, row: 1 },
       { id: 'd', code: 'NMC-0088', units: 1, tint: '#8B5CF6', col: 0, row: 0 },
     ],
-    note: 'One teardown yields 8 modules and 16 busbars — a split, not a move',
+    note: 'The pack’s card is retired; a new card lands on each branch',
     dwell: 2400,
   },
   {
     // Both precursors arrive at the bench that consumes them.
     cards: [
-      { id: 'b', code: 'LFP-0041', units: 8, tint: '#3B82F6', col: 3, row: 0 },
+      { id: 'b', code: 'LFP-0041', units: 4, tint: '#3B82F6', col: 3, row: 0 },
       { id: 'c', code: 'LFP-0041', units: 16, tint: '#10B981', col: 3, row: 1 },
-      { id: 'a1', code: 'LFP-0042', units: 8, tint: '#3B82F6', col: 1, row: 0 },
+      { id: 'a1', code: 'LFP-0042', units: 4, tint: '#3B82F6', col: 1, row: 0 },
       { id: 'a2', code: 'LFP-0042', units: 16, tint: '#10B981', col: 2, row: 0 },
       { id: 'd', code: 'NMC-0088', units: 1, tint: '#8B5CF6', col: 0, row: 0 },
     ],
@@ -63,17 +67,17 @@ const SEQUENCE: Step[] = [
     // The merge: both precursors are gone, one assembly exists.
     cards: [
       { id: 'pack', code: 'LFP-0041', units: 1, tint: '#D85A30', col: 3, row: 0 },
-      { id: 'a1', code: 'LFP-0042', units: 8, tint: '#3B82F6', col: 1, row: 0 },
+      { id: 'a1', code: 'LFP-0042', units: 4, tint: '#3B82F6', col: 1, row: 0 },
       { id: 'a2', code: 'LFP-0042', units: 16, tint: '#10B981', col: 2, row: 0 },
       { id: 'd', code: 'NMC-0088', units: 1, tint: '#8B5CF6', col: 0, row: 0 },
     ],
-    note: '8 + 16 consumed, one pack built — the board knows the recipe',
+    note: 'Both cards consumed, one pack card born — the board knows the recipe',
     dwell: 2600,
   },
   {
     cards: [
       { id: 'pack', code: 'LFP-0041', units: 1, tint: '#D85A30', col: 4, row: 0 },
-      { id: 'a1', code: 'LFP-0042', units: 8, tint: '#3B82F6', col: 3, row: 0 },
+      { id: 'a1', code: 'LFP-0042', units: 4, tint: '#3B82F6', col: 3, row: 0 },
       { id: 'a2', code: 'LFP-0042', units: 16, tint: '#10B981', col: 3, row: 1 },
       { id: 'd', code: 'NMC-0088', units: 1, tint: '#8B5CF6', col: 1, row: 0 },
     ],

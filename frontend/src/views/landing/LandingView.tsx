@@ -276,10 +276,10 @@ function TheBoard() {
             lineHeight: 1.7, color: color.textSecondary,
           }}>
             One column per station, every lot where it actually is. The difference
-            from a task board is that these cards carry counts and obey a recipe:
-            tearing a pack down yields eight modules and sixteen busbars, and
-            assembling one consumes them again. Drag a card and the material moves
-            with it.
+            from a task board is that a card is tied to material and follows a
+            recipe: tearing a pack down retires its card and puts a new one on each
+            branch — modules on one, busbars on another — and assembling the pack
+            consumes those cards again.
           </p>
         </div>
         <div style={{ marginTop: size.sp8 }}>

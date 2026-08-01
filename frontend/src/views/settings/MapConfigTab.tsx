@@ -14,6 +14,7 @@ export default function MapConfigTab() {
   const [pixelsPerUnit,    setPixelsPerUnit]    = useState('100')
   const [unit,             setUnit]             = useState<'ft' | 'm'>('ft')
   const [stationSizeUnits, setStationSizeUnits] = useState('1.0')
+  const [opacity,          setOpacity]          = useState(1)
   const [mapWidthPx,       setMapWidthPx]       = useState<number | null>(null)
   const [mapHeightPx,      setMapHeightPx]      = useState<number | null>(null)
   const [saving,           setSaving]           = useState(false)
@@ -29,6 +30,7 @@ export default function MapConfigTab() {
     setPixelsPerUnit(String(settings.pixelsPerUnit))
     setUnit(settings.unit)
     setStationSizeUnits(String(settings.stationSizeUnits ?? 1))
+    setOpacity(settings.floorPlanOpacity ?? 1)
     setMapWidthPx(settings.mapWidthPx ?? null)
     setMapHeightPx(settings.mapHeightPx ?? null)
   }, [settings])
@@ -45,6 +47,7 @@ export default function MapConfigTab() {
         pixelsPerUnit: ppu,
         unit,
         stationSizeUnits: ssu,
+        floorPlanOpacity: opacity,
         mapWidthPx:  mapWidthPx  ?? undefined,
         mapHeightPx: mapHeightPx ?? undefined,
       })
@@ -95,6 +98,7 @@ export default function MapConfigTab() {
         url={activeUrl}
         ppu={ppu}
         unit={unit}
+        opacity={opacity}
         onDimsCapture={(w, h) => { setMapWidthPx(w); setMapHeightPx(h) }}
       />
 
@@ -198,6 +202,31 @@ export default function MapConfigTab() {
         <ErrorMsg msg={error} />
 
         <div style={{ display: 'flex', gap: size.sp2 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 11, color: color.textDim, letterSpacing: '0.04em' }}>
+              FLOOR PLAN OPACITY
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3 }}>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={opacity}
+                onChange={(e) => setOpacity(parseFloat(e.target.value))}
+                aria-label="Floor plan opacity"
+                style={{ flex: 1, accentColor: color.bluePrimary, cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: 12, fontFamily: font.mono, color: color.textSecondary,
+                             minWidth: 38, textAlign: 'right' }}>
+                {Math.round(opacity * 100)}%
+              </span>
+            </div>
+            <span style={{ fontSize: 11, color: color.textDim }}>
+              Fade a busy drawing so the stations and routes drawn on top of it stay readable.
+            </span>
+          </label>
+
           <button onClick={handleSave} disabled={saving || uploading} style={primaryBtn(saving || uploading)}>
             {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save'}
           </button>
@@ -253,11 +282,13 @@ function FloorPlanBackground({
   url,
   ppu,
   unit,
+  opacity = 1,
   onDimsCapture,
 }: {
   url:            string
   ppu:            number
   unit:           'ft' | 'm'
+  opacity?:       number
   onDimsCapture?: (w: number, h: number) => void
 }) {
   const imgRef = useRef<HTMLImageElement>(null)
@@ -312,6 +343,10 @@ function FloorPlanBackground({
           height:    '100%',
           objectFit: 'contain',
           display:   'block',
+          // The preview carries the setting so the slider is judged against
+          // the real drawing, not guessed at and checked on the map later.
+          opacity,
+          transition: 'opacity 120ms linear',
         }}
         onLoad={handleLoad}
         onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0' }}

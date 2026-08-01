@@ -140,3 +140,34 @@ def test_bytes_that_are_not_an_image_are_refused():
     assert _sniff_image(b"<html><body>nope") is None
     assert _sniff_image(_png(2, 2)) == ".png"
     assert _sniff_image(b"\xff\xd8\xff\xe0stuff") == ".jpg"
+
+
+def test_floor_plan_opacity_round_trips(actor):
+    """A busy CAD drawing at full strength competes with the stations and
+    routes drawn over it; fading it turns the plan back into a backdrop."""
+    a = actor(); bootstrap_admin(a)
+    assert a.req("GET", "/map-settings/").json()["floorPlanOpacity"] == 1.0, \
+        "an existing map must not change appearance"
+
+    r = a.req("PUT", "/map-settings/", {"floorPlanOpacity": 0.35})
+    assert r.status_code == 200, r.text
+    assert r.json()["floorPlanOpacity"] == 0.35
+    assert a.req("GET", "/map-settings/").json()["floorPlanOpacity"] == 0.35
+
+
+def test_an_opacity_outside_the_range_is_refused(actor):
+    """Clamped server-side, not merely on the slider: out of range renders as
+    an invisible or over-bright plan with no error anywhere, and the value can
+    arrive from a script that never saw the slider."""
+    a = actor(); bootstrap_admin(a)
+    for bad in (-0.5, 1.5, 42):
+        r = a.req("PUT", "/map-settings/", {"floorPlanOpacity": bad})
+        assert r.status_code == 422, f"{bad} was accepted: {r.text[:120]}"
+    assert a.req("GET", "/map-settings/").json()["floorPlanOpacity"] == 1.0
+
+
+def test_the_extremes_are_allowed(actor):
+    a = actor(); bootstrap_admin(a)
+    for good in (0.0, 1.0):
+        assert a.req("PUT", "/map-settings/",
+                     {"floorPlanOpacity": good}).status_code == 200

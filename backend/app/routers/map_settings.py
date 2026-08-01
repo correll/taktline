@@ -47,7 +47,7 @@ _MIME_BY_EXT = {
 async def _get_or_create(session: AsyncSession, company_id) -> MapSettingsRow:
     return await get_or_create_singleton(
         session, MapSettingsRow, company_id,
-        floorPlanUrl=None, pixelsPerUnit=100.0,
+        floorPlanUrl=None, pixelsPerUnit=100.0, floorPlanOpacity=1.0,
         unit="ft", mapWidthPx=None, mapHeightPx=None, updatedAt=utcnow(),
     )
 
@@ -56,6 +56,7 @@ def _to_model(r: MapSettingsRow) -> MapSettings:
     return MapSettings(
         _id=str(r.id),
         floorPlanUrl=r.floorPlanUrl,
+        floorPlanOpacity=r.floorPlanOpacity if r.floorPlanOpacity is not None else 1.0,
         pixelsPerUnit=r.pixelsPerUnit,
         unit=r.unit,
         stationSizeUnits=r.stationSizeUnits,

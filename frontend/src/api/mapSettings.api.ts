@@ -6,6 +6,7 @@ export interface MapSettingsData {
   pixelsPerUnit:    number
   unit:             'ft' | 'm'
   stationSizeUnits: number
+  floorPlanOpacity: number
   mapWidthPx:       number | null
   mapHeightPx:      number | null
   updatedAt:        string

@@ -523,6 +523,11 @@ class MapSettings(Base):
         String, nullable=False, default="ft",
     )
     stationSizeUnits: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    # How strongly the floor plan shows through, 0..1. A scanned CAD drawing at
+    # full strength competes with the station tiles and routes drawn on top of
+    # it; fading it turns the plan back into a backdrop. Defaults to 1 so no
+    # existing map changes appearance.
+    floorPlanOpacity: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     mapWidthPx: Mapped[float | None] = mapped_column(Float, nullable=True)
     mapHeightPx: Mapped[float | None] = mapped_column(Float, nullable=True)
     updatedAt: Mapped[datetime] = _updated()

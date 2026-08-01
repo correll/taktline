@@ -702,7 +702,8 @@ export default function MapCanvas({
                 canvas empty with nothing to explain why. The sprite falls back
                 to its own natural size, which is the right answer anyway. */}
             {mapConfig?.floorPlanUrl && (
-              <FloorPlanSprite url={mapConfig.floorPlanUrl} rect={floorPlanRect} />
+              <FloorPlanSprite url={mapConfig.floorPlanUrl} rect={floorPlanRect}
+                               opacity={mapConfig.floorPlanOpacity ?? 1} />
             )}
 
             {stationList.map((s) => {
@@ -1099,8 +1100,12 @@ function FloorPlanBroken({ url }: { url: string }) {
 }
 
 function FloorPlanSprite({
-  url, rect,
-}: { url: string; rect: { x: number; y: number; w: number; h: number } | null }) {
+  url, rect, opacity = 1,
+}: {
+  url: string
+  rect: { x: number; y: number; w: number; h: number } | null
+  opacity?: number
+}) {
   const [texture, setTexture] = useState<PIXI.Texture | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -1138,7 +1143,7 @@ function FloorPlanSprite({
       y={box.y}
       width={box.w}
       height={box.h}
-      alpha={1}
+      alpha={Math.min(1, Math.max(0, opacity))}
     />
   )
 }

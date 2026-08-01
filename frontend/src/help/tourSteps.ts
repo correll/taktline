@@ -65,6 +65,49 @@ function hasLineShape(c: TourCtx): boolean {
   return routeCount >= 4 && !!merge && !!warehouse && merge._id !== warehouse._id
 }
 
+/**
+ * The five stations the tour asked for, in the order they were dropped.
+ *
+ * Sorted by creation time because `GET /stations/` has no ORDER BY — the array
+ * arrives in whatever order Postgres felt like returning, so "the first one you
+ * placed" only means something once we sort. Without this the routing
+ * instructions below would name the user's stations in an arbitrary order,
+ * which is worse than naming ours: it would look authoritative and be wrong.
+ */
+function droppedInOrder(c: TourCtx) {
+  const ordered = [...c.stations].sort((a, b) =>
+    String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))
+  return ordered.length >= SUGGESTED_COUNT ? ordered.slice(0, SUGGESTED_COUNT) : null
+}
+
+/**
+ * The four connections to draw, worded with whatever the user actually called
+ * their stations.
+ *
+ * The instruction used to be hard-coded to our suggested names — "Steel →
+ * Assembly, Motor → Assembly, …" — while the step above openly invites people
+ * to use their own. Someone who named their stations Cutting, Welding and
+ * Paint was then told to wire up five things that do not exist on their floor
+ * plan, and had to work out the mapping themselves at the exact moment they
+ * know least about the product. Follow the suggestion and this reads word for
+ * word as it did before.
+ */
+function wiringPlan(c: TourCtx) {
+  const five = droppedInOrder(c)
+  const names = five
+    ? five.map((s) => s.name)
+    : [...SUGGESTED.sources, SUGGESTED.merge, SUGGESTED.followup, SUGGESTED.warehouse]
+  const [a, b, m, t, w] = names
+  const legs: [number, number][] = [[0, 2], [1, 2], [2, 3], [3, 4]]
+
+  const drawn = new Set(Object.values(c.routes).map((r) => `${r.load}>${r.unload}`))
+  const steps = legs.map(([from, to]) => ({
+    text: `${names[from]} → ${names[to]}`,
+    done: five ? drawn.has(`${five[from]._id}>${five[to]._id}`) : false,
+  }))
+  return { a, b, m, t, w, steps, known: !!five }
+}
+
 export const TOUR_STEPS: TourStep[] = [
   {
     id: 'welcome',
@@ -93,7 +136,18 @@ export const TOUR_STEPS: TourStep[] = [
     id: 'map-add-routes',
     title: 'Connect them into a flow',
     body: (c) => {
-      const base = "Now the route tool (the connector, top-left). Click a source station, then a target, to draw an arrow between them — that's a step in the flow. Wire four, following our example: Steel → Assembly, Motor → Assembly, Assembly → Testing, Testing → Warehouse. What matters is the shape, not the names: two routes arriving at one station make it a merge — where parts come together, and a last station with no outgoing route becomes your finished-goods store. (Click a route to delete it; Esc cancels.)"
+      const plan = wiringPlan(c)
+      const base = `Now the route tool (the connector, top-left). Click a source station, then a target, to draw an arrow between them — that's a step in the flow. Here, connect ${plan.a} → ${plan.m}, ${plan.b} → ${plan.m}, ${plan.m} → ${plan.t}, and ${plan.t} → ${plan.w}. What matters is the shape, not the names: two routes arriving at one station make it a merge — where parts come together — and a last station with no outgoing route becomes your finished-goods store. (Click a route to delete it; Esc cancels.)`
+
+      // Once we know their stations, name the connections still missing rather
+      // than describing them in the abstract ("two routes arriving at the same
+      // station"), which is only useful to someone who already understands the
+      // model the tour is trying to teach.
+      const left = plan.steps.filter((s) => !s.done).map((s) => s.text)
+      if (plan.known && left.length) {
+        return `${base}\n\nStill to draw: ${left.join(', ')}.`
+      }
+
       const { routeCount, merge, warehouse } = shapeOf(c)
       const missing: string[] = []
       if (!merge) missing.push("two routes arriving at the same station, to make a merge")
@@ -107,9 +161,15 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'see-in-settings',
     title: 'See & fine-tune it in Settings',
-    body: "Everything you just drew is also in Settings — open it. Your Stations, Process, and Routes are here as editable lists, and it's where you add lot templates, rename things, or upload a floor-plan image under Settings → Floor plan. (On the floor plan you can also right-click a station to edit or delete it.)",
+    body: "Everything you just drew is also in Settings — open it. Your Stations, Process, and Routes are here as editable lists, and it's where you add lot templates, rename things, or upload a floor-plan image under Settings → Floor plan. (On the floor plan you can also right-click a station to edit or delete it.) Have a look around, then press Next.",
     target: 'nav-settings',
-    isDone: (c) => c.pathname === '/settings',
+    // Deliberately no `isDone`. Arriving at /settings used to advance the tour
+    // by itself, which meant the step vanished at the exact moment the user
+    // acted on it — they clicked Settings and were immediately shown something
+    // else, having read none of the page they had just been sent to look at.
+    // Auto-advance is right when the instruction is "do this thing" and the
+    // thing is the point (drop five stations, draw the routes); it is wrong
+    // when the instruction is "go and look", because looking takes time.
   },
   {
     id: 'open-lots',

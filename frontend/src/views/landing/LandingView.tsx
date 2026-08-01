@@ -81,6 +81,7 @@ export default function LandingView() {
         <Features />
         <Integrations />
         <Founder />
+        <WhyTrustUs />
         <FromTheBook />
         <BusinessModel />
         <Questions />
@@ -139,6 +140,19 @@ function Hero() {
         </p>
         <p style={{ margin: `${size.sp3} auto 0`, fontSize: 14, color: color.textDim }}>
           Built for job shops, assembly and remanufacturing lines of 5–200 people.
+        </p>
+        {/* Credibility at the top, where the doubt is. The founder section three
+            screens down is the strongest trust signal on the page and a cold
+            visitor was meeting it far too late to help. */}
+        <p style={{ margin: `${size.sp2} auto 0`, fontSize: 13.5, color: color.textDim }}>
+          By the author of{' '}
+          <a href="https://www.amazon.com/dp/B09B1PPF91/" target="_blank" rel="noopener noreferrer"
+             style={{ color: color.textSecondary, textDecoration: 'underline',
+                      textDecorationColor: color.border, textUnderlineOffset: 3 }}
+             onClick={() => track('outbound_click', { to: 'book-seven-deadly-wastes', where: 'hero' })}>
+            The Seven Deadly Wastes
+          </a>
+          {' '}— the lean method this is built on.
         </p>
         <div style={{ marginTop: size.sp8, display: 'flex', gap: size.sp3, justifyContent: 'center', flexWrap: 'wrap' }}>
           <SandboxButton where="hero" style={{ fontSize: 16, padding: '12px 28px' }}>
@@ -260,6 +274,38 @@ function Steps() {
   )
 }
 
+/**
+ * A CTA to close a section with.
+ *
+ * The page ran nine screens between the hero's buttons and the footer's — the
+ * whole persuasive middle, with no way to act inside it. People convert at the
+ * moment they are convinced, not at the moment they reach the bottom, and a
+ * button in the sticky nav is the one thing every visitor has trained
+ * themselves not to see.
+ *
+ * Deliberately lighter than the hero: one line, one primary button, a text
+ * link beside it. Repeating the full hero block three times reads as nagging
+ * and stops being read at all.
+ */
+function InlineCta({ line, where }: { line: string; where: string }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      gap: size.sp4, flexWrap: 'wrap', textAlign: 'center',
+      marginTop: size.sp8, paddingTop: size.sp6,
+      borderTop: `1px solid ${color.border}`,
+    }}>
+      <span style={{ fontSize: 15, color: color.textSecondary }}>{line}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3, flexWrap: 'wrap' }}>
+        <SandboxButton where={where}>Try a live line — no signup</SandboxButton>
+        <SignupLink where={where} style={{ border: 'none', padding: '8px 4px' }}>
+          or create a free account
+        </SignupLink>
+      </div>
+    </div>
+  )
+}
+
 // ─── The line doctor ─────────────────────────────────────────────────────────
 // The findings shown are verbatim what the engine produces for a line of that
 // shape. A page that paraphrases its own product's output promises something
@@ -287,6 +333,8 @@ function TheDoctor() {
         <div style={{ marginTop: size.sp8 }}>
           <DoctorDemo />
         </div>
+
+        <InlineCta where="doctor" line="Point it at your line and see what it finds." />
 
         <div style={{
           display: 'grid', gap: size.sp4, marginTop: size.sp8,
@@ -340,6 +388,8 @@ function TheBoard() {
         <div style={{ marginTop: size.sp8 }}>
           <KanbanDemo />
         </div>
+
+        <InlineCta where="board" line="Your own board, with your own stations, in five minutes." />
       </div>
     </section>
   )
@@ -559,6 +609,71 @@ function Founder() {
             </p>
           </div>
         </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── We are new ──────────────────────────────────────────────────────────────
+// There is no logo wall, and pretending otherwise would be the one thing this
+// audience punishes hardest. A manufacturing buyer asks "who else runs this?"
+// early, and silence answers it worse than the truth does. So the objection is
+// stated first, in the heading, and then answered with the four things that
+// actually make a new tool a low-risk bet — every one of them already true and
+// checkable, not a promise.
+
+function WhyTrustUs() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 900, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={eyebrowStyle}>The honest bit</div>
+          <h2 style={h2Style}>Taktline is new — and that costs you nothing</h2>
+          <p style={{
+            margin: `${size.sp4} auto 0`, maxWidth: 640, fontSize: 16,
+            lineHeight: 1.7, color: color.textSecondary,
+          }}>
+            There is no wall of customer logos on this page, because it would be a wall of
+            logos we have not earned yet. What we can tell you is why trying it is a small
+            decision, and why the thinking behind it is not new at all.
+          </p>
+        </div>
+
+        <div style={{
+          display: 'grid', gap: size.sp4, marginTop: size.sp8,
+          // Two across, so four cards square off rather than falling 3 + 1 and
+          // leaving an orphan beside a gap.
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+        }}>
+          {[
+            ['Nothing to lose',
+             'Free forever on your own line — no seat limits, no feature held back, no credit card. There is no budget to defend and no procurement to survive.'],
+            ['Nothing to install',
+             'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
+            ['Nothing to lock you in',
+             'Your whole line exports as a file and your history as a spreadsheet, any time, in one click. If you leave, you leave with everything — which is the only promise that makes “try it” safe.'],
+            ['The method is a century old',
+             'Lean is not our invention: takt time, pull, the seven wastes and the theory of constraints all predate us by decades. Taktline is a faithful implementation of a well-proven method, not a new theory of manufacturing.'],
+          ].map(([title, body]) => (
+            <div key={title} style={cardStyle}>
+              <div style={{ fontSize: 15, fontWeight: 500, color: color.textPrimary }}>{title}</div>
+              <p style={{ margin: `${size.sp2} 0 0`, fontSize: 14, lineHeight: 1.65, color: color.textSecondary }}>
+                {body}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <p style={{
+          margin: `${size.sp6} auto 0`, maxWidth: 640, textAlign: 'center',
+          fontSize: 14, lineHeight: 1.7, color: color.textDim,
+        }}>
+          And the people are not new to it. Between 2016 and 2022 the same team built and ran
+          Optio, a digital value-stream-mapping system for high-mix, low-volume manufacturers.
+          Taktline is that decade of learning, rebuilt properly.
+        </p>
+
+        <InlineCta where="trust" line="Five minutes, no signup, and you will know." />
       </div>
     </section>
   )

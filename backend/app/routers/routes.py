@@ -11,6 +11,7 @@ from ..deps.auth import CompanyContext, get_active_company, require_super_admin
 from ..models.route import Route, RouteCreate, RouteUpdate
 from ..models.common import utcnow
 from ..core.integrations import can_sink, can_source
+from ..core import undo as undo_core
 
 router = APIRouter(prefix="/routes", tags=["routes"])
 
@@ -392,6 +393,7 @@ _WEIGHT_ERROR = ("A weight only applies where the graph branches — a feed into
 @router.post("/", response_model=Route, status_code=201)
 async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_super_admin),
                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    before = await undo_core.snapshot(session, ctx.company_id)
     process_uuid = _req_fk(body.processId)
     load_uuid = _req_fk(body.load)
     unload_uuid = _req_fk(body.unload)
@@ -433,6 +435,8 @@ async def create_route(body: RouteCreate, ctx: CompanyContext = Depends(require_
         await session.flush()
     except IntegrityError:
         raise HTTPException(400, "Route references a non-existent process or station")
+    await undo_core.record(session, ctx, "Draw a route",
+                           before, await undo_core.snapshot(session, ctx.company_id))
     return _to_route(row)
 
 
@@ -446,6 +450,7 @@ async def get_route(route_id: str, ctx: CompanyContext = Depends(get_active_comp
 async def update_route(route_id: str, body: RouteUpdate,
                        ctx: CompanyContext = Depends(require_super_admin),
                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, route_id, ctx)
 
     new_load = body.load or str(row.load)
@@ -495,12 +500,15 @@ async def update_route(route_id: str, body: RouteUpdate,
     if row.load != old_load:
         await _normalize_weights(session, ctx.company_id, load_uuid=old_load,
                                  process_id=row.processId)
+    await undo_core.record(session, ctx, "Edit a route",
+                           before, await undo_core.snapshot(session, ctx.company_id))
     return _to_route(row)
 
 
 @router.delete("/{route_id}", status_code=204)
 async def delete_route(route_id: str, ctx: CompanyContext = Depends(require_super_admin),
                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, route_id, ctx)
     unload, load, proc = row.unload, row.load, row.processId
     await session.delete(row)
@@ -508,3 +516,5 @@ async def delete_route(route_id: str, ctx: CompanyContext = Depends(require_supe
     # If either end just stopped branching, the surviving weight is moot.
     await _normalize_weights(session, ctx.company_id, unload_uuid=unload, process_id=proc)
     await _normalize_weights(session, ctx.company_id, load_uuid=load, process_id=proc)
+    await undo_core.record(session, ctx, "Delete a route",
+                           before, await undo_core.snapshot(session, ctx.company_id))

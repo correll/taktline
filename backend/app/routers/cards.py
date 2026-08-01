@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.ws_events import queue_event
-from ..core import undo as undo_core
 from ..core.integrations import can_sink
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
 from ..db.tables import (
@@ -803,7 +802,6 @@ async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(
                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Super-admin lot-board drag: unconstrained move of units between any two
     bins (forward or backward along the graph — backward can trigger unmerge)."""
-    before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, card_id, ctx, for_update=True)
     await _assert_units_stay_off_partner_nodes(session, ctx.company_id, [body.toStationId])
     # The board drag is unconstrained on purpose — backwards, sideways, to fix a
@@ -819,22 +817,15 @@ async def move_card(card_id: str, body: MoveBody, ctx: CompanyContext = Depends(
     reformed = await _unsplit_back(session, ctx.company_id, row, body.fromStationId,
                                    body.toStationId, body.quantity)
     if reformed is not None:
-        await undo_core.record(session, ctx, "Undo a split",
-                               before, await undo_core.snapshot(session, ctx.company_id))
         return reformed
     branches = await _split_branches(session, ctx.company_id, row, body.fromStationId,
                                      body.toStationId)
     if branches is not None:
-        out = await _perform_split(session, ctx.company_id, row, body.fromStationId,
-                                   body.toStationId, body.quantity, branches)
-        await undo_core.record(session, ctx, "Split a lot",
-                               before, await undo_core.snapshot(session, ctx.company_id))
-        return out
+        return await _perform_split(session, ctx.company_id, row, body.fromStationId,
+                                    body.toStationId, body.quantity, branches)
     card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId,
                                    body.toStationId, body.quantity)
     await _record_order_progress(session, ctx.company_id, row, body.toStationId, body.quantity)
-    await undo_core.record(session, ctx, "Move lot",
-                           before, await undo_core.snapshot(session, ctx.company_id))
     return card
 
 
@@ -856,7 +847,6 @@ async def advance_card(card_id: str, body: AdvanceBody,
     Also the **scan-to-advance** endpoint: a barcode scanner / print station
     authenticates with a `cards:advance` API key (no session) and hits this after
     reading a lot label, so the shop floor advances work without a logged-in UI."""
-    before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, card_id, ctx, for_update=True)
     from_uuid = require_uuid(body.fromStationId, "Station not found")
     to_uuid = require_uuid(body.toStationId, "Station not found")
@@ -878,16 +868,11 @@ async def advance_card(card_id: str, body: AdvanceBody,
     branches = await _split_branches(session, ctx.company_id, row, body.fromStationId,
                                      body.toStationId)
     if branches is not None:
-        out = await _perform_split(session, ctx.company_id, row, body.fromStationId,
-                                   body.toStationId, body.quantity, branches)
-        await undo_core.record(session, ctx, "Split a lot",
-                               before, await undo_core.snapshot(session, ctx.company_id))
-        return out
+        return await _perform_split(session, ctx.company_id, row, body.fromStationId,
+                                    body.toStationId, body.quantity, branches)
     card = await _perform_bin_move(session, ctx.company_id, row, body.fromStationId,
                                    body.toStationId, body.quantity)
     await _record_order_progress(session, ctx.company_id, row, body.toStationId, body.quantity)
-    await undo_core.record(session, ctx, "Advance lot",
-                           before, await undo_core.snapshot(session, ctx.company_id))
     return card
 
 
@@ -1045,7 +1030,6 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
     The row lock makes a duplicated unmerge wait, re-read the already-dissolved
     card (gone or reduced), and fail cleanly — instead of both requests minting a
     full set of precursors (lot duplication)."""
-    before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, card_id, ctx, for_update=True)
     station_uuid = require_uuid(body.stationId, "Station not found")
 
@@ -1136,8 +1120,6 @@ async def unmerge_card(card_id: str, body: UnmergeBody, ctx: CompanyContext = De
             for leaf in await _leaf_sources(session, ctx.company_id, route.load, units, route.processId):
                 await _spawn(leaf["station_id"], leaf["template"], leaf["quantity"])
 
-    await undo_core.record(session, ctx, "Unmerge an assembly",
-                           before, await undo_core.snapshot(session, ctx.company_id))
     return {"unmerged": qty, "createdCardIds": created}
 
 

@@ -4,17 +4,19 @@ import { useCardsStore } from '../store/cards.store'
 import { color, font, shadow, size } from '../theme/tokens'
 
 /**
- * Undo and redo for lot movements.
+ * Undo and redo for the graph editor — stations and routes, not lots.
  *
- * The stack lives on the server, so the buttons here are a view of it rather
- * than the thing itself — they ask what is undoable rather than remembering.
- * That is what makes them correct on a line where eight tablets share a board:
- * the lot you moved a minute ago may since have been merged at the next bench,
- * and only the server knows.
+ * A lot card records a physical fact: where the material actually is. Undoing
+ * a move would not carry the material back down the shop, so the board would
+ * start disagreeing with the floor, which is the one thing it exists not to do.
+ * Drawing the line is configuration, and a mis-clicked delete is exactly the
+ * kind of mistake software should be able to take back.
  *
- * A refusal is therefore normal, not an error, and is shown as a sentence a
- * person standing at a bench can act on ("those lots have moved on since")
- * rather than a toast saying something failed.
+ * The stack lives on the server, so these buttons are a view of it rather than
+ * the thing itself — they ask what is undoable rather than remembering. That is
+ * what keeps them right when two people edit one line from different rooms.
+ * A refusal is therefore normal rather than an error, and is shown as a
+ * sentence someone can act on rather than a toast saying something failed.
  */
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)

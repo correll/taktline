@@ -398,30 +398,32 @@ its corner, and that is the legend's problem to solve, not the control's.
 
 ## Undo / redo (`core/undo.py`, `POST /undo` · `/redo`)
 
-Server-side, because a client-side stack is only correct with one author. This
-is a line: eight tablets on one websocket, and the lot you moved a minute ago
-may since have been merged at the next bench. Undo has to be judged against the
-floor, and only the server knows it.
+**Stations and routes. Deliberately NOT lots.** A lot card records a physical
+fact — where the material actually is. Undoing a move does not carry the
+material back down the shop, so the board would start disagreeing with the
+floor, which is the one thing it exists not to do. Drawing the line is
+configuration: a mis-clicked delete destroys work with no physical counterpart,
+and putting it back is simply correct. (An earlier pass built this for lot
+movements; that was the wrong scope, and the physical-fact argument is why.)
 
-**A snapshot, not a hand-written inverse per operation.** "The inverse of a
-merge" written by hand would be a second implementation of the domain, and this
-codebase has paid twice for that shape — the preview that disagreed with the
-merge, the editor that disagreed with the engine about what a merge is. A
-recorded state cannot drift from the operation that produced it. `undo_entries`
-holds `beforeState`/`afterState` for **only the cards an operation changed**,
-found by diffing a snapshot either side, so no endpoint has to declare what it
-is about to touch.
+Server-side, because a client-side stack is only correct with one author. Two
+people can edit one line from different rooms, and the route you deleted a
+minute ago may since have been redrawn.
 
-**The rule that makes a blunt restore safe:** an operation may only be undone
-while the cards it touched are *still as it left them*. Anything else and it is
-refused with a sentence a person at a bench can act on ("those lots have moved
-on since"), as a **409** — the request was reasonable and the floor moved.
-Stacks are **per user** (25 deep), and doing something new drops the redo
-branch. Recorded for move, advance, split, un-split, merge and unmerge; not for
-configuration, which has its own review surface and where reverting a station
-out from under live lots is a worse problem. An undo broadcasts like any other
-mutation. Any member may undo their own work — an operator who mis-taps should
-not need a super-admin.
+**A snapshot, not a hand-written inverse per edit.** Hand-writing "the inverse
+of deleting a station" keeps a second description of what a station is, which
+drifts the first time a field is added. `undo_entries` holds
+`beforeState`/`afterState` for **only the rows an edit changed**, found by
+diffing a snapshot either side, so no endpoint declares what it is about to
+touch. Restores order themselves around the foreign keys: routes deleted before
+stations, stations recreated before routes, and a deleted row comes back under
+its own id so a template's start station still resolves.
+
+**The rule that makes a blunt restore safe:** an edit may only be undone while
+the rows it touched are *still as it left them*. Anything else is refused as a
+**409** with a sentence someone can act on ("those lots have moved on since") —
+the request was reasonable and the line moved. Stacks are **per user** (25
+deep); doing something new drops the redo branch.
 
 ## Commit before the response (SESSION_SCOPE)
 

@@ -11,6 +11,7 @@ from ..models.station import Station, StationCreate, StationUpdate
 from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
 from ..core.integrations import ROLES, default_role, is_provider, role_allowed
+from ..core import undo as undo_core
 
 router = APIRouter(prefix="/stations", tags=["stations"])
 
@@ -105,6 +106,7 @@ async def list_stations(ctx: CompanyContext = Depends(get_active_company),
 @router.post("/", response_model=Station, status_code=201)
 async def create_station(body: StationCreate, ctx: CompanyContext = Depends(require_super_admin),
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    before = await undo_core.snapshot(session, ctx.company_id)
     await ensure_sandbox_quota(session, ctx, StationRow)
     _validate_integration(body.integrationProvider, body.integrationRole)
     _validate_branch_mode(body.branchMode)
@@ -114,6 +116,8 @@ async def create_station(body: StationCreate, ctx: CompanyContext = Depends(requ
     station = _to_station(row)
     if station.adapterType:
         await plugin_registry.register(str(row.id), station.adapterType, station.adapterConfig)
+    await undo_core.record(session, ctx, f"Add {row.name}",
+                           before, await undo_core.snapshot(session, ctx.company_id))
     return station
 
 
@@ -171,6 +175,7 @@ async def get_station(station_id: str, ctx: CompanyContext = Depends(get_active_
 async def update_station(station_id: str, body: StationUpdate,
                          ctx: CompanyContext = Depends(require_super_admin),
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, station_id, ctx)
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     _validate_integration(patch.get("integrationProvider", row.integrationProvider),
@@ -188,12 +193,15 @@ async def update_station(station_id: str, body: StationUpdate,
         await plugin_registry.unregister(station_id)
         if station.adapterType:
             await plugin_registry.register(station_id, station.adapterType, station.adapterConfig)
+    await undo_core.record(session, ctx, f"Edit {row.name}",
+                           before, await undo_core.snapshot(session, ctx.company_id))
     return station
 
 
 @router.delete("/{station_id}", status_code=204)
 async def delete_station(station_id: str, ctx: CompanyContext = Depends(require_super_admin),
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, station_id, ctx)
 
     # A station holding material may not be removed.
@@ -221,9 +229,12 @@ async def delete_station(station_id: str, ctx: CompanyContext = Depends(require_
             f"{'s' if len(standing) != 1 else ''} are still at {row.name}. "
             "Move or delete them first.")
 
+    name = row.name
     await session.delete(row)
     await session.flush()
     await plugin_registry.unregister(station_id)
+    await undo_core.record(session, ctx, f"Delete {name}",
+                           before, await undo_core.snapshot(session, ctx.company_id))
 
 
 @router.post("/{station_id}/command")

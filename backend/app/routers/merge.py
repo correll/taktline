@@ -12,7 +12,6 @@ from ..db.tables import (
     Card as CardRow, Station as StationRow,
 )
 from ..deps.auth import CompanyContext, get_active_company, require_admin
-from ..core import undo as undo_core
 from ..models.common import utcnow
 
 router = APIRouter(prefix="/merge", tags=["merge"])
@@ -426,7 +425,6 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     With ``cardIds`` the worker chooses exactly which precursor lot cards get
     consumed (manual mode); without it any available precursors are used (the
     operator view's AUTO button). Pull and unmerge stay admin-only."""
-    before = await undo_core.snapshot(session, ctx.company_id)
     station_uuid = require_uuid(station_id, "Station not found")
     await _assert_station(session, station_uuid, ctx.company_id)
     # Take the per-station merge lock BEFORE reading availability, so a
@@ -560,8 +558,6 @@ async def perform_merge(station_id: str, body: Optional[MergePerformBody] = None
     session.add(new_card)
     await session.flush()
     _emit_card_update(session, ctx.company_id, new_card)
-    await undo_core.record(session, ctx, "Merge into an assembly",
-                           before, await undo_core.snapshot(session, ctx.company_id))
     return MergeResult(assemblies=assemblies, createdCardId=str(new_card.id))
 
 

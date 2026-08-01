@@ -290,3 +290,51 @@ def test_every_merge_in_the_example_gives_its_parts_back(actor, example: Path):
             f"{example.stem}: unmerging at {names[station]} did not give the parts back"
 
     assert tried, f"{example.stem}: no merge could be exercised — the test proved nothing"
+
+
+def test_an_unsplit_takes_the_twin_off_the_branch_it_belongs_to(actor):
+    """Regression, found by the fuzzer's ledger on the window line.
+
+    A lot that straddles TWO branches of the same split was chosen to supply
+    the twin for one branch and then had the units taken off the other — the
+    consumption loop re-derived "which branch is this lot on?" from the card,
+    and a card on two branches answers with whichever comes first.
+
+    Units stayed conserved, which is why nothing else noticed: the offcut that
+    should have been consumed was still on the shelf and a tube that should
+    have survived was gone. Inventory in the wrong place is not a smaller
+    problem than inventory in the wrong quantity — it is the one a stock count
+    cannot find.
+    """
+    a = actor(); bootstrap_admin(a)
+    proc, src, tube, off, bar, card = _split_line(a, weights=(1, 1))
+
+    # Two bars go out, so each branch holds two pieces across two lots.
+    for _ in range(2):
+        r = a.req("POST", f"/cards/{card['_id']}/advance",
+                  {"fromStationId": src, "toStationId": tube, "quantity": 1})
+        assert r.status_code == 200, r.text
+
+    # Give one lot a foot on BOTH branches — the shape that triggers it.
+    straddler = next(c for c in a.req("GET", "/cards/").json() if tube in c["bins"])
+    mv = a.req("POST", f"/cards/{straddler['_id']}/move",
+               {"fromStationId": tube, "toStationId": off, "quantity": 1})
+    assert mv.status_code in (200, 400), mv.text
+    if mv.status_code == 400:
+        pytest.skip("this line will not let a lot straddle two branches")
+
+    before = _units(a)
+    assert before.get(tube, 0) >= 1 and before.get(off, 0) >= 2, before
+
+    mover = next(c for c in a.req("GET", "/cards/").json() if tube in c["bins"])
+    r = a.req("POST", f"/cards/{mover['_id']}/move",
+              {"fromStationId": tube, "toStationId": src, "quantity": 1})
+    assert r.status_code == 200, r.text
+
+    after = _units(a)
+    # One unit re-formed at the saw, and EACH branch gave up exactly one.
+    assert after.get(src, 0) == before.get(src, 0) + 1
+    assert after.get(tube, 0) == before.get(tube, 0) - 1, \
+        f"the tube branch did not pay its share: {before} -> {after}"
+    assert after.get(off, 0) == before.get(off, 0) - 1, \
+        f"the offcut branch did not pay its share: {before} -> {after}"

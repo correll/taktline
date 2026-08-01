@@ -706,7 +706,11 @@ async def _unsplit_back(session, company_id, row: CardRow, from_id: str, to_id: 
                 break
             have = (cand.bins or {}).get(str(branch.unload), {}).get("count", 0)
             take = min(have, remaining)
-            consumed.append((cand, take))
+            # Carry the station this lot was chosen FOR. Re-deriving it later
+            # from the card is what broke: a lot standing on two branches of
+            # the same split answers "which branch am I on?" with whichever
+            # comes first, so the units came off the wrong one.
+            consumed.append((cand, str(branch.unload), take))
             remaining -= take
         if remaining > 0:
             station = await session.get(StationRow, branch.unload)
@@ -725,8 +729,8 @@ async def _unsplit_back(session, company_id, row: CardRow, from_id: str, to_id: 
         row.updatedAt = utcnow()
         _emit_card_update(session, company_id, row)
 
-    for cand, take in consumed:
-        _take_units(cand, str(_branch_station_of(branches, cand)), take)
+    for cand, station_id, take in consumed:
+        _take_units(cand, station_id, take)
         if not (cand.bins or {}):
             await session.delete(cand)
             _emit_card_delete(session, company_id, str(cand.id))
@@ -774,11 +778,6 @@ def _take_units(card: CardRow, station_id: str, n: int) -> None:
     card.totalQuantity = max(1, card.totalQuantity - n)
 
 
-def _branch_station_of(branches, card: CardRow):
-    """Which branch station this card is standing on."""
-    for b in branches:
-        if (card.bins or {}).get(str(b.unload), {}).get("count", 0) > 0:
-            return b.unload
     return None
 
 

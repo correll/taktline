@@ -1,3 +1,4 @@
+import { LineDoctor } from './help/LineDoctor'
 import React, { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { connectWS, disconnectWS } from './api/ws'
@@ -126,6 +127,7 @@ function Shell() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Topbar connection={connection} />
       <OutageBanner />
+      <LineDoctor />
       <OrientationNavigator />
       {/* Inside the shell on purpose: the topbar stays, so a view that fails
           leaves the rest of the app reachable instead of blanking the screen. */}

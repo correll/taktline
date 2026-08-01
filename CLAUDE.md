@@ -358,6 +358,44 @@ saw the easy shape — each turns a green suite into a decorative one, so each o
 these files asserts its own coverage. And **a test that passes before the fix
 is worth nothing**: check it fails first.
 
+## The line doctor (`core/analysis.py`, `GET /analysis/`)
+
+A deterministic expert system that reads a line and says what is wrong with it,
+in the manual's vocabulary. **No model, no network, nothing leaves the
+building** — which is what makes it safe to point at a customer's production
+data, and testable against lines with planted faults.
+
+Two kinds of finding, and the first matters most. **Topology** findings need no
+measurements at all: a line that can never complete an order, a split
+delivering six pieces into a bench that consumes one, a station every order
+must cross, one move far longer than the rest. Those are visible the moment the
+graph is drawn — which is exactly when a new user has no data and most needs to
+be told their line cannot work. **Timing** findings need sessions and
+departures: the constraint (slowest line cycle time), the cycle-vs-line-cycle
+gap (the manual's own framing of where waste lives), takt adherence, balance,
+WIP concentration read through Little's law, unevenness (Mura) from the spread
+of individual sessions, and operator spread as the sign that standard work is
+missing.
+
+Findings carry the TIMWOOD name and a manual anchor, and every number is on the
+finding, so a client renders values from data rather than parsing prose.
+`readiness` is `no-data` / `partial` / `ready` — and saying *"nobody has run a
+timer, so there is nothing to say about pace"* is a feature, not a fallback: a
+report that invents advice from three sessions is worse than one that admits it
+cannot see.
+
+`tests/test_analysis.py` builds lines whose fault is known and asserts the
+diagnosis names it — and asserts a **healthy line stays quiet**, because a
+checker that reports something on every input is a horoscope. It caught its
+first bug immediately: the WIP rule gated on total stock including shelves, so
+a full warehouse opened the question and answered it about the two units
+actually in production.
+
+The UI is a large, transparent bulb in the top right (`help/LineDoctor.tsx`),
+dark until there is enough data and glowing after. It is clickable while dark
+on purpose. The map's process legend steps aside for it: a global control owns
+its corner, and that is the legend's problem to solve, not the control's.
+
 ## Commit before the response (SESSION_SCOPE)
 
 Every `Depends(get_session)` carries `**SESSION_SCOPE` (`scope="function"`). FastAPI closes *request*-scoped dependency stacks only **after** the response has been sent, so a commit living there races the client's next request — a tablet 404s the card whose creation it just saw succeed, or a fresh login 401s on its first authenticated call (reproduced ~2 times per 120 writes on a keep-alive connection). Function scope closes the stack **before** the response bytes leave the server: commit first, respond second. The first declaration FastAPI solves decides which stack the shared session lands in, so one stray unscoped `Depends(get_session)` reintroduces the race — `tests/test_reman_line.py::test_every_session_dependency_commits_before_the_response` walks the app and fails on any.

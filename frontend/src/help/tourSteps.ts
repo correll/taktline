@@ -200,8 +200,22 @@ export const TOUR_STEPS: TourStep[] = [
     body: 'Pick a station, select a lot, set how many pieces you’re working on, and press Start to run the timer; press Stop when done. Then advance the lot to the next station along the route — carry it all the way through Testing into the Warehouse, where it lands as a finished good. That timing is what powers the takt-time and OEE you’ll see in Statistics. Press Next to wrap up.',
   },
   {
+    // Introduced before the wrap-up on purpose: the user has just built a line
+    // and has no data at all, which is exactly the state the doctor is most
+    // useful in and the state people assume it is useless in.
+    id: 'line-doctor',
+    title: 'Ask what is wrong with your line',
+    body: 'See the light bulb, top right? That is the line doctor. It reads your line and tells you what is wrong with it — and it works before you have run anything, because the worst problems are visible in the shape of the graph: a line that can never finish an order, a step that delivers six pieces into a bench that takes one, a station everything has to pass through. It lights up once enough work has been timed to talk about pace too — bottlenecks, balance, where the waiting is. Everything is computed on your own server; nothing about your line is sent anywhere. Give it a click.',
+    target: 'line-doctor',
+  },
+  {
     id: 'done',
     title: 'That’s a working line! 🎉',
     body: 'You built a line, arranged it on the floor, pulled a lot through a merge, ran a station, and sent a finished lot to the Warehouse. From here, invite your team from Settings → Members, and open the manual any time from the Help menu.',
+  },
+  {
+    id: 'try-garment',
+    title: 'Want to see a real one?',
+    body: 'Your line was five stations. A garment factory is the same idea with the interesting parts turned on: one lay of fabric cut into fronts, sleeves, ribbing and hood panels — four branches from one step — which all have to arrive before a sweatshirt can be sewn. Load it from Settings → Floor plan → Import, pick cut-and-sew-sweatshirts, then open the line doctor and see what it says about a line you did not draw. It is a good way to see what the analysis is for before you trust it on your own floor.',
   },
 ]

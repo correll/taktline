@@ -58,6 +58,9 @@ ALLOWED = {
         "create_route": "CRUD write path",
     },
     "routers/map_io.py": {"export_map": "serialises the rows as rows"},
+    "routers/analysis.py": {
+        "_snapshot": "hands rows to core.analysis, which filters boundary links itself",
+    },
     "routers/orders.py": {"_resolve_process": "picks a process, not a degree"},
     "routers/stations.py": {"_strip_split_semantics": "clears weights on flip to choice"},
 }

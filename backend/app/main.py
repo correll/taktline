@@ -22,6 +22,7 @@ from .models.common import utcnow
 from .models.machine_state import MachineState
 from .plugins.registry import plugin_registry
 from .routers import (
+    analysis,
     admin, api_keys, auth, cards, companies, global_settings, invitations, lot_templates,
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
     client_errors, map_io, stations, stats,
@@ -136,6 +137,7 @@ app.include_router(lot_templates.router)
 app.include_router(cards.router)
 app.include_router(stats.router)
 app.include_router(sessions.router)
+app.include_router(analysis.router)
 app.include_router(map_settings.router)
 app.include_router(global_settings.router)
 app.include_router(merge.router)

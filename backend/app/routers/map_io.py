@@ -50,7 +50,8 @@ from ..db.tables import (
     Station as StationRow,
     WorkSession as SessionRow,
 )
-from ..deps.auth import SANDBOX_LIMITS, CompanyContext, require_super_admin
+from ..deps.auth import (SANDBOX_LIMITS, CompanyContext, ensure_full_account,
+                         require_super_admin)
 from ..models.common import utcnow
 from .routes import (_check_boundary_placement, _process_edges, _validate_output_template,
                      _weight_allowed, _would_create_cycle)
@@ -236,6 +237,15 @@ async def import_map(doc: MapDocument,
                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Replace this company's line with the file's. One transaction: a file
     that fails any rule leaves the old line untouched."""
+    # Not in the sandbox. A visitor is super-admin of their throwaway company,
+    # so nothing else stopped them pasting a line file — and while an import
+    # REPLACES rather than appends, the per-row quotas do not cover routes at
+    # all (forty stations, but a file may carry five hundred edges), and each
+    # attempt is a full delete-and-reinsert of every station, route, template,
+    # lot and session. The sandbox exists to let someone try the product, and
+    # it already locks the rest of the configuration surface; a bulk loader
+    # that writes hundreds of rows per request is not what it is for.
+    ensure_full_account(ctx)
     # Refs must be unambiguous before anything is touched.
     for kind, refs in (("station", [s.ref for s in doc.stations]),
                        ("process", [p.ref for p in doc.processes]),

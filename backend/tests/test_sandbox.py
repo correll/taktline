@@ -235,3 +235,33 @@ def test_adoption_can_never_take_a_real_company():
     assert owner_email                      # (owner still owns it)
     owner.company = real_company
     assert owner.req("GET", "/stations/").status_code == 200
+
+
+def test_a_sandbox_cannot_bulk_load_a_line_file(actor):
+    """`/map-io/import` writes hundreds of rows per call. An import replaces
+    rather than appends, so it cannot grow the database without bound — but the
+    per-row quotas do not cover routes at all (forty stations, five hundred
+    edges allowed), and every attempt deletes and reinserts the whole line. The
+    sandbox is for trying the product, and it already locks the rest of the
+    configuration surface."""
+    import json
+    from pathlib import Path
+    a = actor()
+    r = a.req("POST", "/auth/sandbox", {})
+    assert r.status_code == 200, r.text
+    a.company = r.json()["companyId"]
+
+    doc = json.loads((Path(__file__).resolve().parents[2] / "examples"
+                      / "cut-and-sew-sweatshirts.json").read_text())
+    blocked = a.req("POST", "/map-io/import", doc)
+    assert blocked.status_code == 403, blocked.text
+    assert a.req("GET", "/stations/").json() == [], "a refused import still wrote rows"
+
+
+def test_a_sandbox_may_still_take_its_line_away(actor):
+    """Export stays open: it is read-only, and someone who has built something
+    they like should be able to leave with it."""
+    a = actor()
+    r = a.req("POST", "/auth/sandbox", {})
+    a.company = r.json()["companyId"]
+    assert a.req("GET", "/map-io/export").status_code == 200

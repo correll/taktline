@@ -309,7 +309,7 @@ def _topology_findings(s: Snapshot) -> list:
             detail="No routes have been drawn, so there is no value stream to analyse. "
                    "Draw the real process once — where work happens and how it connects — "
                    "and every view derives from it.",
-            manual="concepts"))
+            ))
         return out
 
     touched = {r.load for r in routes} | {r.unload for r in routes}
@@ -318,12 +318,13 @@ def _topology_findings(s: Snapshot) -> list:
     if islands:
         out.append(Finding(
             rule="island-station", severity=WARNING, basis="topology",
-            title=f"{len(islands)} station{'s' if len(islands) != 1 else ''} sit outside the flow",
+            title=f"{_plural(len(islands), 'station').capitalize()} "
+                  f"{'sit' if len(islands) != 1 else 'sits'} outside the flow",
             detail=f"{', '.join(st.name for st in islands[:4])} "
                    f"{'have' if len(islands) != 1 else 'has'} no routes at all, so no work can "
                    "reach or leave. Either connect them or remove them — a station on the floor "
                    "plan that nothing flows through still reads as part of the line.",
-            stations=[st.id for st in islands], manual="concepts"))
+            stations=[st.id for st in islands]))
 
     for pid, rs in _by_process(s).items():
         pname = procs[pid].name if pid in procs else "this process"
@@ -340,14 +341,14 @@ def _topology_findings(s: Snapshot) -> list:
                 detail="Every station sends work onward and none is a finished-goods end, so "
                        "nothing in this process can ever complete. Give the last step no outgoing "
                        "route, or hand off to an integration.",
-                process=pid, manual="concepts"))
+                process=pid))
         if not sources:
             out.append(Finding(
                 rule="no-source", severity=CRITICAL, basis="topology",
                 title=f"{pname} has nowhere for material to enter",
                 detail="Every station is fed by another, so there is no queue where raw material "
                        "starts. A pull needs a leaf to seed.",
-                process=pid, manual="concepts"))
+                process=pid))
 
         starts = {t.start_station for t in s.templates if t.process == pid and t.start_station}
         if not starts:
@@ -356,7 +357,7 @@ def _topology_findings(s: Snapshot) -> list:
                 title=f"{pname} makes nothing yet",
                 detail="No product template starts anywhere in this process, so an order has "
                        "nothing to release and a pull has nothing to seed.",
-                process=pid, manual="concepts"))
+                process=pid))
 
         if procs.get(pid) and procs[pid].desired_takt_sec is None:
             out.append(Finding(
@@ -373,10 +374,11 @@ def _topology_findings(s: Snapshot) -> list:
         out.append(Finding(
             rule="accumulation", severity=WARNING, basis="topology",
             title=f"Work piles up at {names.get(acc['station'], 'a station')}",
-            detail=f"Every cycle delivers {acc['delivered']} units into "
+            detail=f"Every cycle delivers {_plural(acc['delivered'], 'unit')} into "
                    f"{names.get(acc['station'], 'this station')}"
                    f"{f' on {pname}' if pname else ''} while the next step consumes "
-                   f"{acc['consumed']} — a surplus of {acc['surplus']} per cycle, built into the "
+                   f"{_words(acc['consumed'])} — a surplus of {_words(acc['surplus'])} per "
+                   "cycle, built into the "
                    "weights rather than caused by anyone's pace. It will grow for as long as the "
                    "line runs. Route the surplus to a storage location, or correct the ratio.",
             stations=[acc["station"]], process=acc["process"],
@@ -396,7 +398,9 @@ def _topology_findings(s: Snapshot) -> list:
         who = _english_list(pnames) if pnames else "this process"
         every = "Every unit of " + who + " has to cross"
         if len(pids) > 1:
-            every = f"Every unit of all {len(pids)} processes ({who}) has to cross"
+            # "all two processes" is not English; two things are *both*.
+            how_many = "both" if len(pids) == 2 else f"all {_words(len(pids))}"
+            every = f"Every unit of {how_many} processes ({who}) has to cross"
         out.append(Finding(
             rule="single-point-of-failure", severity=INSIGHT, basis="topology",
             title=f"Everything passes through {names.get(sid, 'one station')}",
@@ -404,7 +408,7 @@ def _topology_findings(s: Snapshot) -> list:
                    "stream stops with it. That is where a trained backup, a second machine or a "
                    "small deliberate buffer buys more than anywhere else on the line.",
             stations=[sid], process=pids[0] if len(pids) == 1 else None,
-            manual="concepts", metrics={"processes": len(pids)}))
+            metrics={"processes": len(pids)}))
 
     if s.pixels_per_unit > 0:
         lengths = []
@@ -469,9 +473,43 @@ def _timing_findings(s: Snapshot) -> list:
     if not worked:
         return out
 
+    # Where work ENTERS the line. A station nothing feeds does not set its own
+    # exit rate — releases do. Calling it the constraint is the commonest way
+    # to misread a line: it sends people to speed up the one station whose
+    # pace is not theirs to change, when the line is simply waiting for orders.
+    incoming, _out = _degrees(_real_routes(s))
+    entries = {st.id for st in s.stations
+               if not incoming.get(st.id) and not st.provider and not st.is_storage}
+
     # ── The constraint. Everything else on a line is subordinate to it: an
     #    hour saved anywhere else is not an hour gained.
-    exits = {sid: m.line_cycle_sec for sid, m in worked.items() if m.line_cycle_sec}
+    all_exits = {sid: m.line_cycle_sec for sid, m in worked.items() if m.line_cycle_sec}
+    exits = {sid: v for sid, v in all_exits.items() if sid not in entries}
+
+    # The line is fed more slowly than it can work: every bench is quicker than
+    # the material arriving. That is not a bottleneck to attack, it is capacity
+    # nobody is paying for — and the answer is the opposite of the usual one.
+    if len(all_exits) >= 3 and exits:
+        feeder = max(all_exits, key=lambda k: all_exits[k])
+        if feeder in entries:
+            downstream = statistics.median(exits.values())
+            if downstream and all_exits[feeder] > 1.3 * downstream:
+                out.append(Finding(
+                    rule="demand-limited", severity=INSIGHT, basis="timing",
+                    title=f"The line is faster than the work arriving at "
+                          f"{names.get(feeder, 'the front')}",
+                    detail=f"A piece enters at {names.get(feeder, 'the first station')} every "
+                           f"{_mmss(all_exits[feeder])}, while the stations downstream turn one "
+                           f"round every {_mmss(downstream)}. Nothing here is a bottleneck — the "
+                           "line is over-dimensioned for the orders it is getting, and the idle "
+                           "capacity is paid for either way. Rather than speeding anything up, "
+                           "consider combining steps so that fewer stations each do more: a "
+                           "longer cycle time at fewer benches, matched to the rate work actually "
+                           "arrives, frees people and floor without slowing anything down.",
+                    stations=[feeder], waste="Waiting", manual="timing",
+                    metrics={"entrySec": round(all_exits[feeder], 1),
+                             "downstreamSec": round(downstream, 1)}))
+
     if len(exits) >= 2:
         slowest = max(exits, key=lambda k: exits[k])
         rest = sorted(v for k, v in exits.items() if k != slowest)
@@ -545,7 +583,7 @@ def _timing_findings(s: Snapshot) -> list:
                        "to the slowest step, so the fast stations are waiting — that idle time is "
                        "paid for whether or not it appears anywhere. Moving work from the slow "
                        "step to the fast one costs nothing and raises the whole line.",
-                stations=[slowest, fastest], waste="Waiting", manual="waste",
+                stations=[slowest, fastest], waste="Waiting", manual="timing",
                 metrics={"ratio": round(ratio, 2),
                          "slowestSec": round(cycles[slowest], 1),
                          "fastestSec": round(cycles[fastest], 1)}))
@@ -566,7 +604,8 @@ def _timing_findings(s: Snapshot) -> list:
                     rule="wip-concentration", severity=WARNING, basis="timing",
                     title=f"{int(share * 100)}% of the work in process is at "
                           f"{names.get(worst, '?')}",
-                    detail=f"{floor[worst]} of {sum(floor.values())} units on the floor are "
+                    detail=f"{_words(floor[worst])} of {_words(sum(floor.values()))} units on the "
+                           "floor are "
                            f"waiting at {names.get(worst, 'one station')}. WIP piling up in front "
                            "of a station is the signature of a bottleneck, and by Little's law it "
                            "is also lead time: halve the queue and you halve how long an order "
@@ -593,7 +632,7 @@ def _timing_findings(s: Snapshot) -> list:
                        "bottleneck, judge a takt or trust an average until the same job takes "
                        "about the same time twice. Usually it means the step is really several "
                        "different jobs, or that there is no standard way of doing it.",
-                stations=[sid], manual="waste",
+                stations=[sid],
                 metrics={"cv": round(cv, 2), "meanSec": round(mean, 1),
                          "minSec": round(min(m.samples), 1), "maxSec": round(max(m.samples), 1)}))
             break
@@ -612,7 +651,7 @@ def _timing_findings(s: Snapshot) -> list:
                        "is the sign that there is no standard work, so everyone has invented their "
                        "own method. Write down the best one and teach it; it is the cheapest "
                        "improvement on this list.",
-                stations=[sid], manual="waste",
+                stations=[sid],
                 metrics={"fastestSec": round(vals[0], 1), "slowestSec": round(vals[-1], 1)}))
             break
 
@@ -680,16 +719,16 @@ def _narrative(s: Snapshot, findings: list, readiness: str, coverage: dict) -> l
 
     shape = []
     if workers:
-        shape.append(f"{len(workers)} work station{'s' if len(workers) != 1 else ''}")
+        shape.append(_plural(len(workers), "work station"))
     if s.processes:
-        shape.append(f"{len(s.processes)} process{'es' if len(s.processes) != 1 else ''}")
+        shape.append(_plural(len(s.processes), "process", "processes"))
     incoming, outgoing = _degrees(real)
     merges = [n for n in outgoing.keys() | incoming.keys() if len(incoming.get(n, ())) >= 2]
     splits = [n for n in outgoing.keys() | incoming.keys() if len(outgoing.get(n, ())) >= 2]
     if merges:
-        shape.append(f"{len(merges)} merge{'s' if len(merges) != 1 else ''}")
+        shape.append(_plural(len(merges), "merge"))
     if splits:
-        shape.append(f"{len(splits)} split{'s' if len(splits) != 1 else ''}")
+        shape.append(_plural(len(splits), "split"))
     if shape:
         paras.append("Your line has " + _english_list(shape) + ".")
 
@@ -701,12 +740,11 @@ def _narrative(s: Snapshot, findings: list, readiness: str, coverage: dict) -> l
             "anyone working faster.")
     elif readiness == "partial":
         paras.append(
-            f"There is some timing data — {coverage['sessions']} work session"
-            f"{'s' if coverage['sessions'] != 1 else ''} across "
-            f"{coverage['stationsWithTiming']} station"
-            f"{'s' if coverage['stationsWithTiming'] != 1 else ''} — but not enough to trust an "
-            f"average. Run the line for a while longer; past about {READY_SESSIONS} sessions on "
-            f"{READY_STATIONS} stations the timing findings below become worth acting on.")
+            f"There is some timing data — {_plural(coverage['sessions'], 'work session')} "
+            f"across {_plural(coverage['stationsWithTiming'], 'station')} — but not enough to "
+            f"trust an average. Run the line for a while longer; past about "
+            f"{_words(READY_SESSIONS)} sessions on {_words(READY_STATIONS)} stations the timing "
+            "findings below become worth acting on.")
 
     crit = [f for f in findings if f.severity == CRITICAL]
     warn = [f for f in findings if f.severity == WARNING]
@@ -714,12 +752,12 @@ def _narrative(s: Snapshot, findings: list, readiness: str, coverage: dict) -> l
 
     if crit:
         paras.append(
-            f"{'One thing' if len(crit) == 1 else f'{len(crit)} things'} will stop this line from "
+            f"{_plural(len(crit), 'thing').capitalize()} will stop this line from "
             "working at all, and should be fixed before anything else: "
             + "; ".join(f.title.lower() for f in crit) + ".")
     if warn:
         paras.append(
-            f"{'One problem' if len(warn) == 1 else f'{len(warn)} problems'} "
+            f"{_plural(len(warn), 'problem').capitalize()} "
             f"{'is' if len(warn) == 1 else 'are'} costing you time or material every cycle: "
             + "; ".join(f.title.lower() for f in warn) + ".")
     if not crit and not warn and readiness == "ready":
@@ -729,7 +767,7 @@ def _narrative(s: Snapshot, findings: list, readiness: str, coverage: dict) -> l
             "rather than the execution.")
     if tips:
         paras.append(
-            f"{len(tips)} further observation{'s' if len(tips) != 1 else ''} worth a look when "
+            f"{_plural(len(tips), 'further observation').capitalize()} worth a look when "
             "the bigger items are done.")
 
     wastes = sorted({f.waste for f in findings if f.waste})
@@ -737,6 +775,25 @@ def _narrative(s: Snapshot, findings: list, readiness: str, coverage: dict) -> l
         paras.append("In the language of the seven wastes, what shows up here is "
                      + _english_list(wastes) + ".")
     return paras
+
+
+_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight",
+          "nine", "ten", "eleven", "twelve"]
+
+
+def _words(n: int) -> str:
+    """Small counts as words, the way a person writes a sentence.
+
+    Only COUNTS — three stations, two problems. Measurements keep their
+    numerals, because "forty-one metres" and "two minutes ten seconds" are
+    worse than 41 m and 2m 10s in a report somebody reads standing on a floor.
+    Past twelve the numeral wins for everything.
+    """
+    return _WORDS[n] if 0 <= n < len(_WORDS) else f"{n:,}"
+
+
+def _plural(n: int, one: str, many: str = "") -> str:
+    return f"{_words(n)} {one if n == 1 else (many or one + 's')}"
 
 
 def _english_list(items: list) -> str:

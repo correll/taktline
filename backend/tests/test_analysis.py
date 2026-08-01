@@ -278,3 +278,76 @@ def test_the_report_is_readable_by_an_operator(actor):
     a = actor(); bootstrap_admin(a)
     member = actor(); add_member(a, member, role="user")
     assert member.req("GET", "/analysis/").status_code == 200
+
+
+# ── The report has to read like prose, not like a data dump ─────────────────
+
+def test_counts_are_spelled_out_but_measurements_are_not():
+    """"2 problems" belongs in a spreadsheet. A report is read aloud in a
+    production meeting, so small counts are words — while measurements keep
+    their numerals, because "forty-one metres" is worse than 41 m to anyone
+    standing on a floor."""
+    r = analyse(line(
+        [("a", "Cut", {"x": 0, "y": 0}), ("b", "Sew", {"x": 100, "y": 0}),
+         ("c", "Press", {"x": 200, "y": 0}), ("d", "Pack", {"x": 5000, "y": 0})],
+        [("a", "b"), ("b", "c"), ("c", "d")],
+        templates=[("t1", "Shirt", "p1", "a")], ppu=10.0))
+    prose = " ".join(r.narrative)
+    assert "four work stations" in prose, prose
+    assert "one process" in prose, prose
+    for bad in ("4 work stations", "1 process", "2 processes"):
+        assert bad not in prose, f"{bad!r} should be spelled out: {prose}"
+
+    far = next(f for f in r.findings if f.rule == "long-transport")
+    assert any(ch.isdigit() for ch in far.detail), "a distance should stay a numeral"
+
+
+def test_two_of_something_is_both_not_all_two():
+    r = analyse(line(
+        [("a", "Cut"), ("b", "Sew"), ("c", "Pack")],
+        [("a", "b"), ("b", "c"), ("a", "b", 1, "p2"), ("b", "c", 1, "p2")],
+        processes=(("p1", "Crew neck", None), ("p2", "Hooded", None)),
+        templates=[("t1", "Shirt", "p1", "a"), ("t2", "Hoodie", "p2", "a")]))
+    f = next((f for f in r.findings if f.rule == "single-point-of-failure"), None)
+    assert f and "both processes" in f.detail, f.detail if f else "no finding"
+
+
+def test_a_big_number_keeps_its_numeral():
+    """Past twelve, words stop helping."""
+    from app.core.analysis import _words
+    assert _words(2) == "two" and _words(12) == "twelve"
+    assert _words(13) == "13" and _words(1500) == "1,500"
+
+
+def test_a_finding_only_links_to_the_manual_when_the_manual_explains_it():
+    """A "Read more" that lands on a section which does not discuss the finding
+    is worse than no link: the reader spends a click discovering that. Every
+    structural finding used to point at Core concepts, which describes stations
+    and routes and has nothing to say about single points of failure.
+
+    So the link is allowed only for findings whose idea the manual actually
+    teaches — the seven wastes, the three timing numbers, and reading the
+    statistics."""
+    ALLOWED = {"waste", "timing", "statistics"}
+    reports = [
+        analyse(line([("a", "A")], [])),
+        analyse(line(CHAIN + [("lonely", "Old press")], CHAIN_ROUTES, templates=CHAIN_TMPL)),
+        analyse(line(
+            [("cut", "Cut"), ("panels", "Panels"), ("off", "Off"), ("sew", "Sew")],
+            [("cut", "panels", 6), ("cut", "off", 1), ("panels", "sew", 1)],
+            templates=[("t1", "Shirt", "p1", "cut")])),
+        analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+            cut=dict(**BUSY, cycle_sec=20, line_cycle_sec=22),
+            sew=dict(**BUSY, cycle_sec=120, line_cycle_sec=580,
+                     samples=[5, 90, 8, 70, 6, 95], operators={"a": 10.0, "b": 90.0}),
+            pack=dict(**BUSY, cycle_sec=20, line_cycle_sec=24)))),
+    ]
+    for r in reports:
+        for f in r.findings:
+            assert f.manual is None or f.manual in ALLOWED, \
+                f"{f.rule} links to '{f.manual}', which does not explain it"
+
+    # And the links that remain must actually be present where they help.
+    timing = reports[-1]
+    gap = next(f for f in timing.findings if f.rule == "waiting-gap")
+    assert gap.manual == "timing", "the cycle-vs-line-cycle gap IS the timing section"

@@ -392,6 +392,32 @@ WIP concentration read through Little's law, unevenness (Mura) from the spread
 of individual sessions, and operator spread as the sign that standard work is
 missing.
 
+**Every rate is normalized to finished-unit equivalents** (`_per_unit_need`,
+the same walk the accumulation warning uses). Busbar Clean touches 32 pieces
+per pack, so its per-piece interval is structurally ~32× shorter on a healthy
+day — conservation of flow equalizes *finished-unit* throughput along a steady
+line, never piece throughput. Raw per-piece comparison names the end of any
+split-heavy line the constraint, forever. The constraint, demand-limited,
+over-takt, balance and flow-efficiency rules all work in per-unit terms.
+
+The timing rules carry the science they rest on: the constraint is
+**triangulated** (slowest normalized exit + queue in front + highest share of
+open hours + starvation downstream) and its advice follows Goldratt's focusing
+steps — exploit before elevate. The **waiting gap** is differentiated into
+queueing vs starvation by whether WIP is standing at the bench, because the
+remedies point in opposite directions. **Over-takt** does the arithmetic
+(⌈work-per-unit ÷ takt⌉ benches, OEE-adjusted when known); **no-headroom**
+warns at ≥85% of takt with the Kingman load/(1−load) queue multiplier;
+**imbalance** reports balance efficiency (Σwork ÷ n·max) and names a concrete
+pair of benches whose combined work still fits under the slowest step;
+**flow-efficiency** is Little's law per value stream — lead time = WIP ÷
+throughput against touch time, the number value-stream mapping exists to
+expose; **unmatched-feeds** flags a merge paced by its slowest branch (matched
+sets, not full bins); **shared-monument** names a machine serving several value
+streams at the highest utilisation on the floor; and **uneven-work** separates
+special-cause spikes from common-cause spread (Shewhart), because chasing the
+wrong one moves nothing.
+
 Findings carry the TIMWOOD name and a manual anchor, and every number is on the
 finding, so a client renders values from data rather than parsing prose.
 `readiness` is `no-data` / `partial` / `ready` — and saying *"nobody has run a

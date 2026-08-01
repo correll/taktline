@@ -351,3 +351,195 @@ def test_a_finding_only_links_to_the_manual_when_the_manual_explains_it():
     timing = reports[-1]
     gap = next(f for f in timing.findings if f.rule == "waiting-gap")
     assert gap.manual == "timing", "the cycle-vs-line-cycle gap IS the timing section"
+
+
+# ── The science upgrades ────────────────────────────────────────────────────
+# Rates are normalized to FINISHED-UNIT equivalents. In steady state a line's
+# finished-unit throughput equalizes along its length (conservation of flow);
+# per-piece throughput does not — a station handling eight pieces per unit
+# departs pieces eight times as often. Comparing raw per-piece intervals names
+# the end of any split-heavy line the constraint, forever.
+
+def _weighted_merge_line():
+    """entry → Prep —×8→ Assembly ←×1— entry2, Assembly → Pack.
+
+    Prep handles eight pieces per finished unit (the ×8 merge feed), so its
+    per-piece exit interval is legitimately ~8× shorter than Pack's. A healthy
+    day, not a bottleneck.
+    """
+    stations = [("srcA", "Bar stock"), ("prep", "Prep"), ("srcB", "Housings"),
+                ("asm", "Assembly"), ("pack", "Pack")]
+    routes = [("srcA", "prep", 1), ("prep", "asm", 8), ("srcB", "asm", 1),
+              ("asm", "pack", 1)]
+    tmpl = [("t1", "Widget", "p1", "asm")]
+    return stations, routes, tmpl
+
+
+def test_a_station_handling_many_pieces_per_unit_is_not_the_constraint():
+    stations, routes, tmpl = _weighted_merge_line()
+    # Per-piece: prep 10s, asm 80s, pack 78s. Per finished unit: 80/80/78 —
+    # in step. The un-normalized comparison flags asm or pack (80 vs median).
+    r = analyse(line(stations, routes, templates=tmpl, metrics=timed(
+        prep=dict(**BUSY, cycle_sec=9, line_cycle_sec=10, oee=0.6),
+        asm=dict(**BUSY, cycle_sec=70, line_cycle_sec=80, oee=0.6),
+        pack=dict(**BUSY, cycle_sec=70, line_cycle_sec=78, oee=0.6))))
+    assert "bottleneck" not in rules(r), \
+        f"a balanced weighted line was given a constraint: " \
+        f"{[f.title for f in r.findings if f.rule == 'bottleneck']}"
+
+
+def test_the_constraint_is_still_found_when_it_is_real():
+    stations, routes, tmpl = _weighted_merge_line()
+    r = analyse(line(stations, routes, templates=tmpl, metrics=timed(
+        prep=dict(**BUSY, cycle_sec=9, line_cycle_sec=10, oee=0.6),
+        asm=dict(**BUSY, cycle_sec=70, line_cycle_sec=80, oee=0.6),
+        pack=dict(**BUSY, cycle_sec=70, line_cycle_sec=300, oee=0.6))))
+    f = next((f for f in r.findings if f.rule == "bottleneck"), None)
+    assert f and "Pack" in f.title
+
+
+def test_over_takt_counts_the_pieces_a_unit_needs():
+    """Eight pieces at 20s each is 160s of work per finished unit. A takt of
+    100s is missed even though each piece fits comfortably."""
+    stations, routes, tmpl = _weighted_merge_line()
+    r = analyse(line(stations, routes, templates=tmpl,
+                     processes=(("p1", "Widgets", 100.0),),
+                     metrics=timed(prep=dict(**BUSY, cycle_sec=20),
+                                   asm=dict(**BUSY, cycle_sec=50),
+                                   pack=dict(**BUSY, cycle_sec=40))))
+    f = next((f for f in r.findings if f.rule == "over-takt"), None)
+    assert f and "Prep" in f.title, [x.title for x in r.findings]
+    assert f.metrics["benchesNeeded"] == 2
+    assert f.metrics["perUnitWorkSec"] == 160.0
+
+
+def test_the_constraint_carries_its_evidence():
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
+                     wip={"sew": 9, "cut": 1},
+                     metrics=timed(
+                         cut=dict(**BUSY, cycle_sec=20, line_cycle_sec=30, oee=0.9),
+                         sew=dict(**BUSY, cycle_sec=25, line_cycle_sec=300, oee=0.92),
+                         pack=dict(**BUSY, cycle_sec=20, line_cycle_sec=32, oee=0.3))))
+    f = next(f for f in r.findings if f.rule == "bottleneck")
+    # Queue in front, highest utilisation, starvation downstream: all three.
+    assert f.metrics["evidence"] >= 2, f.detail
+    assert "queued" in f.detail
+    assert "idle waiting" in f.detail
+
+
+def test_the_waiting_gap_tells_queueing_from_starvation():
+    queued = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
+                          wip={"sew": 6},
+                          metrics=timed(sew=dict(**BUSY, cycle_sec=60, line_cycle_sec=200))))
+    f = next(f for f in queued.findings if f.rule == "waiting-gap")
+    assert f.metrics["mode"] == "queueing" and "queue" in f.detail.lower()
+
+    starved = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
+                           metrics=timed(
+                               cut=dict(**BUSY, cycle_sec=30, oee=0.8),
+                               sew=dict(**BUSY, cycle_sec=60, line_cycle_sec=200, oee=0.2),
+                               pack=dict(**BUSY, cycle_sec=30, oee=0.8))))
+    f = next(f for f in starved.findings if f.rule == "waiting-gap")
+    assert f.metrics["mode"] == "starved" and "upstream" in f.detail
+
+
+def test_no_headroom_is_its_own_warning():
+    """93% loaded is not 'fits fine' — it is the steep part of the queueing
+    curve (Kingman): waiting scales with load/(1−load)."""
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
+                     processes=(("p1", "Shirts", 60.0),),
+                     metrics=timed(cut=dict(**BUSY, cycle_sec=20),
+                                   sew=dict(**BUSY, cycle_sec=56),
+                                   pack=dict(**BUSY, cycle_sec=20))))
+    f = next((f for f in r.findings if f.rule == "no-headroom"), None)
+    assert f and "Sew" in f.title
+    assert f.metrics["utilization"] > 0.9
+    assert f.metrics["queueMultiplier"] > 5
+    # And a comfortable station does not fire it.
+    assert not any(f.rule == "no-headroom" and "Cut" in f.title for f in r.findings)
+
+
+def test_imbalance_reports_balance_efficiency_and_a_concrete_pairing():
+    r = analyse(line(
+        [("a", "Cut"), ("b", "Label"), ("c", "Sew"), ("d", "Pack")],
+        [("a", "b"), ("b", "c"), ("c", "d")],
+        templates=[("t1", "Shirt", "p1", "a")],
+        metrics=timed(a=dict(**BUSY, cycle_sec=30), b=dict(**BUSY, cycle_sec=20),
+                      c=dict(**BUSY, cycle_sec=90), d=dict(**BUSY, cycle_sec=25))))
+    f = next(f for f in r.findings if f.rule == "line-imbalance")
+    assert 0 < f.metrics["balanceEfficiency"] < 1
+    # Cut (30) + Label (20) = 50s fits under Sew's 90s: a nameable merge of benches.
+    assert "Cut" in f.detail and "Label" in f.detail and "one bench" in f.detail
+
+
+def test_flow_efficiency_is_the_value_stream_headline():
+    """Little's law: 20 units at one exit every 60s is 20 minutes of lead
+    time; 3 minutes of touch time is a flow efficiency of 15%."""
+    snap = line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
+                metrics=timed(cut=dict(**BUSY, cycle_sec=60),
+                              sew=dict(**BUSY, cycle_sec=60),
+                              pack=dict(**BUSY, cycle_sec=60, line_cycle_sec=60)))
+    snap.wip_process["p1"] = 20
+    r = analyse(snap)
+    f = next((f for f in r.findings if f.rule == "flow-efficiency"), None)
+    assert f is not None
+    assert f.metrics["leadSec"] == 1200
+    assert f.metrics["touchSec"] == 180
+    assert abs(f.metrics["flowEfficiency"] - 0.15) < 0.01
+    assert "Little's law" in f.detail
+
+
+def test_a_merge_paced_by_its_slowest_feed_is_named():
+    stations = [("x", "Frames"), ("y", "Glass"), ("m", "Glazing"), ("e", "Pack")]
+    routes = [("x", "m", 1), ("y", "m", 1), ("m", "e", 1)]
+    r = analyse(line(stations, routes, templates=[("t1", "Window", "p1", "m")],
+                     metrics=timed(x=dict(**BUSY, cycle_sec=30, line_cycle_sec=40),
+                                   y=dict(**BUSY, cycle_sec=30, line_cycle_sec=200),
+                                   m=dict(**BUSY, cycle_sec=30, line_cycle_sec=210))))
+    f = next((f for f in r.findings if f.rule == "unmatched-feeds"), None)
+    assert f and "Glass" in f.title
+    assert "matched sets" in f.detail
+
+
+def test_a_machine_every_value_stream_visits_is_a_monument():
+    stations = [("a", "Cut A"), ("b", "Cut B"), ("paint", "Paint"), ("out", "Pack")]
+    routes = [("a", "paint", 1, "p1"), ("paint", "out", 1, "p1"),
+              ("b", "paint", 1, "p2"), ("paint", "out", 1, "p2")]
+    r = analyse(line(stations, routes,
+                     processes=(("p1", "Crew neck", None), ("p2", "Hooded", None)),
+                     templates=[("t1", "Shirt", "p1", "a"), ("t2", "Hoodie", "p2", "b")],
+                     metrics=timed(a=dict(**BUSY, cycle_sec=30, oee=0.4),
+                                   b=dict(**BUSY, cycle_sec=30, oee=0.45),
+                                   paint=dict(**BUSY, cycle_sec=30, oee=0.92))))
+    f = next((f for f in r.findings if f.rule == "shared-monument"), None)
+    assert f and "Paint" in f.title
+    assert "Crew neck" in f.detail and "Hooded" in f.detail
+
+
+def test_uneven_work_tells_special_cause_from_common_cause():
+    """Shewhart's distinction, because the remedies are opposite: chase the
+    events, or write the standard."""
+    spiky = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+        sew=dict(**BUSY, cycle_sec=30, samples=[10, 11, 10, 9, 300, 10, 320, 10]))))
+    f = next(f for f in spiky.findings if f.rule == "uneven-work")
+    assert f.metrics["shape"] == "spikes"
+    assert "special-cause" in f.detail
+
+    spread = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+        sew=dict(**BUSY, cycle_sec=30, samples=[5, 60, 15, 75, 10, 65, 20, 70]))))
+    f = next(f for f in spread.findings if f.rule == "uneven-work")
+    assert f.metrics["shape"] == "spread"
+    assert "standard" in f.detail
+
+
+def test_imbalance_weighs_stations_by_pieces_per_unit():
+    """A station doing eight pieces per finished unit is occupied eight times
+    its piece time — balance is judged in occupied time, like everything else."""
+    stations, routes, tmpl = _weighted_merge_line()
+    r = analyse(line(stations, routes, templates=tmpl, metrics=timed(
+        prep=dict(**BUSY, cycle_sec=20),   # ×8 → 160s of work per unit
+        asm=dict(**BUSY, cycle_sec=50),
+        pack=dict(**BUSY, cycle_sec=40))))
+    f = next((f for f in r.findings if f.rule == "line-imbalance"), None)
+    assert f and "Prep" in f.detail.split("carries")[0], f.detail if f else "no finding"
+    assert f.metrics["slowestSec"] == 160.0

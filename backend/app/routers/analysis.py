@@ -64,9 +64,14 @@ async def _snapshot(session: AsyncSession, company_id) -> engine.Snapshot:
     cards = await rows(CardRow)
 
     wip: dict = {}
+    wip_process: dict = {}
     for c in cards:
         for sid, b in (c.bins or {}).items():
-            wip[sid] = wip.get(sid, 0) + int(b.get("count", 0) or 0)
+            n = int(b.get("count", 0) or 0)
+            wip[sid] = wip.get(sid, 0) + n
+            if c.processId:
+                pid = str(c.processId)
+                wip_process[pid] = wip_process.get(pid, 0) + n
 
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=LOOKBACK_DAYS)
@@ -127,6 +132,7 @@ async def _snapshot(session: AsyncSession, company_id) -> engine.Snapshot:
             start_station=str(t.startStationId) if t.startStationId else None)
             for t in templates],
         wip=wip,
+        wip_process=wip_process,
         metrics=metrics,
         pixels_per_unit=float(map_row.pixelsPerUnit) if map_row else 0.0,
         unit=(map_row.unit if map_row else "m"),

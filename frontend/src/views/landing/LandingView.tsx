@@ -663,11 +663,10 @@ function Founder() {
             </p>
             <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14.5, lineHeight: 1.7, color: color.textSecondary }}>
               He works on automation, and Taktline comes out of a simple observation: you
-              can’t automate a process nobody has measured. At Robotic Materials Inc
-              (2016–2022), he and a small team built Optio, a digital value-stream-mapping
-              system for high-mix, low-volume (re)manufacturers. Taktline is a fresh start
-              on the same idea, rebuilt from scratch — and now carrying the part that was
-              always the point: <strong style={{ color: color.textPrimary }}>AI and advanced analytics on the
+              can’t automate a process nobody has measured — an observation earned across
+              a decade of building automation for high-mix, low-volume (re)manufacturers.
+              Taktline is a fresh start on that idea, written from scratch — and now
+              carrying the part that was always the point: <strong style={{ color: color.textPrimary }}>AI and advanced analytics on the
               shop floor</strong>, reading
               a line the way an experienced engineer would and saying what is wrong with it
               in plain language.
@@ -732,13 +731,20 @@ function WhyTrustUs() {
           ))}
         </div>
 
+        {/* No prior-product claim here. An earlier draft credited a
+            value-stream-mapping system built at another company — work that
+            belongs to that company and its owners, none of whom are involved in
+            Taktline. Borrowed credibility is the one kind this section must not
+            trade in, since the whole point of it is that we say what is true.
+            What is ours to claim is the founder's own record, and that is
+            already in the section above. */}
         <p style={{
           margin: `${size.sp6} auto 0`, maxWidth: 640, textAlign: 'center',
           fontSize: 14, lineHeight: 1.7, color: color.textDim,
         }}>
-          And the people are not new to it. Between 2016 and 2022 the same team built and ran
-          Optio, a digital value-stream-mapping system for high-mix, low-volume manufacturers.
-          Taktline is that decade of learning, rebuilt properly.
+          The method is not new, the problem is not new, and neither is the person who
+          built this — only the product is. Try it on your own line for an afternoon and
+          judge it on what it does there.
         </p>
 
         <InlineCta where="trust" line="Five minutes, no signup, and you will know." />

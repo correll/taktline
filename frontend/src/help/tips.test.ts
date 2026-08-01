@@ -110,3 +110,37 @@ describe('the rotation', () => {
     expect(a.text).toBe(b.text)
   })
 })
+
+describe('every tip can be read about in the manual', () => {
+  it('maps every category to a section, with no strays', async () => {
+    const { CATEGORY_ANCHORS, MANUAL_ANCHORS } = await import('./manualAnchors')
+    const categories = new Set(LEAN_TIPS.map((t) => t.category))
+    for (const cat of categories) {
+      const anchor = CATEGORY_ANCHORS[cat]
+      expect(anchor, `category "${cat}" has no manual section`).toBeTruthy()
+      expect(MANUAL_ANCHORS[anchor], `anchor "${anchor}" is in no chapter`).toBeTruthy()
+    }
+    // And no mapping for a category that no longer exists — stale coverage
+    // reads as coverage.
+    for (const cat of Object.keys(CATEGORY_ANCHORS)) {
+      expect(categories.has(cat), `mapping for unknown category "${cat}"`).toBe(true)
+    }
+  })
+
+  it('anchors in the registry actually exist as headings in the manual', async () => {
+    const fs = await import('node:fs')
+    const src = fs.readFileSync(new URL('./UserManual.tsx', import.meta.url), 'utf8')
+    const { MANUAL_ANCHORS } = await import('./manualAnchors')
+    for (const anchor of Object.keys(MANUAL_ANCHORS)) {
+      expect(src.includes(`id="${anchor}"`),
+        `anchor "${anchor}" is registered but no heading carries it`).toBe(true)
+    }
+  })
+
+  it('covers the line doctor’s anchors too', async () => {
+    const { MANUAL_ANCHORS } = await import('./manualAnchors')
+    for (const a of ['waste', 'timing', 'statistics']) {
+      expect(MANUAL_ANCHORS[a], `line doctor links "${a}"`).toBeTruthy()
+    }
+  })
+})

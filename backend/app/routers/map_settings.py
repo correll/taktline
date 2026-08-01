@@ -156,12 +156,124 @@ async def upload_floor_plan(file: UploadFile = File(...),
     return {"url": url}
 
 
+async def _localise_remote_image(url: str) -> tuple:
+    """Fetch an external floor-plan URL once and keep it as our own file.
+
+    A pasted image URL is a perfectly reasonable thing to give this field, and
+    it did not work: WebGL refuses to upload a cross-origin image as a texture
+    unless the host sends `Access-Control-Allow-Origin`, and image CDNs
+    generally do not. The floor plan silently never appeared — the load threw,
+    the loader swallowed it, and the canvas was simply blank. Copying the image
+    to our own origin fixes it for good, and it also means the plan keeps
+    working when that URL rots, which pasted links do.
+
+    Fetching a user-supplied URL from the server is an SSRF surface, so it is
+    fenced: http(s) only, no credentials in the URL, the resolved address must
+    be public (no loopback, link-local, private range or metadata endpoint),
+    one redirect hop at most re-checked the same way, a hard byte cap, and the
+    bytes must actually begin like one of the raster formats we allow.
+    Returns (relative_url, width, height).
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    import httpx
+
+    def _vet(target: str) -> str:
+        u = urlparse(target)
+        if u.scheme not in ("http", "https"):
+            raise HTTPException(400, "A floor-plan URL must be http or https.")
+        if u.username or u.password:
+            raise HTTPException(400, "A floor-plan URL may not carry credentials.")
+        if not u.hostname:
+            raise HTTPException(400, "That floor-plan URL has no host.")
+        try:
+            infos = socket.getaddrinfo(u.hostname, None)
+        except OSError:
+            raise HTTPException(400, f"Could not resolve {u.hostname}.")
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast):
+                raise HTTPException(400,
+                    "That address is inside a private network, so it is refused.")
+        return target
+
+    _vet(url)
+    data = b""
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=10.0) as client:
+            target = url
+            for _hop in range(2):
+                resp = await client.get(target, headers={"Accept": "image/*"})
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    nxt = resp.headers.get("location")
+                    if not nxt:
+                        raise HTTPException(400, "That URL redirected nowhere.")
+                    target = _vet(str(httpx.URL(target).join(nxt)))
+                    continue
+                resp.raise_for_status()
+                data = resp.content
+                break
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, f"Could not fetch that floor-plan image: {exc}")
+
+    if not data:
+        raise HTTPException(400, "That URL returned no image.")
+    if len(data) > settings.max_upload_bytes:
+        raise HTTPException(413, "That floor-plan image is too large.")
+
+    # Trust the bytes, not the URL or the content-type header.
+    kind = _sniff_image(data)
+    if kind is None:
+        raise HTTPException(400,
+            "That URL does not point at a PNG, JPEG, GIF or WebP image.")
+
+    fname = f"floor_plan_{int(time.time())}_{uuid.uuid4().hex[:8]}{kind}"
+    try:
+        (UPLOADS_DIR / fname).write_bytes(data)
+    except OSError as exc:
+        raise HTTPException(507, f"Could not store the floor plan: {exc.strerror or exc}")
+    w, h = _image_size(data)
+    return f"/uploads/{fname}", w, h
+
+
+def _sniff_image(data: bytes):
+    """The extension this data really is, from its magic bytes."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if data[:2] == b"\xff\xd8":
+        return ".jpg"
+    if data[:3] == b"GIF":
+        return ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if data[:2] == b"BM":
+        return ".bmp"
+    return None
+
+
 @router.put("/", response_model=MapSettings)
 async def update_map_settings(body: MapSettingsUpdate,
                               ctx: CompanyContext = Depends(require_super_admin),
                               session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await _get_or_create(session, ctx.company_id)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    patch = body.model_dump(exclude_unset=True)
+
+    # An external image is copied to our own origin, because a cross-origin one
+    # cannot be used as a WebGL texture without CORS headers the host usually
+    # does not send.
+    url = patch.get("floorPlanUrl")
+    if isinstance(url, str) and url.strip().lower().startswith(("http://", "https://")):
+        local, w, h = await _localise_remote_image(url.strip())
+        patch["floorPlanUrl"] = local
+        patch.setdefault("mapWidthPx", w)
+        patch.setdefault("mapHeightPx", h)
+
+    for k, v in patch.items():
         setattr(row, k, v)
     row.updatedAt = utcnow()
     await session.flush()

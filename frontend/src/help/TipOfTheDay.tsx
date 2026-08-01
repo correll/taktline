@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { color, font, size, shadow } from '../theme/tokens'
 import { useHelpStore } from './helpStore'
 import { tipOfTheDay } from './leanTips'
+import { anchorForCategory } from './manualAnchors'
 import { disableTips, recordTipShown, shouldShowTip, todayKey } from './tipSchedule'
 
 /** Daily lean-tip splash: one tip per calendar day, dismissible, with a
@@ -63,7 +64,7 @@ export function TipOfTheDay() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3, marginTop: size.sp3 }}>
         <button
-          onClick={() => { dismiss(); openManual() }}
+          onClick={() => { dismiss(); openManual(anchorForCategory(tip.category)) }}
           style={{
             background: 'none', border: 'none', color: color.blueBright,
             fontSize: 11, cursor: 'pointer', padding: 0,

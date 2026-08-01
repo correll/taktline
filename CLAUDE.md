@@ -373,6 +373,34 @@ saw the easy shape — each turns a green suite into a decorative one, so each o
 these files asserts its own coverage. And **a test that passes before the fix
 is worth nothing**: check it fails first.
 
+## The manual (`help/UserManual.tsx`)
+
+Five chapters ordered by difficulty rather than one long scroll — **Basics**
+(what the app is, core concepts, setting up and running a line), **The lean
+method** (five steps, TIMWOOD, muda/mura/muri, the three timing numbers),
+**The improvement toolkit** (5S, standard work, SMED, jidoka, heijunka, PDCA,
+five whys, Pareto…), **Flow science** (Little, Kingman, balance efficiency,
+flow efficiency, Shewhart, matched sets, monuments, theory of constraints) and
+**Integrations**. One page buried the basics under queueing theory once there
+were thirty sections.
+
+Deep links survive the split: `manualAnchors.ts` maps every anchor to its
+chapter, so `openManual('kingman')` switches chapter *then* scrolls. That file
+also maps every **lean-tip category** to a section, and
+`tips.test.ts` fails if a category has no home, if an anchor is in no chapter,
+or if a registered anchor has no heading carrying it — a "Read more" that lands
+nowhere teaches the reader not to click.
+
+Equations are typeset in plain CSS (`help/Equation.tsx`): stacked flexbox
+fractions, italic serif variables, and a `Term` component that draws the
+labelled underbrace turning Kingman's formula into a sentence — utilisation ×
+variability × work time. KaTeX would be ~280 KB and its own stylesheet for four
+formulas, and would fight the theme tokens in dark mode.
+
+**Vocabulary is enforced: lots contain products.** WIP, throughput, cycle time
+and every equation count *products*; a lot is the card a group of them travels
+on.
+
 ## The line doctor (`core/analysis.py`, `GET /analysis/`)
 
 A deterministic expert system that reads a line and says what is wrong with it,

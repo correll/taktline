@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Stage, Container, Graphics, Sprite, useApp } from '@pixi/react'
+import { Stage, Container, Graphics, Sprite, Text, useApp } from '@pixi/react'
 import * as PIXI from 'pixi.js'
 import type { Station, Route } from '../../models'
 import { color, shadow } from '../../theme/tokens'
@@ -1078,19 +1078,52 @@ function StageBackground({ color: bg }: { color: number }) {
 
 // ─── Floor plan sprite ────────────────────────────────────────────────────────
 
+/** Said out loud on the canvas, because a silently missing floor plan reads as
+ *  a broken upload and sends people to re-upload a file that was always fine. */
+function FloorPlanBroken({ url }: { url: string }) {
+  const remote = /^https?:\/\//i.test(url)
+  return (
+    <Text
+      text={remote
+        ? 'Floor plan could not be loaded from that web address.\nRe-save it in Settings → Floor plan and Taktline will keep its own copy.'
+        : 'Floor plan image could not be loaded.\nRe-upload it in Settings → Floor plan.'}
+      anchor={0.5}
+      x={0}
+      y={0}
+      style={new PIXI.TextStyle({
+        fill: 0x9a938a, fontSize: 15, align: 'center',
+        fontFamily: 'Inter, system-ui, sans-serif', lineHeight: 22,
+      })}
+    />
+  )
+}
+
 function FloorPlanSprite({
   url, rect,
 }: { url: string; rect: { x: number; y: number; w: number; h: number } | null }) {
   const [texture, setTexture] = useState<PIXI.Texture | null>(null)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
+    setFailed(false)
     PIXI.Assets.load(url).then((t: PIXI.Texture) => {
       if (!cancelled) setTexture(t)
-    }).catch(() => {})
+    }).catch((err) => {
+      // Swallowing this was the whole bug: a floor plan that could not load
+      // produced a blank canvas and no explanation, so the natural conclusion
+      // was that the upload had failed. The commonest cause is a cross-origin
+      // image without CORS headers — the server now copies those to our own
+      // origin on save, but a stale record or a dead link still lands here.
+      if (!cancelled) {
+        setFailed(true)
+        console.warn('[taktline] floor plan failed to load:', url, err)
+      }
+    })
     return () => { cancelled = true }
   }, [url])
 
+  if (failed) return <FloorPlanBroken url={url} />
   if (!texture) return null
 
   // Falling back to the image's own pixels keeps `pixelsPerUnit` meaningful:

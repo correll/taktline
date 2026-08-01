@@ -695,7 +695,13 @@ export default function MapCanvas({
               never crossed out by a sibling edge that happens to render later.
               Everything else keeps insertion order (the sort is stable). */}
           <Container x={viewport.x} y={viewport.y} scale={viewport.scale} sortableChildren>
-            {mapConfig?.floorPlanUrl && floorPlanRect && (
+            {/* No `floorPlanRect` guard: a rect can only be computed from the
+                saved image dimensions or from a station bounding box, and a
+                brand-new line has neither — uploading the floor plan BEFORE
+                placing stations is the natural first move, and it left the
+                canvas empty with nothing to explain why. The sprite falls back
+                to its own natural size, which is the right answer anyway. */}
+            {mapConfig?.floorPlanUrl && (
               <FloorPlanSprite url={mapConfig.floorPlanUrl} rect={floorPlanRect} />
             )}
 
@@ -1077,7 +1083,7 @@ function StageBackground({ color: bg }: { color: number }) {
 
 function FloorPlanSprite({
   url, rect,
-}: { url: string; rect: { x: number; y: number; w: number; h: number } }) {
+}: { url: string; rect: { x: number; y: number; w: number; h: number } | null }) {
   const [texture, setTexture] = useState<PIXI.Texture | null>(null)
 
   useEffect(() => {
@@ -1090,13 +1096,18 @@ function FloorPlanSprite({
 
   if (!texture) return null
 
+  // Falling back to the image's own pixels keeps `pixelsPerUnit` meaningful:
+  // it is defined against the raw image, so drawing the sprite at its natural
+  // size is exactly the frame station positions are stored in.
+  const box = rect ?? { x: 0, y: 0, w: texture.width, h: texture.height }
+
   return (
     <Sprite
       texture={texture}
-      x={rect.x}
-      y={rect.y}
-      width={rect.w}
-      height={rect.h}
+      x={box.x}
+      y={box.y}
+      width={box.w}
+      height={box.h}
       alpha={1}
     />
   )

@@ -164,7 +164,7 @@ function Hero() {
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
-          Free forever · no credit card · your data exports any time
+          Your line, free forever · no credit card · your data exports any time
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textSecondary }}>
           Runs in the browser on <strong style={{ color: color.textPrimary }}>iPhone, iPad and
@@ -593,11 +593,12 @@ function BusinessModel() {
         background: color.bgCard, padding: `${size.sp8} ${size.sp6}`,
       }}>
         <h2 style={{ ...h2Style, fontSize: 'clamp(20px, 2.8vw, 26px)' }}>
-          Free forever — and here is how we stay in business
+          Your line is free forever — and here is how we stay in business
         </h2>
         <p style={{ margin: `${size.sp4} auto 0`, maxWidth: 620, fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary }}>
-          Running Taktline on your own line costs nothing, with no seat limits and no
-          feature held back. We earn our living from the things a factory actually wants
+          Running your line on Taktline is free, forever, for every operator — no seat
+          count, no per-station charge, no trial that ends. That is the part we intend
+          never to change. We earn our living from the things a factory actually wants
           help with:
         </p>
         <div style={{
@@ -714,7 +715,7 @@ function WhyTrustUs() {
         }}>
           {[
             ['Nothing to lose',
-             'Free forever on your own line — no seat limits, no feature held back, no credit card. There is no budget to defend and no procurement to survive.'],
+             'Running your line is free, forever, for every operator — no seat count, no per-station charge, no credit card. There is no budget to defend and no procurement to survive.'],
             ['Nothing to install',
              'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
             ['Nothing to lock you in',
@@ -836,8 +837,9 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         ready-made connectors; anything else goes through one small order API, a CSV
         import, or Zapier and Make.</> },
   { q: 'What does it cost?',
-    a: <>The product is free forever, with no seat limits. We charge only for premium
-        support, hosted instances, hardware integration and robotics work.</> },
+    a: <>Running your line is free, forever, for every operator — no seat count and no
+        per-station charge. We charge for premium support, hosted instances, hardware
+        integration and robotics work.</> },
 ]
 
 function Questions() {

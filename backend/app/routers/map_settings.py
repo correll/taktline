@@ -71,6 +71,34 @@ async def get_map_settings(ctx: CompanyContext = Depends(get_active_company),
     return _to_model(await _get_or_create(session, ctx.company_id))
 
 
+def _image_size(data: bytes):
+    """(width, height) of a PNG, JPEG or GIF, straight from the header bytes.
+
+    Deliberately not a new dependency: only the raster formats the upload
+    whitelist already allows are read, and anything unrecognised returns
+    (None, None) so the caller falls back to what it did before.
+    """
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+            return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+        if data[:3] == b"GIF" and len(data) >= 10:
+            return int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+        if data[:2] == b"\xff\xd8":                       # JPEG: walk the segments
+            i = 2
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                marker, seg = data[i + 1], int.from_bytes(data[i + 2:i + 4], "big")
+                if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                    return (int.from_bytes(data[i + 7:i + 9], "big"),
+                            int.from_bytes(data[i + 5:i + 7], "big"))
+                i += 2 + seg
+    except Exception:
+        pass
+    return None, None
+
+
 @router.post("/upload-floor-plan")
 async def upload_floor_plan(file: UploadFile = File(...),
                             ctx: CompanyContext = Depends(require_super_admin),
@@ -102,14 +130,27 @@ async def upload_floor_plan(file: UploadFile = File(...),
         companyId=ctx.company_id, filename=fname,
         contentType=_MIME_BY_EXT[suffix], data=data, size=len(data),
     ))
+    # Fail loudly. Swallowing the write meant a full or read-only disk answered
+    # 200 with a URL, the settings page showed a saved floor plan, and the map
+    # drew nothing — the same empty canvas as a missing sprite rect, from a
+    # cause nothing reported.
     try:
         (UPLOADS_DIR / fname).write_bytes(data)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise HTTPException(507, f"Could not store the floor plan: {exc.strerror or exc}")
+
+    # Read the real pixel dimensions here rather than trusting the browser to
+    # measure a preview it may not have finished loading. `pixelsPerUnit` is
+    # defined against these numbers, so a floor plan whose size depends on
+    # whether an <img> had decoded before someone pressed Save is a scale that
+    # silently varies.
+    width, height = _image_size(data)
 
     url = f"/uploads/{fname}"
     row = await _get_or_create(session, ctx.company_id)
     row.floorPlanUrl = url
+    if width and height:
+        row.mapWidthPx, row.mapHeightPx = width, height
     row.updatedAt = utcnow()
     await session.flush()
     return {"url": url}

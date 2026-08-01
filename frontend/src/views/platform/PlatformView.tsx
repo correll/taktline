@@ -263,7 +263,11 @@ function CompaniesSection({ companies, onChanged }: {
                 <td style={tdStyle}>
                   {c.lastActivityAt ? formatDistanceToNow(new Date(withZ(c.lastActivityAt)), { addSuffix: true }) : '—'}
                 </td>
-                <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {/* Extra right padding: the table scrolls horizontally inside
+                    its own box, so at the far end of the scroll the last button
+                    sat hard against the window edge with nothing to grab. */}
+                <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap',
+                             paddingRight: size.sp6 }}>
                   <button style={smallBtn} disabled={busy === c.id} onClick={() => impersonate(c)}>
                     Impersonate
                   </button>

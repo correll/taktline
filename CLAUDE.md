@@ -396,6 +396,33 @@ dark until there is enough data and glowing after. It is clickable while dark
 on purpose. The map's process legend steps aside for it: a global control owns
 its corner, and that is the legend's problem to solve, not the control's.
 
+## Undo / redo (`core/undo.py`, `POST /undo` · `/redo`)
+
+Server-side, because a client-side stack is only correct with one author. This
+is a line: eight tablets on one websocket, and the lot you moved a minute ago
+may since have been merged at the next bench. Undo has to be judged against the
+floor, and only the server knows it.
+
+**A snapshot, not a hand-written inverse per operation.** "The inverse of a
+merge" written by hand would be a second implementation of the domain, and this
+codebase has paid twice for that shape — the preview that disagreed with the
+merge, the editor that disagreed with the engine about what a merge is. A
+recorded state cannot drift from the operation that produced it. `undo_entries`
+holds `beforeState`/`afterState` for **only the cards an operation changed**,
+found by diffing a snapshot either side, so no endpoint has to declare what it
+is about to touch.
+
+**The rule that makes a blunt restore safe:** an operation may only be undone
+while the cards it touched are *still as it left them*. Anything else and it is
+refused with a sentence a person at a bench can act on ("those lots have moved
+on since"), as a **409** — the request was reasonable and the floor moved.
+Stacks are **per user** (25 deep), and doing something new drops the redo
+branch. Recorded for move, advance, split, un-split, merge and unmerge; not for
+configuration, which has its own review surface and where reverting a station
+out from under live lots is a worse problem. An undo broadcasts like any other
+mutation. Any member may undo their own work — an operator who mis-taps should
+not need a super-admin.
+
 ## Commit before the response (SESSION_SCOPE)
 
 Every `Depends(get_session)` carries `**SESSION_SCOPE` (`scope="function"`). FastAPI closes *request*-scoped dependency stacks only **after** the response has been sent, so a commit living there races the client's next request — a tablet 404s the card whose creation it just saw succeed, or a fresh login 401s on its first authenticated call (reproduced ~2 times per 120 writes on a keep-alive connection). Function scope closes the stack **before** the response bytes leave the server: commit first, respond second. The first declaration FastAPI solves decides which stack the shared session lands in, so one stray unscoped `Depends(get_session)` reintroduces the race — `tests/test_reman_line.py::test_every_session_dependency_commits_before_the_response` walks the app and fails on any.

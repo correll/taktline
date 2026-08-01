@@ -793,10 +793,7 @@ export default function MapCanvas({
           so the name is the identity and the colour is the shortcut. */}
       {Object.keys(processes).length > 1 && (
         <div style={{
-          // Steps aside for the line doctor, which owns the top-right corner
-          // on every view. A global control and a per-view legend competing for
-          // one corner is the legend's problem to solve, not the control's.
-          position: 'absolute', top: 12, right: 100, zIndex: 30,
+          position: 'absolute', top: 12, right: 12, zIndex: 30,
           background: color.glass, border: `1px solid ${color.glassBorder}`,
           borderRadius: 4, padding: '6px 10px', pointerEvents: 'none',
           display: 'flex', flexDirection: 'column', gap: 4,

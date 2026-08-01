@@ -1,4 +1,5 @@
 import { LineDoctor } from './help/LineDoctor'
+import { UndoBar } from './components/UndoBar'
 import React, { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { connectWS, disconnectWS } from './api/ws'
@@ -128,6 +129,7 @@ function Shell() {
       <Topbar connection={connection} />
       <OutageBanner />
       <LineDoctor />
+      <UndoBar />
       <OrientationNavigator />
       {/* Inside the shell on purpose: the topbar stays, so a view that fails
           leaves the rest of the app reachable instead of blanking the screen. */}

@@ -649,3 +649,40 @@ class ApiKey(Base):
     createdAt: Mapped[datetime] = _created()
     lastUsedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revokedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UndoEntry(Base):
+    """One undoable lot operation, as the state before and after it.
+
+    Deliberately a SNAPSHOT rather than a hand-written inverse per operation.
+    A per-operation inverse would be a second implementation of the domain —
+    another place for split, merge and un-split to disagree with themselves —
+    and this codebase has already paid for that kind of duplication more than
+    once. Restoring a recorded state cannot drift from the operation that
+    produced it.
+
+    Only the cards the operation actually changed are stored, and only for the
+    lot movements a person can mis-tap. Configuration is not undoable: it has
+    its own review surface, and reverting a station out from under live lots is
+    a different and much worse problem.
+    """
+
+    __tablename__ = "undo_entries"
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = _company_fk()
+    # Whose stack this is. Undo is per-person: on a line with eight tablets a
+    # shared stack means undoing somebody else's work from across the room.
+    userId: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    # {cardId: card state} for every card the operation touched. A card absent
+    # from one side and present in the other was created or destroyed by it.
+    beforeState: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    afterState: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    undone: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    createdAt: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )

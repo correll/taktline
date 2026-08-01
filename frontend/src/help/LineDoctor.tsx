@@ -59,7 +59,9 @@ export function LineDoctor() {
                    : 'Line doctor — not enough data yet, but the shape can still be checked'}
         style={{
           position: 'fixed',
-          top: `calc(${size.topbarHeight} + 16px + env(safe-area-inset-top, 0px))`,
+          // Below the view's own top-right controls (the board's merge
+          // button, the floor plan's legend) rather than on top of them.
+          top: `calc(${size.topbarHeight} + 84px + env(safe-area-inset-top, 0px))`,
           right: 18, zIndex: 7500,
           width: 72, height: 72, borderRadius: '50%',
           display: tourActive ? 'none' : 'flex',
@@ -139,7 +141,7 @@ function ReportPanel({ report, busy, onClose }: {
         aria-label="Line doctor report"
         style={{
           position: 'fixed', zIndex: 7601,
-          top: `calc(${size.topbarHeight} + 96px + env(safe-area-inset-top, 0px))`,
+          top: `calc(${size.topbarHeight} + 164px + env(safe-area-inset-top, 0px))`,
           right: 18, width: 460, maxWidth: 'calc(100vw - 36px)',
           maxHeight: 'calc(100vh - 220px)', overflowY: 'auto',
           background: color.bgPanel, border: `1px solid ${color.border}`,

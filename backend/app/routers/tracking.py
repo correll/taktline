@@ -101,8 +101,24 @@ async def _viewer_is_a_member(request, session, subject_id) -> Optional[dict]:
             "units": int((bins[station] or {}).get("count", 0) or 0)}
 
 
+#: Readable from any origin. It is already public and token-guarded, and this
+#: is what lets one company's board show a supplier's progress: the *browser*
+#: fetches it, so this server never follows a URL a user typed — which is the
+#: whole SSRF class, avoided rather than fenced. A cross-origin fetch sends no
+#: cookies, so such a reader can only ever get the customer view: `work` comes
+#: back null however signed-in they are somewhere else.
+_PUBLIC_CORS = {"Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Cache-Control": "no-store"}
+
+
+@router.options("/track/{order}/{token}", include_in_schema=False)
+async def track_preflight(order: str, token: str):
+    return Response(status_code=204, headers=_PUBLIC_CORS)
+
+
 @router.get("/track/{order}/{token}")
-async def track_json(order: str, token: str, request: Request,
+async def track_json(order: str, token: str, request: Request, response: Response,
                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """The same data as the page, for the SPA to render once it has booted.
 
@@ -113,6 +129,7 @@ async def track_json(order: str, token: str, request: Request,
     """
     t = await _load(session, order, token)
     work = await _viewer_is_a_member(request, session, require_uuid(order, "Not found"))
+    response.headers.update(_PUBLIC_CORS)
     return {
         "work": work,
         "reference": t.reference,

@@ -10,8 +10,8 @@ export interface Company {
 }
 
 export const companiesApi = {
-  create: (name: string, timezone = 'UTC'): Promise<Company> =>
-    client.post('/companies/', { name, timezone }),
+  create: (name: string, timezone = 'UTC', supplierInvite?: string): Promise<Company> =>
+    client.post('/companies/', { name, timezone, supplierInvite }),
   listMine: (): Promise<Company[]> => client.get('/companies/'),
   get: (id: string): Promise<Company> => client.get(`/companies/${id}`),
 }

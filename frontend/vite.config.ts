@@ -35,6 +35,15 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // The status JSON behind a tracking page. Unlike `/o/...` this is not an
+      // SPA route at all, so it proxies wholesale. Without it a supplier panel
+      // in dev fetches index.html, fails to parse it, and reports the supplier
+      // as unreachable — a bug that exists only in dev, which is the worst
+      // kind to chase.
+      '/track': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     },
   },
   resolve: {

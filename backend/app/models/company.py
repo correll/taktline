@@ -10,6 +10,9 @@ Role = Literal["super_admin", "admin", "user"]
 
 # ── Companies ──────────────────────────────────────────────────────────────────
 class CompanyCreate(BaseModel):
+    #: Marker from a supplier invitation link, if they arrived through one.
+    #: Attribution only — it grants the inviter nothing.
+    supplierInvite: Optional[str] = None
     name: str
     timezone: str = "UTC"
 

@@ -31,6 +31,7 @@ def _to_station(r: StationRow) -> Station:
         integrationProvider=r.integrationProvider,
         integrationRole=r.integrationRole,
         isStorage=bool(r.isStorage),
+        supplierUrl=r.supplierUrl,
         branchMode=r.branchMode,
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
@@ -214,6 +215,15 @@ async def update_station(station_id: str, body: StationUpdate,
     became_choice = patch.get("branchMode") == "choice" and row.branchMode != "choice"
     for k, v in patch.items():
         setattr(row, k, v)
+    # A supplier link has to be *clearable*, and the `is not None` filter above
+    # cannot tell a null from an omission — so unlinking a supplier would
+    # silently do nothing. `model_fields_set` knows which keys the client
+    # actually sent. Scoped to this one field on purpose: for every other
+    # nullable column here, null already means "leave it alone", and changing
+    # that wholesale would make a partial update erase what it did not mention.
+    if "supplierUrl" in body.model_fields_set:
+        row.supplierUrl = body.supplierUrl
+
     row.updatedAt = utcnow()
     if became_choice:
         await _strip_split_semantics(session, ctx.company_id, row.id)

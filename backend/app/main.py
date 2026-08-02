@@ -14,6 +14,7 @@ from sqlalchemy import select
 from .core.ws_events import set_broadcast as set_card_event_broadcast
 from .core.config import settings
 from .core.csrf import CSRFMiddleware
+from .core.public_cors import PublicReadCORSMiddleware
 from .core.ratelimit import limiter
 from .core.security import hash_token
 from .core.security_headers import SecurityHeadersMiddleware
@@ -27,7 +28,7 @@ from .routers import (
     analysis, undo,
     admin, api_keys, auth, cards, companies, global_settings, invitations, lot_templates,
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
-    billing, client_errors, map_io, share, stations, stats, tracking,
+    billing, client_errors, map_io, network, share, stations, stats, tracking,
 )
 from .core import entitlements, lifecycle, sandbox_gc, usage
 from .core.traffic import traffic
@@ -130,6 +131,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last, so it wraps the one above: the strict allowlist answers preflights
+# itself and 400s a stranger before any route runs, which would make one
+# Taktline instance unable to read another's public order status. See the module
+# docstring for why `*` with no credentials is the safe pairing here.
+app.add_middleware(PublicReadCORSMiddleware)
 
 app.include_router(auth.router)
 app.include_router(companies.router)
@@ -168,6 +174,7 @@ app.include_router(share.router)
 # /i/<slug>: these links get pasted into email and chat, which fetch the
 # URL for a preview before any browser runs.
 app.include_router(tracking.router)
+app.include_router(network.router)
 
 
 # ── Traffic counter (feeds the platform dashboard) ────────────────────────────

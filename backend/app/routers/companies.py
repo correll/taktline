@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core import entitlements
+from .network import attribute_signup
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import Company, Membership, User
 from ..deps.auth import ensure_full_account, get_current_user, load_membership
@@ -32,6 +33,8 @@ async def create_company(body: CompanyCreate, user: User = Depends(get_current_u
     # recorded against the email, so `start_trial_if_unstarted` hands this one a
     # trial that has already ended if they have had one before.
     await entitlements.ensure_subscription(session, company.id)
+    # If they came here because a customer asked them to, record it.
+    await attribute_signup(session, company.id, body.supplierInvite)
     await entitlements.start_trial_if_unstarted(session, user)
     return _to_company(company, role="super_admin")
 

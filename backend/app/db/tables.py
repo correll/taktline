@@ -232,6 +232,8 @@ class Station(Base):
     # the same question: a final test bench or a paint booth at the end of a
     # line is a leaf where real work happens, and inferring made it invisible
     # on the heatmap — exactly where a queue building up matters most.
+    #: Same as Card.supplierUrl, for a goods-in queue rather than one lot.
+    supplierUrl: Mapped[str | None] = mapped_column(String, nullable=True)
     isStorage: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                             server_default=text("false"), default=False)
     # What two or more outgoing routes MEAN at this station. 'split' (the
@@ -453,6 +455,11 @@ class Card(Base):
         UUID(as_uuid=True), ForeignKey("production_orders.id", ondelete="SET NULL"),
         nullable=True, index=True,
     )
+    #: A supplier's public tracking link for the job this lot is waiting on —
+    #: pasted in by whoever is waiting. Read by the *browser*, never by this
+    #: server: fetching a user-supplied URL server-side is an SSRF, and there is
+    #: nothing here the browser cannot do instead.
+    supplierUrl: Mapped[str | None] = mapped_column(String, nullable=True)
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
 
@@ -846,3 +853,41 @@ class LifecycleEmail(Base):
     kind: Mapped[str] = mapped_column(String, nullable=False)
     sentTo: Mapped[str] = mapped_column(String, nullable=False, default="")
     sentAt: Mapped[datetime] = _created()
+
+
+class SupplierInvite(Base):
+    """A company asking one of its suppliers to publish order status.
+
+    The viral act, and the reason it works: an invitation from a *customer*
+    carries commercial weight no referral link has. "One of the shops I sell to
+    asked me to" is a reason a supplier will act on; "a friend recommends this
+    software" is not.
+
+    `acceptedCompanyId` is attribution, not access. Accepting an invitation
+    creates an ordinary independent company — the inviter gets no rights over
+    it, and sees only what the supplier chooses to send them (a tracking link,
+    like any customer). Anything else would make signing up an act of
+    submission to a customer, which is not a thing a supplier would do twice.
+    """
+    __tablename__ = "supplier_invites"
+    __table_args__ = (
+        UniqueConstraint("companyId", "email", name="uq_supplier_invite_email"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = _company_fk()
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    #: What they supply, in the inviter's words. Goes into the email, because
+    #: "you make our brackets" lands and "you are a supplier" does not.
+    supplies: Mapped[str] = mapped_column(String, nullable=False, default="")
+    invitedByUserId: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    #: The company that came into being from this invitation, if one did.
+    #: No FK cascade to the inviter: a supplier's account must outlive the
+    #: customer that suggested it.
+    acceptedCompanyId: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True,
+    )
+    acceptedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    createdAt: Mapped[datetime] = _created()

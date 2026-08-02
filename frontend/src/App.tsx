@@ -3,6 +3,7 @@ import { UndoBar } from './components/UndoBar'
 import { PlanBanner, PlanRefusalDialog } from './components/PlanNotices'
 import React, { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { networkApi } from './api/network.api'
 import { connectWS, disconnectWS } from './api/ws'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore, useMapSettingsStore } from './store'
 import { useAuthStore } from './store/auth.store'
@@ -35,6 +36,13 @@ const ClientErrorsView = lazyView(() => import('./views/platform/ClientErrorsVie
 
 const LoginView          = lazyView(() => import('./views/auth/LoginView'))
 const SignupView         = lazyView(() => import('./views/auth/SignupView'))
+
+// An invitation link lands on /signup, but a curious supplier may click through
+// to the landing page or the manual before signing up. Reading it once, here,
+// means the credit survives that wander — and stashing it rather than passing it
+// down the tree means it also survives email verification, which happens on a
+// different page load than the one that created the company.
+networkApi.captureInvite(window.location.search)
 const VerifyEmailView    = lazyView(() => import('./views/auth/VerifyEmailView'))
 const ForgotPasswordView = lazyView(() => import('./views/auth/ForgotPasswordView'))
 const ResetPasswordView  = lazyView(() => import('./views/auth/ResetPasswordView'))

@@ -293,6 +293,87 @@ Two invariants every client must hold: **walk all pages** (page one alone silent
 
 - **Boundaries**: the ERP owns the BoM + inventory; Taktline owns the flow graph + execution. Keep them joined only through the product→template mapping (in the connector), not by auto-generating the graph from the BoM.
 
+## Order tracking, and the supply chain either side of it
+
+Two features that are one idea: **the same link, pointed in both directions.**
+Downstream it answers your customer's "where is my order?"; upstream it answers
+yours. A shop that publishes status to its customers and reads its suppliers'
+sits in a chain it can see through, and each end of that chain is a company who
+now has a reason to be on Taktline — which is the growth loop, and the only one
+here that is not a favour being asked.
+
+**The customer half** (`core/tracking.py`, `routers/tracking.py`). One URL
+resolves **either an order or a lot card**, because "where is job 4471?" is
+asked about the thing on the floor and an order only exists if an ERP or a CSV
+made one — a hand-made lot was untrackable, which is most lots on most floors.
+
+- `/o/{id}/{token}` — a server-rendered page carrying Open Graph tags, because
+  LinkedIn's crawler does not run JavaScript, and `noindex`, because a customer's
+  order is not for search results.
+- `/track/{id}/{token}` — the JSON. **Not** `/api/track`: `/api` exists only in
+  the Vite dev proxy, and shipping it that way would 404 in production.
+- `/o/{id}/{token}/qr.svg` — the printable code. One sticker on the bin serves
+  both readers: a customer scanning it gets progress, and an operator **signed in
+  to Taktline** gets a *Start work* button straight to that lot at that bench
+  (`_viewer_is_a_member` returns a card/station handle only for a member — the
+  page is otherwise identical, so nothing leaks to the customer holding it).
+
+The token is **HMAC-derived, never stored**: no column, no enumeration, and
+nothing to migrate. Steps come from the graph with boundary links filtered out —
+an ERP node is not a manufacturing step, and counting it inflated the
+denominator so every job read as further behind than it was. Completion is
+derived from *position* (the lot is at the last step), never from `flagged`.
+Off by default, per company (`globalSettings.orderTracking`).
+
+**The supplier half** (`core/network.py`, `routers/network.py`). Paste a
+supplier's tracking link onto a lot or onto a goods-in station and their
+progress renders on your board (`SupplierLinkField`); invite one from
+Settings → Integrations.
+
+- **The fetch happens in the browser, never on our server.** The URL comes from
+  a user, and a server that follows user-supplied URLs is the whole SSRF class —
+  doing it client-side avoids the class rather than fencing it. Cross-origin
+  requests carry no cookies, so it can only ever read the public view, which is
+  exactly the intent. Making that fetch *possible* takes
+  `core/public_cors.PublicReadCORSMiddleware`, added **last so it wraps the
+  ordinary `CORSMiddleware`**: the strict origin allowlist answers preflights
+  itself and 400s a stranger before any route runs, so headers set on the route
+  are never reached. It stamps `*` and **strips** allow-credentials — that
+  pairing is the security property, not a shortcut, and browsers reject the two
+  together. The dev proxy needs `/track` too, or the panel fetches Vite's
+  index.html and reports every supplier unreachable in dev only.
+- **Any host is allowed, deliberately.** A supplier may run Taktline on their own
+  hardware; restricting this to taktline.com would break the loop for exactly
+  the customers who bought the on-premise tier. Safety comes from
+  `parse_tracking_url` (http(s) only, a tracking path only, no credentials in
+  the URL, query and fragment stripped) plus React escaping what comes back.
+- **An invitation grants the inviter nothing** — attribution, never access. It
+  is the property a supplier will ask about before signing up, and
+  `test_supplier_network.py` pins it: the inviter is not a member of the
+  accepted company and reads 403 on everything.
+- **No referral fee, no credit, no discount.** Paying for introductions turns a
+  supplier's inbox into spam addressed by a customer they cannot ignore, and
+  changes the ask from "here is a better way to answer me" into "do me a favour
+  so I get a month free". The visibility is the reward.
+- **Not carried by `/map-io`.** A line file is meant to be shared — it is the
+  shipped examples, the support hand-off, the "send me your line" — and a
+  supplier's tracking URL is a bearer credential for *their* order status. The
+  export schema is `extra="forbid"` on a fixed field list, so this is excluded by
+  construction rather than by remembering; it is written down because the next
+  person to add a station field will wonder why it is missing.
+- The marker rides in `sessionStorage`, not through the component tree: a
+  company is created on a *later page load* than the click (email verification
+  happens in between), and a supplier may read the manual first. It is attributed
+  at **both** doors — `POST /companies/` and the adopt-sandbox signup path, which
+  is the one the invitation email actually recommends.
+
+One wrinkle worth knowing: `PUT /cards/{id}` and `PUT /stations/{id}` both build
+their patch with `if v is not None`, so a null is indistinguishable from an
+omission and **no nullable field there could ever be cleared**. `supplierUrl`
+reads `model_fields_set` instead. Scoped to that one field on purpose — for
+every other column, null already means "leave it alone", and changing that
+wholesale would make a partial update erase what it did not mention.
+
 ## What the tests are for
 
 The suite is 331 backend tests plus a frontend one, and it is organised around

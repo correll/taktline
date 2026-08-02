@@ -45,6 +45,7 @@ def _to_card(r: CardRow) -> Card:
         orderId=str(r.orderId) if r.orderId else None,
         trackingUrl=(f"{settings.frontend_base_url.rstrip('/')}"
                      f"/o/{r.id}/{tracking.token_for(r.id)}"),
+        supplierUrl=r.supplierUrl,
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
     )
@@ -168,6 +169,14 @@ async def update_card(card_id: str, body: CardUpdate, ctx: CompanyContext = Depe
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     for k, v in patch.items():
         setattr(row, k, v)
+    # A supplier link has to be *clearable*, and the `is not None` filter above
+    # cannot tell a null from an omission — so unlinking a supplier would
+    # silently do nothing. `model_fields_set` knows which keys the client
+    # actually sent. Scoped to this one field on purpose: for every other
+    # nullable column here, null already means "leave it alone", and changing
+    # that wholesale would make a partial update erase what it did not mention.
+    if "supplierUrl" in body.model_fields_set:
+        row.supplierUrl = body.supplierUrl
     row.updatedAt = utcnow()
     await session.flush()
     card = _to_card(row)

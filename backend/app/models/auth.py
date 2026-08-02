@@ -27,6 +27,9 @@ class SignupBody(BaseModel):
     # the person accepted. Recorded on the user so "they agreed" can later be
     # answered with "to this text, on this date".
     acceptedTermsVersion: Optional[str] = None
+    #: Carried from a supplier invitation email so the customer who sent it gets
+    #: credited when their supplier actually joins. See `routers/network.py`.
+    supplierInvite: Optional[str] = None
 
     _pw = field_validator("password")(_validate_password)
 

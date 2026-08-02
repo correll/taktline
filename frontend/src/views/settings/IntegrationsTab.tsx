@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { apiKeysApi, templatesApi, type ApiKey, type TemplateRef, type ScopeInfo } from '../../api/integrations.api'
 import { color, font, size } from '../../theme/tokens'
 import IntegrationLocations from './IntegrationLocations'
+import SuppliersPanel from './SuppliersPanel'
 
 const cell: React.CSSProperties = { padding: `${size.sp2} ${size.sp3}`, fontSize: 13, color: color.textPrimary, textAlign: 'left' }
 const head: React.CSSProperties = { ...cell, color: color.textSecondary, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }
@@ -151,6 +152,14 @@ export default function IntegrationsTab() {
       {/* Where work enters and leaves — the boundary made explicit. */}
       <Section title="Integration stations">
         <IntegrationLocations />
+      </Section>
+
+      {/* The other end of the same idea: an integration station is where work
+          crosses the boundary of *this* business, a supplier link is where it
+          crosses into somebody else's. Sibling sections, not nested — suppliers
+          are not integration stations. */}
+      <Section title="Your suppliers">
+        <SuppliersPanel />
       </Section>
 
       {/* Contract reference */}

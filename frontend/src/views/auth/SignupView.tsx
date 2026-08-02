@@ -4,6 +4,7 @@ import { track } from '../../analytics'
 import { TermsGate } from '../../legal/TermsGate'
 import { TERMS_VERSION } from '../../legal/terms'
 import { authApi } from '../../api/auth.api'
+import { networkApi } from '../../api/network.api'
 import { AuthCard, AuthFooter, Field, FormError, FormInfo, PrimaryButton, linkStyle } from './authUi'
 import { useAuthStore } from '../../store/auth.store'
 import { useStationsStore } from '../../store'
@@ -44,6 +45,9 @@ export default function SignupView() {
         ...(keep ? { adoptSandbox: true, companyName: companyName.trim() || undefined } : {}),
         // Recorded against the exact version this screen displayed.
         acceptedTermsVersion: TERMS_VERSION,
+        // Only matters on the adopt-sandbox path; the other route to a company
+        // is CreateCompanyView, which takes it from the same stash.
+        supplierInvite: networkApi.takeInvite(),
       })
       track('signup_completed', { adopted_sandbox: keep })
       // The sandbox account is gone once its line has been handed over, so the

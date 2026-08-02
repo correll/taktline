@@ -28,6 +28,19 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    id: '2026-08-03',
+    date: '3 August 2026',
+    headline: 'See your suppliers, and let your customers see you',
+    added: [
+      'Paste a supplier’s tracking link onto a lot or a goods-in station and ' +
+      'their progress shows up on your board — no phone call, no “any update?” ' +
+      'email. Settings → Integrations invites a supplier to send you one.',
+      'Every lot now carries a printable QR code beside its customer link. One ' +
+      'sticker on the bin: a customer scanning it sees that job’s progress, and ' +
+      'an operator signed in to Taktline lands straight on the bench.',
+    ],
+  },
+  {
     id: '2026-08-02',
     date: '2 August 2026',
     headline: 'Customer order tracking, plans, and a place for orders',

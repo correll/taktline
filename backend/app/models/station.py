@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
 from .common import PyObjectId, TimestampedModel
 
@@ -24,6 +24,7 @@ class Station(TimestampedModel):
     integrationRole: Optional[str] = None       # 'source' | 'sink' | 'both'
     # Storage, not work: excluded from the heatmap, OEE and accumulation warnings.
     isStorage: bool = False
+    supplierUrl: Optional[str] = None
     # What multiple outgoing routes mean here: 'split' (default) fans a lot out
     # to every branch at once; 'choice' moves each lot 1:1 down one chosen branch.
     branchMode: Optional[str] = None
@@ -55,3 +56,24 @@ class StationUpdate(BaseModel):
     integrationRole: Optional[str] = None
     isStorage: Optional[bool] = None
     branchMode: Optional[str] = None
+    supplierUrl: Optional[str] = None
+
+    @field_validator('supplierUrl')
+    @classmethod
+    def _clean_supplier(cls, v):
+        """Only a real tracking link gets stored.
+
+        This value is later rendered and fetched by a browser, so it is
+        validated at the boundary rather than at the point of use — a
+        `javascript:` URL in a field that becomes an href is the oldest trick
+        there is. `network.parse_tracking_url` also strips query and fragment,
+        so nothing can be smuggled through.
+        """
+        if v is None or v == "":
+            return None
+        from ..core.network import parse_tracking_url
+        clean = parse_tracking_url(v)
+        if clean is None:
+            raise ValueError("not a Taktline tracking link")
+        return clean
+

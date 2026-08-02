@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { useCardsStore, useStationsStore, useProcessesStore } from '../../store'
 import { cardsApi, type CardEvent } from '../../api/cards.api'
 import { TrackingLink } from '../../views/lots/OrdersPanel'
+import { SupplierLinkField } from './SupplierStatus'
+import { useRole } from '../../auth/useRole'
 import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 import { color, font, size, shadow } from '../../theme/tokens'
 import type { Card, Station } from '../../models'
@@ -50,6 +52,7 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
   const templates  = useProcessesStore((s) => s.lotTemplates)
   const processes  = useProcessesStore((s) => s.processes)
   const updateCard = useCardsStore((s) => s.update)
+  const { canEdit } = useRole()
   const removeCard = useCardsStore((s) => s.remove)
   // Always read live card from store so flag/status changes appear immediately
   const liveCards  = useCardsStore((s) => s.cards)
@@ -225,6 +228,20 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
                   ))}
                 </Section>
               )}
+
+              {/* The mirror of the block below: that one is the link you give
+                  your customer, this one is the link your supplier gave you.
+                  Together they turn a chain of black boxes into a chain you can
+                  see through, which is the only reason to invite a supplier at
+                  all. */}
+              <Section label="SUPPLIER">
+                <SupplierLinkField
+                  value={card.supplierUrl}
+                  disabled={!canEdit}
+                  hint="waiting on a part for this lot?"
+                  onChange={(next) => { void updateCard(card._id, { supplierUrl: next }) }}
+                />
+              </Section>
 
               {/* The link for whoever is waiting on this lot. Right here on the
                   card, because "where is job 4471?" is asked about a lot — an

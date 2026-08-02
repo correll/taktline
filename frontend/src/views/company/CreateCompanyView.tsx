@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { companiesApi } from '../../api/companies.api'
+import { networkApi } from '../../api/network.api'
 import { useAuthStore } from '../../store/auth.store'
 import { AuthCard, Field, FormError, PrimaryButton } from '../auth/authUi'
 import { color, size } from '../../theme/tokens'
@@ -19,7 +20,7 @@ export default function CreateCompanyView() {
     e.preventDefault()
     setError(''); setBusy(true)
     try {
-      const company = await companiesApi.create(name)
+      const company = await companiesApi.create(name, 'UTC', networkApi.takeInvite())
       await refresh()
       setActiveCompany(company.id)
       navigate('/', { replace: true })

@@ -46,6 +46,8 @@ class Card(TimestampedModel):
     #: present; the page only answers while the company has customer
     #: order tracking switched on (Settings → Global).
     trackingUrl: Optional[str] = None
+    #: A supplier's public tracking link for the job this lot waits on.
+    supplierUrl: Optional[str] = None
 
 
 class CardCreate(BaseModel):
@@ -91,6 +93,26 @@ class CardUpdate(BaseModel):
     flagged: Optional[bool] = None
     description: Optional[str] = None
     status: Optional[LotStatus] = None
+    supplierUrl: Optional[str] = None
+
+    @field_validator('supplierUrl')
+    @classmethod
+    def _clean_supplier(cls, v):
+        """Only a real tracking link gets stored.
+
+        This value is later rendered and fetched by a browser, so it is
+        validated at the boundary rather than at the point of use — a
+        `javascript:` URL in a field that becomes an href is the oldest trick
+        there is. `network.parse_tracking_url` also strips query and fragment,
+        so nothing can be smuggled through.
+        """
+        if v is None or v == "":
+            return None
+        from ..core.network import parse_tracking_url
+        clean = parse_tracking_url(v)
+        if clean is None:
+            raise ValueError("not a Taktline tracking link")
+        return clean
 
     @field_validator('lotNum')
     @classmethod

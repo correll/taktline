@@ -197,11 +197,18 @@ def test_one_order_says_nothing_about_another(actor):
                                        "externalRef": "SECRET-CUSTOMER"}).json()
     _set_tracking(a.company, True)
 
-    body = Actor().req("GET", f"/track/{mine['id']}/"
-                              f"{tracking.token_for(uuid.UUID(mine['id']))}").text
+    r = Actor().req("GET", f"/track/{mine['id']}/"
+                           f"{tracking.token_for(uuid.UUID(mine['id']))}")
+    body, data = r.text, r.json()
+    # Distinctive strings are worth scanning the whole body for — a leak could
+    # surface in any field.
     assert "SECRET-CUSTOMER" not in body
-    assert "99" not in body
     assert other["id"] not in body
+    # The quantity is checked as a *field*. Scanning the body for "99" was the
+    # original assertion and it was wrong twice: those two digits appear in any
+    # timestamp that happens to carry them (it failed at 19:59:12.99), and it
+    # would have caught nothing had both orders been for the same quantity.
+    assert data["quantity"] == 3
 
 
 def test_a_shop_can_hide_its_process(actor):

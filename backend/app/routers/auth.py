@@ -29,6 +29,7 @@ from ..deps.auth import (
     platform_role_of,
     set_auth_cookies,
 )
+from .network import attribute_signup
 from ..models.auth import (
     CompanyMembership,
     ForgotPasswordBody,
@@ -184,6 +185,17 @@ async def signup(request: Request, body: SignupBody, session: AsyncSession = Dep
         await session.flush()
         if body.adoptSandbox:
             adopted = await _adopt_sandbox(session, request, user, body.companyName)
+            if adopted:
+                # The other door a company comes through. Attributing only at
+                # POST /companies/ would miss every supplier who tried the
+                # sandbox first — which is the path the invitation email
+                # actually recommends.
+                membership = (await session.execute(
+                    select(Membership).where(Membership.userId == user.id)
+                )).scalars().first()
+                if membership is not None:
+                    await attribute_signup(session, membership.companyId,
+                                           body.supplierInvite)
         token = await _new_token(session, user.id, "email_verify", settings.email_verify_ttl)
         link = await send_verification_email(email, token)
     elif not existing.emailVerified:

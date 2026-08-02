@@ -30,7 +30,7 @@ from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core import usage
+from ..core import entitlements, usage
 from ..core.config import settings
 from ..core.security import generate_token, hash_token
 from ..db.connection import SESSION_SCOPE, get_session, parse_uuid
@@ -124,6 +124,9 @@ class CompanyContext:
     company_id: uuid.UUID
     role: str
     user: Optional[User] = None   # None for API-key (service) principals
+    #: Resolved once per request by the dependency that built this context, so
+    #: an endpoint checking a plan limit does not re-query for it.
+    entitlement: Optional["entitlements.Entitlement"] = None
 
     def at_least(self, role: str) -> bool:
         return _rank(self.role) >= _rank(role)
@@ -135,7 +138,10 @@ SANDBOX_BLOCKED = ("Not available in the sandbox — create a free account to ke
 
 # Row caps for anonymous try-it companies: enough to build and run a realistic
 # demo line, small enough that the endpoint can't be used to fill the database.
-SANDBOX_LIMITS = {"stations": 40, "cards": 200, "lot_templates": 40, "processes": 10}
+# Lives in core.entitlements now, beside the paid limits, because they are the
+# same question asked of a different number. Aliased so the name keeps resolving
+# for anything that imports it from here.
+SANDBOX_LIMITS = entitlements.SANDBOX_LIMITS
 
 
 def is_sandbox(principal) -> bool:
@@ -153,21 +159,17 @@ def ensure_full_account(principal) -> None:
 
 
 async def ensure_sandbox_quota(session: AsyncSession, ctx: "CompanyContext", table) -> None:
-    """Cap how many rows an anonymous sandbox company may create, so the public
-    endpoint can't be turned into unbounded storage. No-op for real accounts."""
-    if not is_sandbox(ctx):
-        return
-    from sqlalchemy import func
-    limit = SANDBOX_LIMITS.get(table.__tablename__)
-    if limit is None:
-        return
-    count = (await session.execute(
-        select(func.count()).select_from(table).where(table.companyId == ctx.company_id)
-    )).scalar_one()
-    if count >= limit:
-        raise HTTPException(
-            403, f"Sandbox limit reached ({limit} {table.__tablename__.replace('_', ' ')}) — "
-                 "create a free account to keep building")
+    """Cap how many rows a company may create, by plan.
+
+    Originally sandbox-only; now the single quota path for every tier, because a
+    paid limit and a sandbox limit are the same question asked of a different
+    number. `core.entitlements.ensure_quota` owns the arithmetic and the
+    machine-readable refusal; this wrapper keeps the five existing call sites
+    (`stations.py`, `cards.py`, `lot_templates.py`, `processes.py`, `map_io.py`)
+    unchanged.
+    """
+    from ..core import entitlements
+    await entitlements.ensure_quota(session, ctx, table, table.__tablename__)
 
 
 # ── Platform staff (customer service) ─────────────────────────────────────────
@@ -225,12 +227,23 @@ async def get_active_company(
         # Grants are explicit, time-boxed, and audited — never a silent bypass.
         if await find_active_grant(session, user, company_uuid) is not None:
             usage.bump_api(str(company_uuid))
+            # Deliberately NOT entitlement-gated: support has to be able to get
+            # into a locked account, which is usually why they were called.
+            # The grant is time-boxed and every use is audited.
             return CompanyContext(company_id=company_uuid, role="super_admin", user=user)
         raise HTTPException(403, "You are not a member of this company")
     # Meter only verified access, so no one can inflate another tenant's usage
     # by naming their company id in a header.
     usage.bump_api(str(company_uuid))
-    return CompanyContext(company_id=company_uuid, role=membership.role, user=user)
+
+    # The subscription gate. Inline rather than a separate dependency because
+    # `require_scope`'s session branch calls this function directly (see below)
+    # — a wrapper dependency would silently stop covering scoped endpoints.
+    ent = await entitlements.resolve(session, company_uuid, user=user)
+    entitlements.check_request(ent, request)
+
+    return CompanyContext(company_id=company_uuid, role=membership.role, user=user,
+                          entitlement=ent)
 
 
 async def require_admin(ctx: CompanyContext = Depends(get_active_company)) -> CompanyContext:
@@ -273,11 +286,25 @@ def require_scope(scope: str, *, session_role: str = "admin"):
                 raise HTTPException(401, "Invalid or revoked API key")
             if scope not in (key.scopes or []):
                 raise HTTPException(403, f"API key lacks the '{scope}' scope")
+
+            # Entitlement BEFORE `lastUsedAt`, which is a write: a locked
+            # company's key should leave no trace of having been accepted.
+            #
+            # This is the only check that survives a downgrade. Stopping new
+            # bindings at the station endpoints does nothing for the ERP
+            # connector already polling with a key it was issued last month —
+            # every integration on the account keeps running until this line
+            # refuses it.
+            ent = await entitlements.resolve(session, key.companyId)
+            entitlements.check_request(ent, request)
+            entitlements.ensure_integrations(ent)
+
             key.lastUsedAt = utcnow()
             usage.bump_api(str(key.companyId))   # verified key → real attribution
             # A scoped key acts as the 'admin' tier (release orders, run reports,
             # scan-to-advance) — never super-admin config.
-            return CompanyContext(company_id=key.companyId, role="admin", user=None)
+            return CompanyContext(company_id=key.companyId, role="admin", user=None,
+                                  entitlement=ent)
 
         # No key → fall back to an authenticated session, checked by rank.
         user = await get_current_user(request, session)

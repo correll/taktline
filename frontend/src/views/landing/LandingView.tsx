@@ -7,6 +7,7 @@ import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
 import { ContactForm } from './ContactForm'
 import { featuredTips } from '../../help/leanTips'
+import { LEGAL_ENTITY } from '../../legal/terms'
 import { useAuthStore } from '../../store/auth.store'
 import { useThemeStore } from '../../store/theme.store'
 import { color, font, size, shadow } from '../../theme/tokens'
@@ -918,7 +919,7 @@ function Footer() {
       <div style={{ ...rowStyle, maxWidth: 1120, margin: '0 auto', flexWrap: 'wrap', gap: size.sp4 }}>
         <TaktlineLogo height={18} mark color={color.textSecondary} />
         <span style={{ fontSize: 12.5, color: color.textDim }}>
-          © {new Date().getFullYear()} Taktline — digital kanban for real factories
+          © {new Date().getFullYear()} {LEGAL_ENTITY} — digital kanban for real factories
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: size.sp5, fontSize: 13 }}>
           <Link to="/manual" style={{ color: color.textSecondary, textDecoration: 'none' }}>User manual</Link>

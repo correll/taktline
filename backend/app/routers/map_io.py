@@ -41,6 +41,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.integrations import ROLES, is_provider, role_allowed
+from ..core import entitlements
 from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import (
     Card as CardRow,
@@ -50,8 +51,7 @@ from ..db.tables import (
     Station as StationRow,
     WorkSession as SessionRow,
 )
-from ..deps.auth import (SANDBOX_LIMITS, CompanyContext, ensure_full_account,
-                         require_super_admin)
+from ..deps.auth import CompanyContext, ensure_full_account, require_super_admin
 from ..models.common import utcnow
 from .routes import (_check_boundary_placement, _process_edges, _validate_output_template,
                      _weight_allowed, _would_create_cycle)
@@ -254,23 +254,36 @@ async def import_map(doc: MapDocument,
         if d:
             raise HTTPException(422, f"Duplicate {kind} ref(s): {sorted(d)}")
 
+    ent = ctx.entitlement or await entitlements.resolve(session, ctx.company_id,
+                                                        user=ctx.user)
+
     # Provider capability is a rule, not just an enum (a shipper cannot be a source).
     for st in doc.stations:
         if st.integrationRole is not None and st.integrationProvider is None:
             raise HTTPException(422, f"Station {st.ref!r}: an integration role needs a provider")
         if st.integrationProvider is not None:
+            entitlements.ensure_integrations(ent)
             role = st.integrationRole or "both"
             if not role_allowed(st.integrationProvider, role):
                 raise HTTPException(422,
                     f"Station {st.ref!r}: {st.integrationProvider} cannot be bound as '{role}'")
 
-    # Sandbox accounts keep their quotas: a file is not a side door around them.
-    if ctx.user is not None and getattr(ctx.user, "isSandbox", False):
-        for key, count in (("stations", len(doc.stations)), ("processes", len(doc.processes)),
-                           ("lot_templates", len(doc.templates))):
-            limit = SANDBOX_LIMITS.get(key)
-            if limit is not None and count > limit:
-                raise HTTPException(403, f"Sandbox limit: at most {limit} {key}")
+    # Quotas apply to a file exactly as they apply to the editor.
+    #
+    # This check used to run only `if ctx.user.isSandbox`, so every *real*
+    # account skipped it — and because an import REPLACES the line, the
+    # per-create quota never sees these rows either. The result was a side door
+    # wide enough to drive MAX_STATIONS (200) through on a 50-station plan.
+    for key, count in (("stations", len(doc.stations)), ("processes", len(doc.processes)),
+                       ("lot_templates", len(doc.templates))):
+        limit = entitlements.limit_for(ent, key)
+        if limit is not None and count > limit:
+            raise HTTPException(403, {
+                "message": (f"This file has {count} {key.replace('_', ' ')}; your "
+                            f"{ent.plan.label} plan covers {limit}."),
+                "code": "plan_limit", "resource": key,
+                "plan": ent.plan.code, "limit": limit, "used": count,
+            })
 
     # ── Out with the old (child before parent; audit log survives). ──
     for table in (SessionRow, CardRow, LotTemplateRow, RouteRow, ProcessRow, StationRow):

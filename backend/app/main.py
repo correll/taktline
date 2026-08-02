@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import timedelta
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,7 +18,8 @@ from .core.ratelimit import limiter
 from .core.security import hash_token
 from .core.security_headers import SecurityHeadersMiddleware
 from .db.connection import close_db, connect_db, parse_uuid, SessionLocal
-from .db.tables import AuthSession, Membership, Station as StationRow
+from .deps.auth import SANDBOX_IDLE_TTL
+from .db.tables import AuthSession, Membership, Station as StationRow, User
 from .models.common import utcnow
 from .models.machine_state import MachineState
 from .plugins.registry import plugin_registry
@@ -27,7 +29,7 @@ from .routers import (
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
     client_errors, map_io, share, stations, stats,
 )
-from .core import sandbox_gc, usage
+from .core import entitlements, sandbox_gc, usage
 from .core.traffic import traffic
 from .db.tables import SupportGrant
 
@@ -226,7 +228,18 @@ async def ws_events(websocket: WebSocket):
         sess_row = (await session.execute(
             select(AuthSession).where(AuthSession.tokenHash == hash_token(raw))
         )).scalars().first()
-        if sess_row is None or sess_row.expiresAt <= utcnow():
+        if sess_row is None:
+            await websocket.close(code=4401)
+            return
+        # Absolute expiry AND the idle window. `get_current_user` checks both
+        # (deps/auth.py:104-107); this path only ever checked the first, so a
+        # session HTTP had already stopped accepting could still open a socket
+        # and keep watching the board.
+        ws_user = await session.get(User, sess_row.userId)
+        idle_ttl = (SANDBOX_IDLE_TTL if (ws_user is not None and ws_user.isSandbox)
+                    else settings.session_idle_ttl)
+        if (ws_user is None or sess_row.expiresAt <= utcnow()
+                or sess_row.lastSeenAt + timedelta(seconds=idle_ttl) <= utcnow()):
             await websocket.close(code=4401)
             return
         membership = (await session.execute(
@@ -248,6 +261,14 @@ async def ws_events(websocket: WebSocket):
             if grant is None:
                 await websocket.close(code=4403)
                 return
+
+        # A locked account loses the live board too. Read-only keeps it: the
+        # socket carries nothing but updates, and watching your own floor is
+        # exactly what the grace period is for.
+        ent = await entitlements.resolve(session, company_uuid, user=ws_user)
+        if ent.blocked:
+            await websocket.close(code=4402)
+            return
 
     await ws_manager.connect(websocket, company_uuid)
     try:

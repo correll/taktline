@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core import entitlements
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import Company, Membership, User
 from ..deps.auth import ensure_full_account, get_current_user, load_membership
@@ -27,6 +28,11 @@ async def create_company(body: CompanyCreate, user: User = Depends(get_current_u
     await session.flush()
     # The creator becomes the company's super-admin (its owner).
     session.add(Membership(companyId=company.id, userId=user.id, role="super_admin"))
+    # A second company does NOT get a second free fortnight — the grant is
+    # recorded against the email, so `start_trial_if_unstarted` hands this one a
+    # trial that has already ended if they have had one before.
+    await entitlements.ensure_subscription(session, company.id)
+    await entitlements.start_trial_if_unstarted(session, user)
     return _to_company(company, role="super_admin")
 
 

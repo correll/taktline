@@ -717,3 +717,110 @@ class ShareCard(Base):
     )
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     createdAt: Mapped[datetime] = _created()
+
+
+class Subscription(Base):
+    """What a company is entitled to, and what Stripe thinks of them.
+
+    One row per company, created wherever a company is (there are four such
+    places — see `core/entitlements.ensure_subscription`).
+
+    **The effective state is derived, not stored.** This row holds the facts —
+    which plan, what Stripe last told us, when the trial ends, when the grace
+    period ends — and `core/entitlements.resolve()` turns them into an answer at
+    read time. A stored `status` column would mean a company sits in whatever
+    state a missed background job left them in: usually "active", which is free
+    service, and occasionally "locked", which is an outage we caused.
+
+    `stripeStatus` is Stripe's word, kept verbatim and never interpreted here.
+    """
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        CheckConstraint("\"planCode\" <> ''", name="ck_subscription_plan_code"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    planCode: Mapped[str] = mapped_column(String, nullable=False, default="trial")
+    onPremise: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Stripe's own subscription status, verbatim: trialing / active / past_due /
+    # incomplete / canceled / unpaid. Null until they buy something.
+    stripeStatus: Mapped[str | None] = mapped_column(String, nullable=True)
+    stripeCustomerId: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    stripeSubscriptionId: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+
+    trialEndsAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    currentPeriodEnd: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when a payment fails; the account is read-only until it passes, then
+    # locked. Cleared on a successful invoice.
+    graceEndsAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    createdAt: Mapped[datetime] = _created()
+    updatedAt: Mapped[datetime] = _updated()
+
+
+class TrialGrant(Base):
+    """One free trial per person, ever.
+
+    Deliberately keyed on the **email**, with no FK to `users`, because that is
+    the only identifier that survives the thing it has to outlive: a trial
+    company is deleted on day 15, `User` rows do not cascade from `Company`, and
+    the verified user can then create another company. Without this row that
+    loop has no end — a free product with extra steps.
+    """
+    __tablename__ = "trial_grants"
+
+    id: Mapped[uuid.UUID] = _pk()
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    grantedAt: Mapped[datetime] = _created()
+
+
+class BillingEvent(Base):
+    """Every Stripe webhook we have processed, by Stripe's own event id.
+
+    **FK-free on purpose**, like `platform_audit`. If this cascaded with the
+    company, deleting a company would destroy the record that its events were
+    handled — and Stripe retries for three days, so a retry landing after the
+    deletion would be processed from scratch against a company that no longer
+    exists. It also has to survive the customer for tax and dispute evidence.
+
+    The unique constraint is the idempotency: a redelivered event inserts
+    nothing and does nothing. Ordering is handled separately, by re-fetching the
+    authoritative object from Stripe rather than trusting the payload.
+    """
+    __tablename__ = "billing_events"
+
+    id: Mapped[uuid.UUID] = _pk()
+    stripeEventId: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    companyId: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    receivedAt: Mapped[datetime] = _created()
+    processedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LifecycleEmail(Base):
+    """One row per (company, email kind) — the drip's exactly-once ledger.
+
+    The unique constraint *is* the mechanism: a send is claimed with
+    `INSERT ... ON CONFLICT DO NOTHING RETURNING`, so a second worker, a
+    restart, or a redeploy mid-sweep cannot send the same email twice. Checking
+    "have we sent it?" and then sending is a race with a customer-visible
+    failure mode, and the interval here is days, so it would be a rare and
+    baffling one.
+    """
+    __tablename__ = "lifecycle_emails"
+    __table_args__ = (
+        UniqueConstraint("companyId", "kind", name="uq_lifecycle_company_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = _company_fk()
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    sentTo: Mapped[str] = mapped_column(String, nullable=False, default="")
+    sentAt: Mapped[datetime] = _created()

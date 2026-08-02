@@ -25,11 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import settings
 from ..core.traffic import traffic
 from ..core.usage import month_bucket
-from ..core import entitlements
+from ..core import entitlements, plans
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (
     AuthSession, Card, CardEvent, ClientError as ClientErrorRow, Company, Membership,
-    PlatformAudit, Station, SupportGrant, UsageCounter, User, WorkSession,
+    PlatformAudit, Station, Subscription, SupportGrant, UsageCounter, User, WorkSession,
 )
 from ..deps.auth import platform_role_of, require_platform_owner, require_platform_staff
 from ..models.common import utcnow
@@ -58,6 +58,20 @@ async def platform_status(user: User = Depends(require_platform_staff),
     now = utcnow()
     users_total = await count(select(func.count()).select_from(User))
     companies_total = await count(select(func.count()).select_from(Company))
+
+    # Revenue, derived the same way the gate derives entitlement, so the number
+    # on the dashboard and the service the customer receives cannot disagree.
+    sub_rows = (await session.execute(select(Subscription))).scalars().all()
+    mrr_cents = paying = trialing = at_risk = 0
+    for row in sub_rows:
+        ent = entitlements._derive(str(row.companyId), row)
+        if row.planCode in plans.PURCHASABLE and ent.state == entitlements.OK:
+            mrr_cents += plans.monthly_cents(row.planCode, row.onPremise)
+            paying += 1
+        elif row.planCode == plans.TRIAL and ent.state == entitlements.OK:
+            trialing += 1
+        if ent.state in (entitlements.READ_ONLY, entitlements.LOCKED):
+            at_risk += 1
     stations_total = await count(select(func.count()).select_from(Station))
     cards_total = await count(select(func.count()).select_from(Card))
     # Signed-in users: unexpired sessions seen within the idle window.
@@ -89,6 +103,11 @@ async def platform_status(user: User = Depends(require_platform_staff),
         "companiesTotal": companies_total,
         "stationsTotal": stations_total,
         "cardsTotal": cards_total,
+        "mrrCents": mrr_cents,
+        "arrCents": mrr_cents * 12,
+        "payingCompanies": paying,
+        "trialingCompanies": trialing,
+        "atRiskCompanies": at_risk,
     }
 
 
@@ -200,6 +219,31 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
     from ..main import ws_manager
     live = {cid: len(conns) for cid, conns in ws_manager._by_company.items()}
 
+    # Billing. The effective state is derived rather than read from a column,
+    # so this shows what the customer is actually experiencing right now — not
+    # what a background job last wrote down.
+    subs = {r.companyId: r for r in (await session.execute(
+        select(Subscription))).scalars().all()}
+
+    def billing(cid):
+        row = subs.get(cid)
+        if row is None:
+            return {"plan": None, "planState": None, "mrrCents": 0,
+                    "renewsAt": None, "trialEndsAt": None}
+        ent = entitlements._derive(str(cid), row)
+        return {
+            "plan": ent.plan.code,
+            "planState": ent.state,
+            # Only money actually being collected counts: a trial, a comped
+            # account and a locked one are all $0 of revenue, and a dashboard
+            # that adds them up tells you a comfortable lie.
+            "mrrCents": (plans.monthly_cents(row.planCode, row.onPremise)
+                         if ent.state == entitlements.OK
+                         and row.planCode in plans.PURCHASABLE else 0),
+            "renewsAt": row.currentPeriodEnd,
+            "trialEndsAt": row.trialEndsAt,
+        }
+
     return [{
         "id": str(c.id),
         "name": c.name,
@@ -212,6 +256,7 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
         "apiRequestsMonth": usage_rows[c.id].apiRequests if c.id in usage_rows else 0,
         "wsMessagesMonth": usage_rows[c.id].wsMessages if c.id in usage_rows else 0,
         "lastActivityAt": last_event.get(c.id),
+        **billing(c.id),
     } for c in companies]
 
 

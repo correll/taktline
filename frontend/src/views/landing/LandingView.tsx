@@ -85,7 +85,7 @@ export default function LandingView() {
         <Founder />
         <WhyTrustUs />
         <FromTheBook />
-        <BusinessModel />
+        <Pricing />
         <Questions />
         <FinalCta />
       </main>
@@ -107,6 +107,10 @@ function TopNav() {
       <div className="landing-nav" style={{ ...rowStyle, width: '100%', maxWidth: 1120, margin: '0 auto' }}>
         <TaktlineLogo height={22} color={color.textPrimary} />
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: size.sp2 }}>
+          <a href="#pricing" className="nav-secondary"
+             style={{ color: color.textSecondary, textDecoration: 'none', fontSize: 14, padding: '8px 10px' }}>
+            Pricing
+          </a>
           <Link to="/manual" className="nav-secondary"
                 style={{ color: color.textSecondary, textDecoration: 'none', fontSize: 14, padding: '8px 10px' }}>
             Manual
@@ -161,11 +165,11 @@ function Hero() {
             Try a live line — no signup
           </SandboxButton>
           <SignupLink where="hero" style={{ fontSize: 16, padding: '12px 24px' }}>
-            Create a free account
+            Start free for two weeks
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
-          Your line, free forever · no credit card · your data exports any time
+          Two weeks free · no card · your data exports any time
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textSecondary }}>
           Runs in the browser on <strong style={{ color: color.textPrimary }}>iPhone, iPad and
@@ -367,7 +371,7 @@ function InlineCta({ line, where }: { line: string; where: string }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3, flexWrap: 'wrap' }}>
         <SandboxButton where={where}>Try a live line — no signup</SandboxButton>
         <SignupLink where={where} style={{ border: 'none', padding: '8px 4px' }}>
-          or create a free account
+          or start your two weeks
         </SignupLink>
       </div>
     </div>
@@ -585,38 +589,99 @@ function Integrations() {
 
 // ─── How we make money ───────────────────────────────────────────────────────
 
-function BusinessModel() {
+/** The price list, on the page.
+ *
+ *  Replaces the old "free forever — and here is how we stay in business" card.
+ *  That promise is no longer true and keeping it would have been the expensive
+ *  kind of wrong: a claim people plan around, walked back later. The honest
+ *  version of the same argument is that the price is low enough not to need a
+ *  business case, and that nothing is held hostage if you stop paying.
+ *
+ *  Prices are duplicated here rather than fetched: this section renders for
+ *  signed-out visitors and for crawlers, and a pricing table that arrives after
+ *  a round trip is a pricing table search engines never see. `test_billing.py`
+ *  pins the same numbers on the server.
+ */
+const TIERS = [
+  {
+    name: 'Basic', price: '$29', per: '/month',
+    line: 'Up to 50 stations. Every operator, every tablet, no seat count.',
+    points: ['The live board and floor plan', 'Cycle time, line cycle time and OEE',
+             'The line doctor', 'Unlimited operators'],
+  },
+  {
+    name: 'Professional', price: '$58', per: '/month', featured: true,
+    line: 'Everything in Basic, plus your ERP and shop systems.',
+    points: ['Odoo, NetSuite, Shopify, QuickBooks, ShipStation and more',
+             'Scan-to-advance and label printing', 'Reporting API for Power BI or Grafana',
+             '$116/month for up to 100 stations'],
+  },
+  {
+    name: 'On-premise', price: '+$199', per: '/month',
+    line: 'On your own hardware, on any tier. Nothing leaves the building.',
+    points: ['Runs on your network, offline-capable', 'Your database, your backups',
+             'Keeps working if you stop paying', 'Added to Basic or Professional'],
+  },
+]
+
+function Pricing() {
   return (
-    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
-      <div style={{
-        maxWidth: 820, margin: '0 auto', textAlign: 'center',
-        border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
-        background: color.bgCard, padding: `${size.sp8} ${size.sp6}`,
-      }}>
-        <h2 style={{ ...h2Style, fontSize: 'clamp(20px, 2.8vw, 26px)' }}>
-          Your line is free forever — and here is how we stay in business
+    <section id="pricing" style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 1060, margin: '0 auto' }}>
+        <h2 style={{ ...h2Style, textAlign: 'center' }}>
+          Cheap enough that you do not need a business case
         </h2>
-        <p style={{ margin: `${size.sp4} auto 0`, maxWidth: 620, fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary }}>
-          Running your line on Taktline is free, forever, for every operator — no seat
-          count, no per-station charge, no trial that ends. That is the part we intend
-          never to change. We earn our living from the things a factory actually wants
-          help with:
-        </p>
-        <div style={{
-          margin: `${size.sp5} auto 0`, display: 'flex', gap: size.sp2,
-          flexWrap: 'wrap', justifyContent: 'center',
+        <p style={{
+          margin: `${size.sp4} auto 0`, maxWidth: 620, textAlign: 'center',
+          fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary,
         }}>
-          {['Premium support', 'Hosted instances', 'Hardware integration', 'Robotics'].map((item) => (
-            <span key={item} style={{
-              fontSize: 13, color: color.textPrimary, background: color.bgPanel,
-              border: `1px solid ${color.border}`, borderRadius: size.radiusFull,
-              padding: '6px 14px',
-            }}>{item}</span>
+          Two weeks free, no card. After that it is priced per line, not per person —
+          every operator and every tablet is included on every tier, because a worker
+          who can see the system improves it.
+        </p>
+
+        <div style={{
+          margin: `${size.sp8} 0 0`, display: 'grid', gap: size.sp4,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        }}>
+          {TIERS.map((t) => (
+            <div key={t.name} style={{
+              border: `1px solid ${t.featured ? color.bluePrimary : color.border}`,
+              borderRadius: size.radiusLg, background: color.bgCard,
+              padding: size.sp6, display: 'flex', flexDirection: 'column',
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.featured ? color.blueBright : color.textDim,
+                            textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                {t.name}
+              </div>
+              <div style={{ margin: `${size.sp3} 0 0`, display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 38, fontWeight: 600, color: color.textPrimary }}>{t.price}</span>
+                <span style={{ fontSize: 15, color: color.textDim }}>{t.per}</span>
+              </div>
+              <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14, lineHeight: 1.6, color: color.textSecondary }}>
+                {t.line}
+              </p>
+              <ul style={{ margin: `${size.sp4} 0 0`, padding: 0, listStyle: 'none',
+                           display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+                {t.points.map((pt) => (
+                  <li key={pt} style={{ fontSize: 13.5, lineHeight: 1.5, color: color.textSecondary,
+                                        display: 'flex', gap: size.sp2 }}>
+                    <span aria-hidden="true" style={{ color: color.blueBright }}>·</span>
+                    {pt}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
         </div>
-        <p style={{ margin: `${size.sp5} auto 0`, maxWidth: 560, fontSize: 13.5, lineHeight: 1.65, color: color.textDim }}>
-          Nothing in the free product expires, and your data exports any time — so
-          choosing us is never a lock-in.
+
+        <p style={{
+          margin: `${size.sp6} auto 0`, maxWidth: 700, textAlign: 'center',
+          fontSize: 13.5, lineHeight: 1.7, color: color.textDim,
+        }}>
+          Change plan whenever you like — it is pro-rated to the day, so a downgrade two
+          days in costs you two days. Your data exports at any time, in a format you can
+          read, and if you stop paying we keep it rather than delete it.
         </p>
       </div>
     </section>
@@ -696,7 +761,7 @@ function WhyTrustUs() {
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={eyebrowStyle}>The honest bit</div>
-          <h2 style={h2Style}>Taktline is new — and that costs you nothing</h2>
+          <h2 style={h2Style}>Taktline is new — so we made it cheap to find out</h2>
           <p style={{
             margin: `${size.sp4} auto 0`, maxWidth: 640, fontSize: 16,
             lineHeight: 1.7, color: color.textSecondary,
@@ -714,8 +779,8 @@ function WhyTrustUs() {
           gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
         }}>
           {[
-            ['Nothing to lose',
-             'Running your line is free, forever, for every operator — no seat count, no per-station charge, no credit card. There is no budget to defend and no procurement to survive.'],
+            ['Little to lose',
+             'Two weeks free with no card, then $29 a month. Every operator and every tablet is included on every tier — there is no seat count, no budget to defend and no procurement to survive.'],
             ['Nothing to install',
              'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
             ['Nothing to lock you in',
@@ -828,7 +893,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         there is nothing to print or install. The five-minute tutorial builds a line end
         to end so you can see the shape of it before touching your own.</> },
   { q: 'Is my data mine?',
-    a: <>Yes. Everything exports at any time, and Taktline is free to run on your own
+    a: <>Yes. Everything exports at any time, and Taktline can run on your own
         server — so nothing is held hostage by a subscription.</> },
   { q: 'What happens when the Wi-Fi drops?',
     a: <>Tablets keep showing the board from a local snapshot and reconnect on their
@@ -844,9 +909,15 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         ready-made connectors; anything else goes through one small order API, a CSV
         import, or Zapier and Make.</> },
   { q: 'What does it cost?',
-    a: <>Running your line is free, forever, for every operator — no seat count and no
-        per-station charge. We charge for premium support, hosted instances, hardware
-        integration and robotics work.</> },
+    a: <>Two weeks free with no card, then <strong>$29 a month</strong> for up to 50 stations, or
+        <strong> $58</strong> with ERP integrations. Every operator and every tablet is included on
+        every tier — we price the line, not the people, because a worker who can see the
+        system improves it. Running it on your own hardware adds $199 a month.</> },
+  { q: 'What happens if I stop paying?',
+    a: <>Your data stays. The account goes read-only for a week — you can still see and
+        export everything — and is then paused rather than deleted. Nothing is held
+        hostage: your line exports at any time, in a format you can read. On-premise
+        installs keep running whatever happens, because they run on your hardware.</> },
 ]
 
 function Questions() {
@@ -902,11 +973,11 @@ function FinalCta() {
             Try a live line — no signup
           </SandboxButton>
           <SignupLink where="footer" style={{ fontSize: 16, padding: '13px 26px' }}>
-            Create a free account
+            Start free for two weeks
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textDim }}>
-          No credit card needed — Taktline is free, and stays free
+          No card needed to start · $29/month after two weeks · cancel any time
         </div>
       </div>
     </section>
@@ -926,7 +997,7 @@ function Footer() {
           <Link to="/terms" style={{ color: color.textSecondary, textDecoration: 'none' }}>Terms</Link>
           <Link to="/login" style={{ color: color.textSecondary, textDecoration: 'none' }}>Sign in</Link>
           <Link to="/signup" style={{ color: color.blueBright, textDecoration: 'none' }}
-                onClick={() => track('cta_click', { cta: 'signup', where: 'footer-nav' })}>Create account</Link>
+                onClick={() => track('cta_click', { cta: 'signup', where: 'footer-nav' })}>Start free</Link>
         </div>
       </div>
     </footer>

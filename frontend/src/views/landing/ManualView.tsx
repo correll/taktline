@@ -48,7 +48,7 @@ export default function ManualView() {
               Start free
             </Link>
           </div>
-          <div style={{ marginTop: size.sp2, fontSize: 12.5, color: color.textDim }}>No credit card needed</div>
+          <div style={{ marginTop: size.sp2, fontSize: 12.5, color: color.textDim }}>Two weeks free, no card needed</div>
         </div>
       </main>
     </div>

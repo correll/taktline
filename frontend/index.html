@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/taktline-mark.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Taktline — digital kanban &amp; MES for small manufacturers</title>
-    <meta name="description" content="See your whole shop floor at a glance: every lot, every station, live on your own floor plan — so you know what is where, what is late, and what a job actually costs. Digital kanban for job shops and assembly lines, on any phone or tablet, with a built-in line doctor that tells you what to fix first. Free forever, no credit card." />
+    <meta name="description" content="See your whole shop floor at a glance: every lot, every station, live on your own floor plan — so you know what is where, what is late, and what a job actually costs. Digital kanban for job shops and assembly lines, on any phone or tablet, with a built-in line doctor that tells you what to fix first. Two weeks free, then $29 a month — every operator included." />
     <link rel="canonical" href="https://taktline.com/" />
     <meta name="theme-color" content="#D85A30" />
 
@@ -24,7 +24,7 @@
     <meta property="og:site_name" content="Taktline" />
     <meta property="og:url" content="https://taktline.com/" />
     <meta property="og:title" content="Your whole shop floor, at a glance." />
-    <meta property="og:description" content="Know what is where, what is late, and what a job actually costs. Digital kanban for job shops and assembly lines, on any phone or tablet, with a built-in line doctor that tells you what to fix first. Free forever, no credit card." />
+    <meta property="og:description" content="Know what is where, what is late, and what a job actually costs. Digital kanban for job shops and assembly lines, on any phone or tablet, with a built-in line doctor that tells you what to fix first. Two weeks free, then $29 a month — every operator included." />
     <meta property="og:image" content="https://taktline.com/landing/og-cover.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -58,10 +58,17 @@
         "url": "https://taktline.com/"
       },
       "offers": {
-        "@type": "Offer",
-        "price": "0",
+        "@type": "AggregateOffer",
         "priceCurrency": "USD",
-        "description": "Running your line is free forever — every operator, no seat count, no credit card."
+        "lowPrice": "29",
+        "highPrice": "116",
+        "offerCount": "3",
+        "description": "Two weeks free with no card. Then $29/month for up to 50 stations, $58 with ERP integrations, $116 for up to 100 stations. On-premise adds $199/month. Every operator and every tablet is included on every tier.",
+        "offers": [
+          { "@type": "Offer", "name": "Basic", "price": "29", "priceCurrency": "USD" },
+          { "@type": "Offer", "name": "Professional", "price": "58", "priceCurrency": "USD" },
+          { "@type": "Offer", "name": "Professional 100", "price": "116", "priceCurrency": "USD" }
+        ]
       },
       "featureList": [
         "Live kanban board of every lot and location",
@@ -124,12 +131,12 @@
           <li><strong>ERP and store integration</strong> — Odoo, NetSuite, Shopify, WooCommerce, QuickBooks, Xero and ShipStation, plus CSV import and a plain JSON connector.</li>
         </ul>
         <h2>How it is priced</h2>
-        <p>Free forever on your own line. No credit card, no seat limits, and your data exports at any time.</p>
+        <p>Two weeks free, no card. Then $29 a month for up to 50 stations, or $58 with ERP integrations; running it on your own hardware adds $199. Every operator and every tablet is included on every tier — we price the line, not the people. Your data exports at any time, and if you stop paying we keep it rather than delete it.</p>
         <h2>Read more</h2>
         <p>
           <a href="/manual">The user manual</a> explains the lean method behind it —
           value stream mapping, the seven wastes, pull systems — and how each part of
-          the app serves it. <a href="/signup">Create a free account</a> or
+          the app serves it. <a href="/signup">Start free for two weeks</a> or
           <a href="/login">sign in</a>.
         </p>
       </main>

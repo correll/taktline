@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, NavLink } from 'react-router-dom'
 import { formatDistanceToNow } from 'date-fns'
+import { money } from '../../api/billing.api'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { useSortable } from './useSortable'
 import { useAuthStore } from '../../store/auth.store'
@@ -127,8 +128,33 @@ export function fmtCompact(n: number): string {
   return String(n)
 }
 
+/** Plan plus its effective state. The state matters more than the plan: a
+ *  Professional account that is locked is worth nothing and needs a call. */
+function PlanCell({ company }: { company: PlatformCompany }) {
+  const tone = company.planState === 'locked' ? color.statusFault
+             : company.planState === 'read_only' ? color.statusWarning
+             : color.textSecondary
+  return (
+    <span style={{ color: tone, whiteSpace: 'nowrap' }}>
+      {company.plan ?? '—'}
+      {company.planState && company.planState !== 'ok' && (
+        <span style={{ fontSize: 10.5, marginLeft: 5 }}>
+          ({company.planState.replace('_', '-')})
+        </span>
+      )}
+    </span>
+  )
+}
+
 function StatusSection({ status }: { status: PlatformStatus }) {
   const tiles: [string, string | number][] = [
+    // Money first. `fmtCompact` has no currency notion, so these are passed as
+    // pre-formatted strings and shown whole.
+    ['MRR',                money(status.mrrCents)],
+    ['ARR',                money(status.arrCents)],
+    ['Paying',             status.payingCompanies],
+    ['On trial',           status.trialingCompanies],
+    ['Past due or paused', status.atRiskCompanies],
     ['Live connections',   status.wsConnections],
     ['Signed-in sessions', status.authSessionsActive],
     ['Open work sessions', status.workSessionsOpen],
@@ -267,6 +293,9 @@ function CompaniesSection({ companies, onChanged }: {
     { label: 'API req · month', value: (c) => c.apiRequestsMonth, descFirst: true },
     { label: 'WS msgs · month', value: (c) => c.wsMessagesMonth, descFirst: true },
     { label: 'Last activity',   value: (c) => c.lastActivityAt ?? null, descFirst: true },
+    { label: 'Plan', value: (c: PlatformCompany) => c.plan ?? '' },
+    { label: 'MRR', value: (c: PlatformCompany) => c.mrrCents, descFirst: true },
+    { label: 'Renews', value: (c: PlatformCompany) => c.renewsAt ?? c.trialEndsAt ?? null },
     { label: '', sticky: true },
   ], 'Last activity')
 
@@ -291,6 +320,15 @@ function CompaniesSection({ companies, onChanged }: {
                 <td style={tdStyle} title={c.wsMessagesMonth.toLocaleString()}>{fmtCompact(c.wsMessagesMonth)}</td>
                 <td style={tdStyle}>
                   {c.lastActivityAt ? formatDistanceToNow(new Date(withZ(c.lastActivityAt)), { addSuffix: true }) : '—'}
+                </td>
+                <td style={tdStyle}>
+                  <PlanCell company={c} />
+                </td>
+                <td style={tdStyle}>{c.mrrCents ? money(c.mrrCents) : '—'}</td>
+                <td style={tdStyle}>
+                  {(c.renewsAt ?? c.trialEndsAt)
+                    ? formatDistanceToNow(new Date(withZ((c.renewsAt ?? c.trialEndsAt)!)), { addSuffix: true })
+                    : '—'}
                 </td>
                 {/* Pinned to the right edge. The table is 900px wide inside a
                     box that clips, so on any narrower window the actions sat

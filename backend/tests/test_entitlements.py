@@ -226,22 +226,31 @@ def test_a_sandbox_visitor_is_never_gated(billing):
     assert _station(a, "Cutting").status_code == 201
 
 
-def test_support_can_reach_a_locked_account(billing, actor, monkeypatch):
+def test_support_can_reach_a_locked_account(billing, actor):
     """The bypass is deliberate: support is usually called *because* the
-    account is locked. Grants are time-boxed and audited."""
+    account is locked. Grants are time-boxed and audited.
+
+    The owner allowlist is set and restored by hand, the same way
+    `test_platform.owner` does it. An earlier version patched
+    `type(settings).platform_owner_list` with monkeypatch, which leaked past
+    the test and left a later platform test believing the wrong person was an
+    owner — pydantic settings are not safe to patch at the class level.
+    """
     owner, staff = actor(), actor()
     bootstrap_admin(owner, "Stuck co")
     _set_plan(owner.company, planCode="trial", trialEndsAt=utcnow() - timedelta(days=1))
 
     email = bootstrap_admin(staff, "Staff co")
-    monkeypatch.setattr(settings, "platform_owner_emails", email, raising=False)
-    monkeypatch.setattr(type(settings), "platform_owner_list",
-                        property(lambda self: [email]), raising=False)
-    r = staff.req("POST", "/platform/impersonate",
-                  {"companyId": owner.company, "minutes": 30})
-    assert r.status_code in (200, 201), r.text
-    staff.company = owner.company
-    assert staff.req("GET", "/stations/").status_code == 200
+    previous = settings.platform_owner_emails
+    settings.platform_owner_emails = email
+    try:
+        r = staff.req("POST", "/platform/impersonate",
+                      {"companyId": owner.company, "minutes": 30})
+        assert r.status_code in (200, 201), r.text
+        staff.company = owner.company
+        assert staff.req("GET", "/stations/").status_code == 200
+    finally:
+        settings.platform_owner_emails = previous
 
 
 # ─── Quotas ──────────────────────────────────────────────────────────────────

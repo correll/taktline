@@ -211,7 +211,7 @@ function Cta({ to, linkLabel, pitch }: { to: string; linkLabel: string; pitch: s
             Start free
           </Link>
           <span style={{ fontSize: 12.5, color: color.textDim }}>
-            Free forever for the whole floor · no credit card
+            Two weeks free · every operator included on every plan
           </span>
         </div>
       </div>

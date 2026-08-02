@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Heart, ScanLine } from 'lucide-react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
 import { sessionsApi, type WorkSession } from '../../api/sessions.api'
@@ -129,6 +130,27 @@ export default function OperatorView() {
       setPhase('working')
     }).catch(() => {})
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep link: /operator?station=…&card=… — where the QR on a lot card lands an
+  // operator who scanned it. It runs after `cards` has loaded, because the whole
+  // point is arriving with that lot already picked; with an empty store
+  // `selectLocation` would drop the preference and show a bare list.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const allStations = useStationsStore((st) => st.stations)
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    if (deepLinked.current || phase !== 'pick-station') return
+    const station = searchParams.get('station')
+    if (!station || !allStations[station]) return
+    if (!Object.keys(cards).length) return
+    deepLinked.current = true
+    const wanted = searchParams.get('card')
+    void selectLocation(station, wanted ? (cards[wanted] ?? null) : null)
+    // Drop the parameters once used, so a refresh or a back-navigation does not
+    // silently re-open somebody else's lot.
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, allStations, searchParams, phase])
 
   const selectLocation = useCallback(async (id: string, preferred?: Card | null) => {
     setStationId(id)

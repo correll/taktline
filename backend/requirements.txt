@@ -24,6 +24,10 @@ stripe>=11
 # (`core/licence.py`). The public half is baked into the image; the private half
 # never leaves the release machine.
 cryptography>=42
+# The QR code on a lot card, printed and on screen (`routers/tracking.py`).
+# Pure Python and rendered as SVG, so it stays crisp at whatever size a label
+# printer or a sheet of paper asks for.
+qrcode>=7.4
 # Renders the share cards (`core/share.py`). 10.1 is the floor because that is
 # where `ImageFont.load_default(size=…)` began returning a scalable font — it
 # lets the cards ship without a bundled .ttf, and therefore without a font

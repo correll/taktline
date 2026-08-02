@@ -19,7 +19,14 @@ import { color, font, size } from '../../theme/tokens'
 
 interface Step { name: string; units: number; done: boolean; current: boolean }
 
+/** Present only for a signed-in member of the company that owns the job — an
+ *  operator who scanned the QR on the card. A customer never sees this, and the
+ *  token alone never grants it: the server re-checks the session and membership
+ *  from scratch. */
+interface WorkHandle { cardId: string; stationId: string; units: number }
+
 interface Tracked {
+  work: WorkHandle | null
   reference: string
   product: string
   quantity: number
@@ -62,6 +69,7 @@ export default function TrackView() {
       <div style={{ width: 560, maxWidth: '100%' }}>
         {missing && !data && <NotFound />}
         {data && <Card data={data} />}
+        {data?.work && <StartWork work={data.work} />}
         {!missing && !data && (
           <p style={{ color: color.textDim, fontSize: 14 }}>Loading…</p>
         )}
@@ -81,6 +89,39 @@ export default function TrackView() {
           </span>
         </footer>
       </div>
+    </div>
+  )
+}
+
+/** The other half of the QR on a lot card.
+ *
+ *  The same sticker serves two people: a customer, who gets the status page, and
+ *  the operator standing at the bench, who gets a way straight into the work.
+ *  One label, two audiences, and neither is shown the other's affordance. */
+function StartWork({ work }: { work: WorkHandle }) {
+  return (
+    <div style={{
+      marginTop: size.sp5, padding: size.sp4,
+      border: `1px dashed ${color.bluePrimary}66`, borderRadius: size.radiusMd,
+      display: 'flex', alignItems: 'center', gap: size.sp4, flexWrap: 'wrap',
+    }}>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontSize: 13, color: color.textPrimary }}>
+          You are signed in to Taktline.
+        </div>
+        <div style={{ fontSize: 12, color: color.textDim, marginTop: 2 }}>
+          {work.units} unit{work.units === 1 ? '' : 's'} here — open it at the bench.
+        </div>
+      </div>
+      <Link
+        to={`/operator?station=${work.stationId}&card=${work.cardId}`}
+        style={{
+          background: color.bluePrimary, color: '#fff', textDecoration: 'none',
+          borderRadius: size.radius, padding: '9px 18px', fontSize: 13.5, fontWeight: 600,
+        }}
+      >
+        Start work
+      </Link>
     </div>
   )
 }

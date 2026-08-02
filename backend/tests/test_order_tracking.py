@@ -326,3 +326,77 @@ def test_a_lot_token_does_not_open_an_order(actor):
 
     crossed = f"/track/{order['id']}/{tracking.token_for(uuid.UUID(card['_id']))}"
     assert Actor().req("GET", crossed).status_code == 404
+
+
+# ─── The QR code, and the operator half of it ────────────────────────────────
+
+def test_the_qr_is_guarded_exactly_like_the_page(actor):
+    """It encodes the tracking URL, so serving one for an unshared job would
+    leak the same thing the page refuses to."""
+    a = actor()
+    bootstrap_admin(a, "QR co")
+    ids, proc, tmpl = _line(a)
+    card = _lot(a, tmpl, proc, ids[0])
+    qr = f"/o/{card['_id']}/{tracking.token_for(uuid.UUID(card['_id']))}/qr.svg"
+
+    assert Actor().req("GET", qr).status_code == 404, "served before tracking was on"
+    _set_tracking(a.company, True)
+    r = Actor().req("GET", qr)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/svg+xml")
+    assert b"<svg" in r.content
+    assert Actor().req("GET", f"/o/{card['_id']}/{'0' * 24}/qr.svg").status_code == 404
+
+
+def test_a_customer_is_never_offered_the_work_button(actor):
+    """The token is a read capability handed to somebody outside the company. It
+    must not become a way to start a timer on their shop floor."""
+    a = actor()
+    bootstrap_admin(a, "Stranger co")
+    ids, proc, tmpl = _line(a)
+    card = _lot(a, tmpl, proc, ids[0])
+    _set_tracking(a.company, True)
+    track = f"/track/{card['_id']}/{tracking.token_for(uuid.UUID(card['_id']))}"
+
+    assert Actor().req("GET", track).json()["work"] is None
+
+
+def test_a_member_scanning_the_same_code_gets_a_way_to_the_bench(actor):
+    a = actor()
+    bootstrap_admin(a, "Operator co")
+    ids, proc, tmpl = _line(a)
+    card = _lot(a, tmpl, proc, ids[0], qty=6)
+    _set_tracking(a.company, True)
+
+    body = a.req("GET", f"/track/{card['_id']}/"
+                        f"{tracking.token_for(uuid.UUID(card['_id']))}").json()
+    assert body["work"] == {"cardId": card["_id"], "stationId": ids[0], "units": 6}
+
+
+def test_a_member_of_another_company_gets_nothing(actor):
+    """Signed in is not enough — it has to be *their* floor."""
+    owner, outsider = actor(), actor()
+    bootstrap_admin(owner, "Ours co")
+    bootstrap_admin(outsider, "Theirs co")
+    ids, proc, tmpl = _line(owner)
+    card = _lot(owner, tmpl, proc, ids[0])
+    _set_tracking(owner.company, True)
+
+    body = outsider.req("GET", f"/track/{card['_id']}/"
+                               f"{tracking.token_for(uuid.UUID(card['_id']))}").json()
+    assert body["work"] is None
+    assert body["reference"] == "L-2208"      # they can still read it, like anyone
+
+
+def test_the_printed_label_carries_both_codes(actor):
+    """Two readers: a shop scanner driving scan-to-advance, and a phone camera.
+    One label serves the floor and whoever is waiting on it."""
+    a = actor()
+    bootstrap_admin(a, "Label co")
+    ids, proc, tmpl = _line(a)
+    card = _lot(a, tmpl, proc, ids[0])
+
+    zpl = a.req("GET", f"/cards/{card['_id']}/label").text
+    assert "^BCN" in zpl, "Code128 for the shop scanner"
+    assert "^BQN" in zpl, "QR for a phone"
+    assert tracking.token_for(uuid.UUID(card["_id"])) in zpl

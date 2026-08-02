@@ -881,9 +881,16 @@ async def advance_card(card_id: str, body: AdvanceBody,
     return card
 
 
-def _zpl_escape(s: str) -> str:
-    # ^FD field data ends at ^FS; strip the caret/tilde control chars to be safe.
-    return (s or "").replace("^", " ").replace("~", " ")[:40]
+def _zpl_escape(s: str, limit: int = 40) -> str:
+    """Make a value safe inside a ^FD…^FS field.
+
+    ^FD data ends at ^FS, so the caret and tilde control characters go. The
+    length cap is for *display* fields, where 40 characters is about what fits
+    across a label — it is wrong for encoded data, and truncating a URL there
+    produces a QR code that scans cleanly and goes nowhere. Callers encoding
+    something pass their own limit.
+    """
+    return (s or "").replace("^", " ").replace("~", " ")[:limit]
 
 
 @router.get("/{card_id}/label", response_class=PlainTextResponse)
@@ -904,6 +911,12 @@ async def card_label(card_id: str,
     if loc:
         st = await session.get(StationRow, parse_uuid(loc))
         loc_name = _zpl_escape(st.name if st else loc)
+    # Two codes, two readers. The Code128 is for a shop scanner driving
+    # scan-to-advance; the QR is for a phone camera — the operator's own, or the
+    # customer's, since it opens the public tracking page and nothing else.
+    # Printing both means one label serves the floor and whoever is waiting.
+    track_url = (f"{settings.frontend_base_url.rstrip('/')}"
+                 f"/o/{row.id}/{tracking.token_for(row.id)}")
     zpl = (
         "^XA"
         "^CF0,40^FO30,30^FDTaktline Lot^FS"
@@ -911,6 +924,8 @@ async def card_label(card_id: str,
         f"^CF0,28^FO30,140^FDQty {row.totalQuantity}   {_zpl_escape(row.status)}^FS"
         f"^CF0,28^FO30,180^FDAt: {loc_name}^FS"
         f"^FO30,230^BY2^BCN,110,Y,N,N^FD{row.id}^FS"
+        f"^FO470,120^BQN,2,5^FDMA,{_zpl_escape(track_url, 300)}^FS"
+        "^CF0,20^FO470,330^FDScan to track^FS"
         "^XZ"
     )
     return PlainTextResponse(zpl, media_type="application/zpl")

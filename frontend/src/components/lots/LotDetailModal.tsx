@@ -14,6 +14,36 @@ interface Props {
   onMove?:  (card: Card, fromStationId: string) => void
 }
 
+/** Print the QR on its own, at a size that survives a shop floor.
+ *
+ *  A new window rather than the browser's print-this-page: the modal is a
+ *  scrolling panel inside an app, and printing it gives you the app. This gives
+ *  you a sticker.
+ */
+function printTracking(url: string, label: string) {
+  const w = window.open('', '_blank', 'width=420,height=560')
+  if (!w) { window.prompt('Copy this link', url); return }
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c))
+  w.document.write(`<!doctype html><html><head><title>${esc(label)}</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 24px;
+             display: flex; flex-direction: column; align-items: center; gap: 12px; }
+      img { width: 260px; height: 260px; }
+      .label { font-size: 20px; font-weight: 600; text-align: center; }
+      .hint { font-size: 12px; color: #555; }
+      .url { font-size: 9px; color: #888; word-break: break-all; text-align: center; }
+      @media print { .no-print { display: none } }
+    </style></head><body>
+    <div class="label">${esc(label)}</div>
+    <img src="${esc(url)}/qr.svg" alt="" />
+    <div class="hint">Scan to see where this lot is</div>
+    <div class="url">${esc(url)}</div>
+    <button class="no-print" onclick="window.print()">Print</button>
+    </body></html>`)
+  w.document.close()
+}
+
 export default function LotDetailModal({ card: initialCard, onClose, onMove }: Props) {
   const trackingOn = useGlobalSettingsStore((s) => s.settings.orderTracking)
   const stations   = useStationsStore((s) => s.stations)
@@ -201,13 +231,46 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
                   order only exists if an ERP or a CSV made one. */}
               {card.trackingUrl && (
                 <Section label="CUSTOMER LINK">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3 }}>
-                    <TrackingLink url={card.trackingUrl} enabled={trackingOn} />
-                    <span style={{ fontSize: 11, color: color.textDim, lineHeight: 1.5 }}>
-                      {trackingOn
-                        ? 'Send this to the customer waiting on it. They see this lot’s progress and nothing else.'
-                        : 'Switch on customer order tracking in Settings → Global to use this.'}
-                    </span>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: size.sp4 }}>
+                    {/* The QR is the whole point of printing this: one sticker
+                        on the bin serves the customer who scans it for status
+                        and the operator who scans it to start work. */}
+                    {trackingOn && (
+                      <img
+                        src={`${card.trackingUrl}/qr.svg`}
+                        alt="QR code linking to this lot's tracking page"
+                        width={96} height={96}
+                        style={{
+                          flexShrink: 0, background: '#fff', padding: 4,
+                          borderRadius: size.radius, border: `1px solid ${color.border}`,
+                        }}
+                      />
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: size.sp2,
+                                    flexWrap: 'wrap' }}>
+                        <TrackingLink url={card.trackingUrl} enabled={trackingOn} />
+                        {trackingOn && (
+                          <button
+                            onClick={() => printTracking(card.trackingUrl!, `Lot ${lotLabel(card)}`)}
+                            style={{
+                              background: 'none', border: `1px solid ${color.border}`,
+                              borderRadius: size.radius, color: color.textSecondary,
+                              fontSize: 11, padding: '2px 8px', cursor: 'pointer',
+                              fontFamily: 'inherit',
+                            }}
+                          >
+                            Print
+                          </button>
+                        )}
+                      </div>
+                      <p style={{ margin: `${size.sp2} 0 0`, fontSize: 11,
+                                  color: color.textDim, lineHeight: 1.55 }}>
+                        {trackingOn
+                          ? 'Stick it on the bin. A customer scanning it sees this lot’s progress and nothing else; an operator signed in to Taktline gets a way straight to the bench.'
+                          : 'Switch on customer order tracking in Settings → Global to use this.'}
+                      </p>
+                    </div>
                   </div>
                 </Section>
               )}

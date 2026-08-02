@@ -14,6 +14,11 @@ export interface SortColumn<T> {
   /** Omit to make the column unsortable (an actions column). */
   value?: (row: T) => string | number | null | undefined
   align?: 'left' | 'right'
+  /** Pin this column to the right edge, so a wide table scrolls underneath it
+   *  rather than carrying it out of reach. Used for action columns, where
+   *  being scrolled off-screen makes the row's only controls unreachable
+   *  without finding a scrollbar most people never look for. */
+  sticky?: boolean
   /** Sort descending on first click — right for "most requests", wrong for names. */
   descFirst?: boolean
 }
@@ -54,6 +59,11 @@ export function useSortable<T>(rows: T[], columns: SortColumn<T>[], initial?: st
             title={col.value ? `Sort by ${col.label.toLowerCase()}` : undefined}
             style={{
               textAlign: col.align ?? 'left',
+              ...(col.sticky ? {
+                position: 'sticky' as const, right: 0, zIndex: 2,
+                background: color.bgCard,
+                borderLeft: `1px solid ${color.border}`,
+              } : {}),
               padding: `${size.sp2} ${size.sp4}`,
               fontSize: 10.5, fontFamily: font.mono, letterSpacing: '0.08em',
               color: active ? color.textPrimary : color.textDim,

@@ -20,6 +20,7 @@ export default function PlatformView() {
   const [companies, setCompanies] = useState<PlatformCompany[]>([])
   const [audit, setAudit]         = useState<AuditEntry[]>([])
   const [error, setError]         = useState<string | null>(null)
+  const [tab, setTab]             = useState<'companies' | 'users' | 'audit'>('companies')
 
   const reload = useCallback(() => {
     platformApi.status().then(setStatus).catch((e) => setError(String(e)))
@@ -46,9 +47,37 @@ export default function PlatformView() {
         </div>
 
         {status && <StatusSection status={status} />}
-        <CompaniesSection companies={companies} onChanged={reload} />
-        <UsersSection users={users} isOwner={isOwner} selfId={user?.id} onChanged={reload} />
-        <AuditSection audit={audit} />
+
+        {/* Three long tables stacked made a page nobody scrolled to the end of,
+            and the audit trail — the one you reach for when something has gone
+            wrong — was furthest down. Status stays above the tabs: it is the
+            "is anything on fire" glance and belongs on every view. */}
+        <nav style={{ display: 'flex', gap: size.sp1, borderBottom: `1px solid ${color.border}` }}>
+          {([
+            ['companies', `Companies (${companies.length})`],
+            ['users', `Users (${users.length})`],
+            ['audit', 'Audit trail'],
+          ] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)}
+                    aria-current={tab === id ? 'page' : undefined}
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      padding: `${size.sp2} ${size.sp4}`, fontSize: 13,
+                      color: tab === id ? color.textPrimary : color.textSecondary,
+                      fontWeight: tab === id ? 600 : 400,
+                      borderBottom: `2px solid ${tab === id ? color.bluePrimary : 'transparent'}`,
+                      marginBottom: -1,
+                    }}>
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {tab === 'companies' && <CompaniesSection companies={companies} onChanged={reload} />}
+        {tab === 'users' && (
+          <UsersSection users={users} isOwner={isOwner} selfId={user?.id} onChanged={reload} />
+        )}
+        {tab === 'audit' && <AuditSection audit={audit} />}
 
         {/* Crashes that reached a customer's screen. Bottom of the page on
             purpose: it is the thing you go looking for after a support
@@ -238,7 +267,7 @@ function CompaniesSection({ companies, onChanged }: {
     { label: 'API req · month', value: (c) => c.apiRequestsMonth, descFirst: true },
     { label: 'WS msgs · month', value: (c) => c.wsMessagesMonth, descFirst: true },
     { label: 'Last activity',   value: (c) => c.lastActivityAt ?? null, descFirst: true },
-    { label: '' },
+    { label: '', sticky: true },
   ], 'Last activity')
 
   return (
@@ -263,11 +292,16 @@ function CompaniesSection({ companies, onChanged }: {
                 <td style={tdStyle}>
                   {c.lastActivityAt ? formatDistanceToNow(new Date(withZ(c.lastActivityAt)), { addSuffix: true }) : '—'}
                 </td>
-                {/* Extra right padding: the table scrolls horizontally inside
-                    its own box, so at the far end of the scroll the last button
-                    sat hard against the window edge with nothing to grab. */}
+                {/* Pinned to the right edge. The table is 900px wide inside a
+                    box that clips, so on any narrower window the actions sat
+                    past the edge and had to be scrolled to — on a scrollbar
+                    that is easy to miss. Padding did not help, because the
+                    column was not merely tight, it was off-screen. Now the
+                    data scrolls underneath and Impersonate/Delete stay put. */}
                 <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap',
-                             paddingRight: size.sp6 }}>
+                             position: 'sticky', right: 0, zIndex: 1,
+                             background: color.bgCard,
+                             borderLeft: `1px solid ${color.border}` }}>
                   <button style={smallBtn} disabled={busy === c.id} onClick={() => impersonate(c)}>
                     Impersonate
                   </button>

@@ -122,6 +122,8 @@ def test_the_five_emails_arrive_on_their_days(outbox, actor):
         (7, ["welcome", "progress", "week_left"]),
         (11, ["welcome", "progress", "week_left", "three_days"]),
         (14, ["welcome", "progress", "week_left", "three_days", "final"]),
+        (97, ["welcome", "progress", "week_left", "three_days", "final",
+              "last_call"]),
     ]
     for day, want in expected:
         _started_days_ago(a.company, day)
@@ -207,15 +209,28 @@ def test_the_day_three_email_reads_the_actual_line(outbox, actor):
     assert "connected" in progress["body"].lower()
 
 
-def test_the_final_email_says_what_will_be_lost(outbox, actor):
+def test_the_final_email_promises_the_line_is_kept(outbox, actor):
+    """It ends by pausing, not deleting. Telling someone their line is about to
+    be destroyed when it will still be there in three months is both untrue and
+    the opposite of what makes them come back."""
     a = actor()
     outbox.watch(bootstrap_admin(a, "Losing co"))
     a.req("POST", "/stations/", {**STATION, "name": "Cutting"})
     _started_days_ago(a.company, 14)
     _sweep()
     final = next(m for m in outbox.sent if "ends tomorrow" in m["subject"])
-    assert "deleted" in final["body"]
-    assert "share links" in final["body"]
+    assert "Nothing is deleted" in final["body"]
+    assert str(plans.TRIAL_RETENTION_DAYS) in final["body"]
+
+
+def test_a_last_call_arrives_a_week_before_deletion(outbox, actor):
+    a = actor()
+    outbox.watch(bootstrap_admin(a, "Last call co"))
+    _started_days_ago(a.company, plans.TRIAL_DAYS + plans.TRIAL_RETENTION_DAYS - 7)
+    _sweep()
+    assert "last_call" in outbox.kinds()
+    body = next(m for m in outbox.sent if "deleted next week" in m["subject"])["body"]
+    assert "a week from now" in body
 
 
 def test_every_email_carries_a_way_out(outbox, actor):
@@ -278,15 +293,15 @@ def test_an_opt_out_link_cannot_destroy_a_paying_account(outbox, actor):
 
 # ─── Deletion ────────────────────────────────────────────────────────────────
 
-def test_an_expired_trial_is_deleted_a_day_late_not_on_the_hour(outbox, actor):
+def test_an_expired_trial_survives_its_retention_window(outbox, actor):
     a = actor()
     outbox.watch(bootstrap_admin(a, "Expiring co"))
 
-    _started_days_ago(a.company, 14.5)          # trial over, inside the last day
+    _started_days_ago(a.company, 20)            # trial over, well inside retention
     _delete()
-    assert _company_exists(a.company), "deleted during the final 24 hours"
+    assert _company_exists(a.company), "deleted during the retention window"
 
-    _started_days_ago(a.company, 15.5)          # a full day past
+    _started_days_ago(a.company, plans.TRIAL_DAYS + plans.TRIAL_RETENTION_DAYS + 1)
     _delete()
     assert not _company_exists(a.company)
 
@@ -294,7 +309,7 @@ def test_an_expired_trial_is_deleted_a_day_late_not_on_the_hour(outbox, actor):
 def test_deletion_never_touches_a_paid_account(outbox, actor):
     a = actor()
     outbox.watch(bootstrap_admin(a, "Safe co"))
-    _started_days_ago(a.company, 40, planCode="pro_100", stripeStatus="active")
+    _started_days_ago(a.company, 200, planCode="pro_100", stripeStatus="active")
     _delete()
     assert _company_exists(a.company)
 
@@ -305,9 +320,9 @@ def test_deletion_leaves_the_neighbours_alone(outbox, actor):
     bootstrap_admin(doomed, "Doomed co")
     bootstrap_admin(safe_trial, "Young co")
     bootstrap_admin(paid, "Paid co")
-    _started_days_ago(doomed.company, 16)
+    _started_days_ago(doomed.company, plans.TRIAL_DAYS + plans.TRIAL_RETENTION_DAYS + 5)
     _started_days_ago(safe_trial.company, 2)
-    _started_days_ago(paid.company, 30, planCode="basic_50", stripeStatus="active")
+    _started_days_ago(paid.company, 200, planCode="basic_50", stripeStatus="active")
 
     _delete()
     assert not _company_exists(doomed.company)
@@ -323,7 +338,7 @@ def test_deletion_is_capped_per_run(outbox, actor):
     for i in range(3):
         a = actor()
         bootstrap_admin(a, f"Bulk co {i}")
-        _started_days_ago(a.company, 20)
+        _started_days_ago(a.company, plans.TRIAL_DAYS + plans.TRIAL_RETENTION_DAYS + 5)
         companies.append(a.company)
 
     assert _delete(limit=2) == 2
@@ -339,7 +354,7 @@ def test_a_deletion_is_recorded_where_it_survives(outbox, actor):
 
     a = actor()
     outbox.watch(bootstrap_admin(a, "Audited co"))
-    _started_days_ago(a.company, 20)
+    _started_days_ago(a.company, plans.TRIAL_DAYS + plans.TRIAL_RETENTION_DAYS + 5)
     _delete()
 
     async def go():

@@ -30,6 +30,14 @@ from dataclasses import dataclass
 
 TRIAL_DAYS = 14
 
+# How long an expired trial is kept before it is deleted, counted from the day
+# the trial ended. Deleting on day 15 was the first design and it works against
+# the thing that actually grows this product: someone who comes back three
+# months later should find the line they drew, not nothing. A locked account
+# costs almost nothing to store, and the line they built is the best sales
+# asset there is.
+TRIAL_RETENTION_DAYS = 90
+
 # How long a lapsed account stays readable before it is locked. They can still
 # see and export everything during this window — the product's promise is that
 # your data is yours, and a paywall in front of your own history would break it.
@@ -46,6 +54,12 @@ class Plan:
     #: as "3 of 100000 stations".
     stations: int | None
     integrations: bool
+    #: Managed ERP/shop connectors included. A "connector" is one *provider*
+    #: bound anywhere on the line, not one station — a shop with three
+    #: ShipStation docks is using one connector. None means uncapped.
+    #: Willingness to pay and our maintenance burden concentrate in the same
+    #: place, which is the argument for charging here rather than on seats.
+    connectors: int | None
     monthly_cents: int
     #  Env var holding the Stripe Price id. Not the id itself: test mode and
     #  live mode have different ids, and a checked-in live price id is the kind
@@ -57,6 +71,7 @@ class Plan:
 
 TRIAL = "trial"
 SANDBOX = "sandbox"
+ENTERPRISE = "enterprise"
 
 #: Not for sale. Handed out where we do not meter: a customer's own hardware
 #: (their licence file governs) and any deployment with no payment provider
@@ -66,34 +81,47 @@ SELF_HOSTED = "self_hosted"
 PLANS: dict[str, Plan] = {
     SELF_HOSTED: Plan(
         code=SELF_HOSTED, label="Self-hosted", stations=None, integrations=True,
-        monthly_cents=0, price_env=None,
+        connectors=None, monthly_cents=0, price_env=None,
         blurb="Running on your own hardware. Not metered by us.",
     ),
     SANDBOX: Plan(
         code=SANDBOX, label="Sandbox", stations=40, integrations=False,
-        monthly_cents=0, price_env=None,
+        connectors=0, monthly_cents=0, price_env=None,
         blurb="A throwaway line to try the product. Expires after 7 days.",
     ),
     TRIAL: Plan(
         code=TRIAL, label="Trial", stations=50, integrations=False,
-        monthly_cents=0, price_env=None,
+        connectors=0, monthly_cents=0, price_env=None,
         blurb=f"The whole product for {TRIAL_DAYS} days. No card needed.",
     ),
     "basic_50": Plan(
         code="basic_50", label="Basic", stations=50, integrations=False,
-        monthly_cents=2900, price_env="STRIPE_PRICE_BASIC_50",
+        connectors=0, monthly_cents=2900, price_env="STRIPE_PRICE_BASIC_50",
         blurb="Your whole floor on one board — up to 50 stations, "
               "unlimited operators.",
     ),
     "pro_50": Plan(
         code="pro_50", label="Professional", stations=50, integrations=True,
-        monthly_cents=5800, price_env="STRIPE_PRICE_PRO_50",
-        blurb="Basic plus ERP and shop-system integrations — up to 50 stations.",
+        connectors=1, monthly_cents=5800, price_env="STRIPE_PRICE_PRO_50",
+        blurb="Basic plus one ERP or shop-system connector — up to 50 stations.",
     ),
     "pro_100": Plan(
         code="pro_100", label="Professional 100", stations=100, integrations=True,
-        monthly_cents=11600, price_env="STRIPE_PRICE_PRO_100",
+        connectors=1, monthly_cents=11600, price_env="STRIPE_PRICE_PRO_100",
         blurb="Professional for a larger floor — up to 100 stations.",
+    ),
+    "plant_250": Plan(
+        code="plant_250", label="Plant", stations=250, integrations=True,
+        connectors=3, monthly_cents=29000, price_env="STRIPE_PRICE_PLANT_250",
+        blurb="A whole plant — up to 250 stations and three connectors.",
+    ),
+    # Not self-serve. Granted by staff after a conversation, because above this
+    # size the shape of the deal (sites, connectors, support) stops being a
+    # thing anyone should be guessing at from a web page.
+    ENTERPRISE: Plan(
+        code=ENTERPRISE, label="Multi-plant", stations=None, integrations=True,
+        connectors=None, monthly_cents=0, price_env=None,
+        blurb="More than one plant, or more than 250 stations. Quoted.",
     ),
 }
 
@@ -103,8 +131,15 @@ PLANS: dict[str, Plan] = {
 ONPREM_CENTS = 19900
 ONPREM_PRICE_ENV = "STRIPE_PRICE_ONPREM"
 
+# An additional managed connector beyond what the plan includes. Sold as a
+# quantity, because a shop with Odoo *and* ShipStation is a different customer
+# from one with Odoo — and it is the second and third integrations that cost us
+# the maintenance.
+CONNECTOR_CENTS = 15000
+CONNECTOR_PRICE_ENV = "STRIPE_PRICE_CONNECTOR"
+
 #: Plans a customer can actually buy, in the order they are shown.
-PURCHASABLE = ["basic_50", "pro_50", "pro_100"]
+PURCHASABLE = ["basic_50", "pro_50", "pro_100", "plant_250"]
 
 #: Plans that are granted, not bought. Never gated, never billed, never dunned.
 FREE = {SANDBOX, TRIAL}
@@ -132,8 +167,11 @@ def is_upgrade(from_code: str, to_code: str) -> bool:
     return get(to_code).monthly_cents > get(from_code).monthly_cents
 
 
-def monthly_cents(code: str, on_premise: bool = False) -> int:
-    return get(code).monthly_cents + (ONPREM_CENTS if on_premise else 0)
+def monthly_cents(code: str, on_premise: bool = False,
+                  connector_addons: int = 0) -> int:
+    return (get(code).monthly_cents
+            + (ONPREM_CENTS if on_premise else 0)
+            + CONNECTOR_CENTS * max(0, connector_addons))
 
 
 def price_ids() -> dict[str, str | None]:
@@ -149,4 +187,5 @@ def price_ids() -> dict[str, str | None]:
         env = PLANS[code].price_env
         out[code] = getattr(settings, env.lower(), None) if env else None
     out["onprem"] = getattr(settings, ONPREM_PRICE_ENV.lower(), None)
+    out["connector"] = getattr(settings, CONNECTOR_PRICE_ENV.lower(), None)
     return out

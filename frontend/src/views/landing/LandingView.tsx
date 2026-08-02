@@ -595,7 +595,7 @@ function Integrations() {
  *  That promise is no longer true and keeping it would have been the expensive
  *  kind of wrong: a claim people plan around, walked back later. The honest
  *  version of the same argument is that the price is low enough not to need a
- *  business case, and that nothing is held hostage if you stop paying.
+ *  business case, and that your line is waiting if you come back.
  *
  *  Prices are duplicated here rather than fetched: this section renders for
  *  signed-out visitors and for crawlers, and a pricing table that arrives after
@@ -611,17 +611,27 @@ const TIERS = [
   },
   {
     name: 'Professional', price: '$58', per: '/month', featured: true,
-    line: 'Everything in Basic, plus your ERP and shop systems.',
+    line: 'Everything in Basic, plus one ERP or shop-system connector.',
     points: ['Odoo, NetSuite, Shopify, QuickBooks, ShipStation and more',
              'Scan-to-advance and label printing', 'Reporting API for Power BI or Grafana',
              '$116/month for up to 100 stations'],
   },
   {
-    name: 'On-premise', price: '+$199', per: '/month',
-    line: 'On your own hardware, on any tier. Nothing leaves the building.',
-    points: ['Runs on your network, offline-capable', 'Your database, your backups',
-             'Keeps working if you stop paying', 'Added to Basic or Professional'],
+    name: 'Plant', price: '$290', per: '/month',
+    line: 'A whole plant — up to 250 stations and three connectors.',
+    points: ['Everything in Professional', 'Three connectors included',
+             'Extra connectors $150/month each',
+             'More than one plant? Talk to us.'],
   },
+]
+
+const ADD_ONS = [
+  ['On-premise', '+$199/month',
+   'On your own hardware, on any tier. Your database, your network, your backups.'],
+  ['Extra connector', '+$150/month each',
+   'Beyond what your plan includes. A partner counts once however many docks you draw.'],
+  ['Taktline Box', '$2,900 once',
+   'A pre-configured fanless PC that plugs into your network and runs the server. Includes the first year.'],
 ]
 
 function Pricing() {
@@ -629,15 +639,15 @@ function Pricing() {
     <section id="pricing" style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
       <div style={{ maxWidth: 1060, margin: '0 auto' }}>
         <h2 style={{ ...h2Style, textAlign: 'center' }}>
-          Cheap enough that you do not need a business case
+          One price for the whole floor
         </h2>
         <p style={{
           margin: `${size.sp4} auto 0`, maxWidth: 620, textAlign: 'center',
           fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary,
         }}>
-          Two weeks free, no card. After that it is priced per line, not per person —
-          every operator and every tablet is included on every tier, because a worker
-          who can see the system improves it.
+          Priced per line, not per person. Every operator and every tablet is included
+          on every tier — a worker who can see the system improves it, and a worker who
+          is only measured by it learns to manage the measurement. Two weeks free, no card.
         </p>
 
         <div style={{
@@ -675,13 +685,37 @@ function Pricing() {
           ))}
         </div>
 
+        <div style={{
+          margin: `${size.sp6} 0 0`, display: 'grid', gap: size.sp3,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        }}>
+          {ADD_ONS.map(([name, price, line]) => (
+            <div key={name} style={{
+              border: `1px dashed ${color.border}`, borderRadius: size.radiusMd,
+              padding: size.sp4,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: size.sp2,
+                            flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: color.textPrimary }}>
+                  {name}
+                </span>
+                <span style={{ fontSize: 13, color: color.blueBright }}>{price}</span>
+              </div>
+              <p style={{ margin: '4px 0 0', fontSize: 12.5, lineHeight: 1.55,
+                          color: color.textDim }}>
+                {line}
+              </p>
+            </div>
+          ))}
+        </div>
+
         <p style={{
           margin: `${size.sp6} auto 0`, maxWidth: 700, textAlign: 'center',
           fontSize: 13.5, lineHeight: 1.7, color: color.textDim,
         }}>
           Change plan whenever you like — it is pro-rated to the day, so a downgrade two
-          days in costs you two days. Your data exports at any time, in a format you can
-          read, and if you stop paying we keep it rather than delete it.
+          days in costs you two days. Everything exports at any time in a format you can
+          read, and if you ever stop, your line is here waiting if you change your mind.
         </p>
       </div>
     </section>
@@ -893,8 +927,10 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         there is nothing to print or install. The five-minute tutorial builds a line end
         to end so you can see the shape of it before touching your own.</> },
   { q: 'Is my data mine?',
-    a: <>Yes. Everything exports at any time, and Taktline can run on your own
-        server — so nothing is held hostage by a subscription.</> },
+    a: <>Yes, and you can prove it: the whole line — stations, routes, products, lot
+        history and every timing — exports at any time as JSON and as a spreadsheet, in
+        a shape you can read without us. On-premise goes further and keeps the database
+        itself on your hardware.</> },
   { q: 'What happens when the Wi-Fi drops?',
     a: <>Tablets keep showing the board from a local snapshot and reconnect on their
         own, with an amber banner naming how old the data is. Changes are never queued
@@ -914,10 +950,11 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         every tier — we price the line, not the people, because a worker who can see the
         system improves it. Running it on your own hardware adds $199 a month.</> },
   { q: 'What happens if I stop paying?',
-    a: <>Your data stays. The account goes read-only for a week — you can still see and
-        export everything — and is then paused rather than deleted. Nothing is held
-        hostage: your line exports at any time, in a format you can read. On-premise
-        installs keep running whatever happens, because they run on your hardware.</> },
+    a: <>Your line is waiting for you if you come back. Payment stops, the board goes
+        read-only for a week so you can still see and export everything, and then it
+        rests — we do not delete it. Start paying again whenever you like and it is
+        exactly as you left it, down to the lot cards. And you can take it with you at
+        any time: everything exports in a format you can read.</> },
 ]
 
 function Questions() {

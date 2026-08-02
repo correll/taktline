@@ -34,6 +34,7 @@ function build() {
     tips: LEAN_TIPS.map((t) => ({ id: t.id, category: t.category, text: t.text })),
     concepts: CONCEPTS.map((c) => ({
       id: c.id,
+      chapter: c.chapter,
       anchor: c.anchor,
       title: c.title,
       claim: c.claim,
@@ -55,6 +56,26 @@ describe('the share catalogue', () => {
 })
 
 describe('share ids', () => {
+  it('cover both manual chapters', () => {
+    const chapters = new Set(CONCEPTS.map((c) => c.chapter))
+    expect(chapters).toEqual(new Set(['science', 'toolkit']))
+    expect(CONCEPTS.filter((c) => c.chapter === 'science')).toHaveLength(8)
+    expect(CONCEPTS.filter((c) => c.chapter === 'toolkit').length).toBeGreaterThan(10)
+  })
+
+  it('give every toolkit section in the manual a share button', () => {
+    // The button is driven by the anchor, so a section with no concept simply
+    // has no button — silently. This is the assertion that makes "the toolkit
+    // chapter is shareable" true rather than mostly true.
+    const toolkitAnchors = Object.entries(MANUAL_ANCHORS)
+      .filter(([, chapter]) => chapter === 'toolkit')
+      .map(([anchor]) => anchor)
+    const covered = new Set(CONCEPTS.map((c) => c.anchor))
+    const missing = toolkitAnchors.filter((a) => !covered.has(a))
+    expect(missing, `toolkit sections with no share card: ${missing.join(', ')}`)
+      .toEqual([])
+  })
+
   it('are unique across every shareable thing', () => {
     // Tips and concepts share one URL namespace (`/i/<id>`), so a collision
     // silently serves the wrong card rather than 404ing, which is worse.

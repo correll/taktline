@@ -63,6 +63,8 @@ def stripe(monkeypatch):
     for attr, value in (("stripe_price_basic_50", "price_basic50"),
                         ("stripe_price_pro_50", "price_pro50"),
                         ("stripe_price_pro_100", "price_pro100"),
+                        ("stripe_price_plant_250", "price_plant250"),
+                        ("stripe_price_connector", "price_conn"),
                         ("stripe_price_onprem", "price_onprem")):
         monkeypatch.setattr(settings, attr, value, raising=False)
 
@@ -244,7 +246,7 @@ def test_a_downgrade_that_does_not_fit_is_refused(stripe, actor, monkeypatch):
     would have to either vanish or stay visible and not work."""
     monkeypatch.setitem(plans.PLANS, "basic_50",
                         plans.Plan(code="basic_50", label="Basic", stations=1,
-                                   integrations=False, monthly_cents=2900,
+                                   integrations=False, connectors=0, monthly_cents=2900,
                                    price_env="STRIPE_PRICE_BASIC_50", blurb=""))
     a = actor()
     bootstrap_admin(a, "Too big co")
@@ -384,11 +386,22 @@ def test_the_live_line_items_win_over_our_metadata(stripe):
            "items": {"data": [{"id": "si", "price": {"id": "price_pro100"}},
                               {"id": "si2", "price": {"id": "price_onprem"}}]},
            "metadata": {"planCode": "basic_50", "onPremise": "false"}}
-    assert billing_stripe.plan_from_subscription(obj) == ("pro_100", True)
+    assert billing_stripe.plan_from_subscription(obj) == ("pro_100", True, 0)
+
+
+def test_bought_connectors_are_read_back_as_a_quantity(stripe):
+    """They are one line item with a quantity, not N lines, so that going from
+    two extra connectors to one prorates like any other downgrade."""
+    obj = {"id": "sub_c", "status": "active",
+           "items": {"data": [{"id": "si", "price": {"id": "price_pro50"}},
+                              {"id": "si2", "price": {"id": "price_conn"},
+                               "quantity": 2}]},
+           "metadata": {}}
+    assert billing_stripe.plan_from_subscription(obj) == ("pro_50", False, 2)
 
 
 def test_metadata_is_the_fallback_when_prices_are_unrecognised(stripe):
     obj = {"id": "sub_y", "status": "active",
            "items": {"data": [{"id": "si", "price": {"id": "price_from_last_year"}}]},
            "metadata": {"planCode": "pro_50", "onPremise": "true"}}
-    assert billing_stripe.plan_from_subscription(obj) == ("pro_50", True)
+    assert billing_stripe.plan_from_subscription(obj) == ("pro_50", True, 0)

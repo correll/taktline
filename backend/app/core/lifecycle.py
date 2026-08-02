@@ -4,8 +4,8 @@
     day 3   what you have built, and what is still missing — a real reading
     day 7   one week left
     day 11  three days left
-    day 14  24 hours; here is exactly what gets deleted
-    day 15  delete
+    day 14  it ends tomorrow — what stops, and what is kept
+    day 97  delete (90 days after the trial ended, with a warning at day 83)
 
 Three properties this file is built around.
 
@@ -60,6 +60,9 @@ BEATS = [
     Beat("week_left", 7, "One week left on your Taktline trial"),
     Beat("three_days", 11, "Three days left on your Taktline trial"),
     Beat("final", 14, "Your Taktline trial ends tomorrow"),
+    # The last one. 83 days after the trial started is a week before deletion.
+    Beat("last_call", plans.TRIAL_DAYS + plans.TRIAL_RETENTION_DAYS - 7,
+         "Your Taktline line will be deleted next week"),
 ]
 
 
@@ -153,10 +156,21 @@ def _three_days(company: str, billing: str, stop: str) -> str:
 def _final(company: str, facts: dict, billing: str, stop: str) -> str:
     built = ", ".join(f"{v} {k}" for k, v in facts.items() if v) or "your line"
     return (f"The trial for {company} ends tomorrow.\n\n"
-            f"If you do nothing, the account and everything in it is deleted 24 "
-            f"hours later. That means {built} — and any share links you have "
-            f"posted will stop working.\n\n"
-            f"Choosing a plan keeps all of it, unchanged.\n\n{_price_table()}"
+            f"Nothing is deleted. The account is paused — {built} stays exactly "
+            f"where it is, and choosing a plan at any point in the next "
+            f"{plans.TRIAL_RETENTION_DAYS} days picks up where you left off.\n\n"
+            f"After that we do clear it out, and we will write again first.\n\n"
+            f"{_price_table()}"
+            + _footer(billing, stop))
+
+
+def _last_call(company: str, billing: str, stop: str) -> str:
+    return (f"The line you built for {company} is still here, and it is about to "
+            f"be deleted — a week from now, {plans.TRIAL_RETENTION_DAYS} days "
+            f"after the trial ended.\n\n"
+            f"If it is still worth something to you, a plan restores it "
+            f"instantly and nothing has changed since you left.\n\n"
+            f"{_price_table()}"
             + _footer(billing, stop))
 
 
@@ -164,6 +178,7 @@ BODIES = {
     "welcome": _welcome,
     "week_left": _week_left,
     "three_days": _three_days,
+    "last_call": _last_call,
 }
 
 
@@ -326,7 +341,7 @@ async def send_due_emails() -> int:
 
 
 async def delete_expired_trials(limit: int = _DELETE_PER_RUN) -> int:
-    """Delete trials that ended more than a day ago.
+    """Delete trials that ended more than TRIAL_RETENTION_DAYS ago.
 
     One conditional statement per company rather than read-then-delete: a
     checkout completing between the read and the write would otherwise delete a
@@ -338,7 +353,7 @@ async def delete_expired_trials(limit: int = _DELETE_PER_RUN) -> int:
     from ..models.common import utcnow
     from . import entitlements
 
-    cutoff = utcnow() - timedelta(days=1)
+    cutoff = utcnow() - timedelta(days=plans.TRIAL_RETENTION_DAYS)
     removed = 0
     async with SessionLocal() as session:
         candidates = (await session.execute(

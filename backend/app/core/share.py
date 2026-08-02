@@ -65,9 +65,11 @@ def catalog() -> dict[str, ShareItem]:
             id=t["id"], kind="tip", eyebrow=t["category"], headline=t["text"],
             body="", formula=None, anchor=None,
         )
+    chapter_names = {"science": "Flow science", "toolkit": "The improvement toolkit"}
     for c in raw["concepts"]:
+        chapter = chapter_names.get(c.get("chapter", "science"), "Flow science")
         items[c["id"]] = ShareItem(
-            id=c["id"], kind="concept", eyebrow=f"Flow science · {c['title']}",
+            id=c["id"], kind="concept", eyebrow=f"{chapter} · {c['title']}",
             headline=c["claim"], body=c["body"], formula=c["formula"],
             anchor=c["anchor"],
         )

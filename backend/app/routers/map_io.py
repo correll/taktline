@@ -256,6 +256,7 @@ async def import_map(doc: MapDocument,
 
     ent = ctx.entitlement or await entitlements.resolve(session, ctx.company_id,
                                                         user=ctx.user)
+    file_providers: set = set()
 
     # Provider capability is a rule, not just an enum (a shipper cannot be a source).
     for st in doc.stations:
@@ -263,10 +264,23 @@ async def import_map(doc: MapDocument,
             raise HTTPException(422, f"Station {st.ref!r}: an integration role needs a provider")
         if st.integrationProvider is not None:
             entitlements.ensure_integrations(ent)
+            file_providers.add(st.integrationProvider)
             role = st.integrationRole or "both"
             if not role_allowed(st.integrationProvider, role):
                 raise HTTPException(422,
                     f"Station {st.ref!r}: {st.integrationProvider} cannot be bound as '{role}'")
+
+    # An import REPLACES the line, so the connector count is whatever the file
+    # asks for — not the file plus what is already there.
+    connector_limit = ent.connector_limit
+    if connector_limit is not None and len(file_providers) > connector_limit:
+        raise HTTPException(403, {
+            "message": (f"This file wires in {len(file_providers)} connectors; "
+                        f"your {ent.plan.label} plan includes {connector_limit}."),
+            "code": "plan_limit", "resource": "connectors",
+            "plan": ent.plan.code, "limit": connector_limit,
+            "used": len(file_providers),
+        })
 
     # Quotas apply to a file exactly as they apply to the editor.
     #

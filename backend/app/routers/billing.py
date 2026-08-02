@@ -37,6 +37,7 @@ class PlanOut(BaseModel):
     label: str
     stations: Optional[int]
     integrations: bool
+    connectors: Optional[int] = None
     monthlyCents: int
     blurb: str
     purchasable: bool
@@ -55,6 +56,9 @@ class SubscriptionOut(BaseModel):
     onPremise: bool
     stationLimit: Optional[int] = None
     integrations: bool
+    connectorLimit: Optional[int] = None
+    connectorAddons: int = 0
+    connectorsUsed: int = 0
     monthlyCents: int
     trialEndsAt: Optional[str] = None
     currentPeriodEnd: Optional[str] = None
@@ -69,11 +73,13 @@ class SubscriptionOut(BaseModel):
 class CheckoutIn(BaseModel):
     planCode: str
     onPremise: bool = False
+    connectorAddons: int = Field(0, ge=0, le=20)
 
 
 class ChangePlanIn(BaseModel):
     planCode: str
     onPremise: bool = False
+    connectorAddons: int = Field(0, ge=0, le=20)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -111,11 +117,12 @@ async def list_plans():
     """The price list. Public to any signed-in user — it is on the website too."""
     out = []
     for code, plan in plans.PLANS.items():
-        if code in (plans.SANDBOX, plans.SELF_HOSTED):
+        if code in (plans.SANDBOX, plans.SELF_HOSTED, plans.ENTERPRISE):
             continue
         out.append(PlanOut(
             code=plan.code, label=plan.label, stations=plan.stations,
-            integrations=plan.integrations, monthlyCents=plan.monthly_cents,
+            integrations=plan.integrations, connectors=plan.connectors,
+            monthlyCents=plan.monthly_cents,
             blurb=plan.blurb, purchasable=code in plans.PURCHASABLE,
         ))
     return out
@@ -137,7 +144,10 @@ async def get_subscription(company_id: str, user: User = Depends(get_current_use
         plan=ent.plan.code, planLabel=ent.plan.label, state=ent.state,
         reason=ent.reason, onPremise=ent.on_premise,
         stationLimit=ent.station_limit, integrations=ent.integrations,
-        monthlyCents=plans.monthly_cents(ent.plan.code, ent.on_premise),
+        connectorLimit=ent.connector_limit, connectorAddons=ent.connector_addons,
+        connectorsUsed=len(await entitlements.bound_providers(session, company_uuid)),
+        monthlyCents=plans.monthly_cents(ent.plan.code, ent.on_premise,
+                                         ent.connector_addons),
         trialEndsAt=_iso(row.trialEndsAt), currentPeriodEnd=_iso(row.currentPeriodEnd),
         graceEndsAt=_iso(row.graceEndsAt), settling=ent.settling,
         usage=UsageOut(stations=used, stationLimit=ent.station_limit),
@@ -147,6 +157,32 @@ async def get_subscription(company_id: str, user: User = Depends(get_current_use
 
 
 # ─── Buying and changing ─────────────────────────────────────────────────────
+
+async def _refuse_if_connectors_do_not_fit(session: AsyncSession, company_uuid,
+                                           plan_code: str, addons: int) -> None:
+    """Same rule as stations, applied to connectors.
+
+    A shop wired into Odoo and ShipStation dropping to a plan with one included
+    connector and no add-ons has to unwire one first. Letting it through would
+    mean silently breaking a live ERP sync, which is the worst possible way for
+    a customer to discover a billing change.
+    """
+    plan = plans.get(plan_code)
+    if plan.connectors is None:
+        return
+    limit = plan.connectors + max(0, addons)
+    in_use = await entitlements.bound_providers(session, company_uuid)
+    if len(in_use) <= limit:
+        return
+    raise HTTPException(409, {
+        "message": (f"You have {len(in_use)} connectors wired in "
+                    f"({', '.join(sorted(in_use))}) and this plan covers "
+                    f"{limit}. Unwire one, or add a connector."),
+        "code": "over_limit_for_plan",
+        "resource": "connectors",
+        "plan": plan_code, "limit": limit, "used": len(in_use),
+    })
+
 
 async def _refuse_if_plan_is_too_small(session: AsyncSession, company_uuid,
                                        plan_code: str) -> None:
@@ -186,6 +222,8 @@ async def start_checkout(company_id: str, body: CheckoutIn, request: Request,
     company_uuid = require_uuid(company_id, "Company not found")
     _validate_purchasable(body.planCode)
     await _refuse_if_plan_is_too_small(session, company_uuid, body.planCode)
+    await _refuse_if_connectors_do_not_fit(session, company_uuid, body.planCode,
+                                           body.connectorAddons)
 
     row = await _subscription(session, company_uuid)
     company = await session.get(Company, company_uuid)
@@ -195,7 +233,7 @@ async def start_checkout(company_id: str, body: CheckoutIn, request: Request,
     base = settings.frontend_base_url.rstrip("/")
     sess = billing_stripe.checkout_session(
         customer_id=customer, plan_code=body.planCode, on_premise=body.onPremise,
-        company_id=str(company_uuid),
+        connector_addons=body.connectorAddons, company_id=str(company_uuid),
         success_url=f"{base}/settings?tab=billing&checkout=done",
         cancel_url=f"{base}/settings?tab=billing&checkout=cancelled",
     )
@@ -231,16 +269,19 @@ async def change_plan(company_id: str, body: ChangePlanIn,
     company_uuid = require_uuid(company_id, "Company not found")
     _validate_purchasable(body.planCode)
     await _refuse_if_plan_is_too_small(session, company_uuid, body.planCode)
+    await _refuse_if_connectors_do_not_fit(session, company_uuid, body.planCode,
+                                           body.connectorAddons)
 
     row = await _subscription(session, company_uuid)
     if not row.stripeSubscriptionId:
         raise HTTPException(409, "No active subscription — start a checkout instead")
 
-    upgrading = (plans.monthly_cents(body.planCode, body.onPremise)
-                 > plans.monthly_cents(row.planCode, row.onPremise))
+    upgrading = (plans.monthly_cents(body.planCode, body.onPremise, body.connectorAddons)
+                 > plans.monthly_cents(row.planCode, row.onPremise, row.connectorAddons))
     obj = billing_stripe.change_plan(
         subscription_id=row.stripeSubscriptionId, plan_code=body.planCode,
-        on_premise=body.onPremise, upgrading=upgrading)
+        on_premise=body.onPremise, upgrading=upgrading,
+        connector_addons=body.connectorAddons)
 
     _apply_subscription(row, obj)
     await session.flush()
@@ -258,9 +299,10 @@ def _apply_subscription(row: Subscription, obj) -> None:
     """
     from datetime import datetime, timezone
 
-    plan_code, on_premise = billing_stripe.plan_from_subscription(obj)
+    plan_code, on_premise, addons = billing_stripe.plan_from_subscription(obj)
     row.planCode = plan_code
     row.onPremise = on_premise
+    row.connectorAddons = addons
     row.stripeSubscriptionId = obj["id"]
     row.stripeStatus = obj["status"]
     period_end = obj.get("current_period_end")
@@ -399,6 +441,51 @@ async def _handle(session: AsyncSession, event) -> None:
         return
 
     _apply_subscription(row, billing_stripe.fetch_subscription(subscription_id))
+
+
+# ─── On-premise licence ──────────────────────────────────────────────────────
+
+class LicenceIn(BaseModel):
+    #: The whole signed document, exactly as issued.
+    licence: dict
+    signature: str
+
+
+@router.get("/licence")
+async def read_licence(user: User = Depends(get_current_user)):
+    """What licence this box is running under. Any signed-in user, because the
+    answer an operator needs when the board goes read-only is on this page."""
+    from ..core import licence as licence_mod
+
+    if settings.is_cloud:
+        return {"onPremise": False, "licence": None}
+    lic = licence_mod.load()
+    return {"onPremise": True,
+            "licence": lic.as_dict() if lic else None,
+            "graceDays": licence_mod.GRACE_DAYS}
+
+
+@router.post("/licence")
+async def install_licence(body: LicenceIn, user: User = Depends(get_current_user),
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Install a licence file by hand.
+
+    Exists so an air-gapped shop is never dependent on our reachability — the
+    file arrives by email and is pasted in. Any signed-in user may install one:
+    it is signed, so the worst a hostile one can do is fail verification, and
+    requiring an admin would mean a locked-out plant needs the right person
+    awake to come back.
+    """
+    from ..core import licence as licence_mod
+
+    if settings.is_cloud:
+        raise HTTPException(400, "This is a hosted deployment; billing is by "
+                                 "subscription, not by licence file")
+    try:
+        lic = licence_mod.install({"licence": body.licence, "signature": body.signature})
+    except licence_mod.LicenceError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"licence": lic.as_dict()}
 
 
 # ─── Trial opt-out ───────────────────────────────────────────────────────────

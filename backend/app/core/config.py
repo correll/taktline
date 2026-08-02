@@ -138,7 +138,9 @@ class Settings(BaseSettings):
     stripe_price_basic_50: Optional[str] = None
     stripe_price_pro_50: Optional[str] = None
     stripe_price_pro_100: Optional[str] = None
+    stripe_price_plant_250: Optional[str] = None
     stripe_price_onprem: Optional[str] = None
+    stripe_price_connector: Optional[str] = None
 
     @property
     def billing_enabled(self) -> bool:

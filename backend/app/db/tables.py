@@ -746,6 +746,9 @@ class Subscription(Base):
     )
     planCode: Mapped[str] = mapped_column(String, nullable=False, default="trial")
     onPremise: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Managed connectors bought beyond what the plan includes, billed as a
+    #: quantity line on the Stripe subscription.
+    connectorAddons: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Stripe's own subscription status, verbatim: trialing / active / past_due /
     # incomplete / canceled / unpaid. Null until they buy something.

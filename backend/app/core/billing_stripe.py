@@ -72,10 +72,24 @@ def onprem_price() -> str:
     return price
 
 
-def line_items(plan_code: str, on_premise: bool) -> list[dict]:
+def connector_price() -> str:
+    price = plans.price_ids().get("connector")
+    if not price:
+        raise HTTPException(503, f"No Stripe price configured for extra "
+                                 f"connectors — set {plans.CONNECTOR_PRICE_ENV}")
+    return price
+
+
+def line_items(plan_code: str, on_premise: bool,
+               connector_addons: int = 0) -> list[dict]:
     items = [{"price": price_for(plan_code), "quantity": 1}]
     if on_premise:
         items.append({"price": onprem_price(), "quantity": 1})
+    if connector_addons > 0:
+        # A quantity, not N separate lines: Stripe prorates a quantity change
+        # the same way it prorates a plan change, so going from two extra
+        # connectors to one behaves like any other downgrade.
+        items.append({"price": connector_price(), "quantity": connector_addons})
     return items
 
 
@@ -102,7 +116,8 @@ def ensure_customer(sub, company_name: str, email: str) -> str:
 # ─── Checkout ────────────────────────────────────────────────────────────────
 
 def checkout_session(*, customer_id: str, plan_code: str, on_premise: bool,
-                     company_id: str, success_url: str, cancel_url: str):
+                     company_id: str, success_url: str, cancel_url: str,
+                     connector_addons: int = 0):
     """A hosted checkout for a first purchase.
 
     Card **and** ACH. ACH is 0.8% capped at $5 against 2.9% + 30¢ for cards, so
@@ -114,7 +129,7 @@ def checkout_session(*, customer_id: str, plan_code: str, on_premise: bool,
     return s.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
-        line_items=line_items(plan_code, on_premise),
+        line_items=line_items(plan_code, on_premise, connector_addons),
         payment_method_types=["card", "us_bank_account"],
         # Software subscriptions are taxed inconsistently by state; switching
         # this on retroactively after a year of sales is expensive and
@@ -123,7 +138,8 @@ def checkout_session(*, customer_id: str, plan_code: str, on_premise: bool,
         customer_update={"address": "auto", "name": "auto"},
         subscription_data={"metadata": {"companyId": company_id,
                                         "planCode": plan_code,
-                                        "onPremise": str(on_premise).lower()}},
+                                        "onPremise": str(on_premise).lower(),
+                                        "connectorAddons": str(connector_addons)}},
         success_url=success_url,
         cancel_url=cancel_url,
     )
@@ -145,7 +161,7 @@ def portal_session(*, customer_id: str, return_url: str):
 # ─── Plan changes ────────────────────────────────────────────────────────────
 
 def change_plan(*, subscription_id: str, plan_code: str, on_premise: bool,
-                upgrading: bool):
+                upgrading: bool, connector_addons: int = 0):
     """Move a live subscription to another plan, prorated to the day.
 
     See the module docstring for why `proration_behavior` differs by direction.
@@ -161,10 +177,11 @@ def change_plan(*, subscription_id: str, plan_code: str, on_premise: bool,
     deletions = [{"id": item.id, "deleted": True} for item in current["items"]["data"]]
     return s.Subscription.modify(
         subscription_id,
-        items=deletions + line_items(plan_code, on_premise),
+        items=deletions + line_items(plan_code, on_premise, connector_addons),
         proration_behavior="always_invoice" if upgrading else "create_prorations",
         payment_behavior="allow_incomplete",
-        metadata={"planCode": plan_code, "onPremise": str(on_premise).lower()},
+        metadata={"planCode": plan_code, "onPremise": str(on_premise).lower(),
+                  "connectorAddons": str(connector_addons)},
     )
 
 
@@ -247,8 +264,8 @@ def fetch_subscription(subscription_id: str):
     return _stripe().Subscription.retrieve(subscription_id)
 
 
-def plan_from_subscription(obj) -> tuple[str, bool]:
-    """Read (planCode, onPremise) back off a Stripe subscription.
+def plan_from_subscription(obj) -> tuple[str, bool, int]:
+    """Read (planCode, onPremise, connectorAddons) off a Stripe subscription.
 
     Prefers the price ids on the live line items over the metadata, because
     metadata is what *we* last wrote and the items are what Stripe will
@@ -256,15 +273,18 @@ def plan_from_subscription(obj) -> tuple[str, bool]:
     """
     ids = plans.price_ids()
     by_price = {v: k for k, v in ids.items() if v}
-    plan_code, on_premise = None, False
+    plan_code, on_premise, addons = None, False, 0
     for item in obj.get("items", {}).get("data", []):
         code = by_price.get(item.get("price", {}).get("id"))
         if code == "onprem":
             on_premise = True
+        elif code == "connector":
+            addons = int(item.get("quantity", 0) or 0)
         elif code:
             plan_code = code
     if plan_code is None:
         meta = obj.get("metadata") or {}
         plan_code = meta.get("planCode") or plans.TRIAL
         on_premise = on_premise or (meta.get("onPremise") == "true")
-    return plan_code, on_premise
+        addons = addons or int(meta.get("connectorAddons") or 0)
+    return plan_code, on_premise, addons

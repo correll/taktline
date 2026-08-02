@@ -23,10 +23,12 @@
   </url>
   <url><loc>https://taktline.com/terms</loc></url>
 
-  <!-- The flow-science share pages. Each is a distinct explanation with its
-       own animation, so they are worth indexing; the ninety-four lean-tip
-       pages are not listed, being one sentence each. Kept in step with
-       `help/concepts.ts` by shareCatalog.test.ts. -->
+
+  <!-- One page per idea in the manual's flow-science and improvement-toolkit
+       chapters. Each is a distinct explanation with its own URL, so each is
+       worth indexing; the ninety-four lean-tip pages are not listed, being one
+       sentence each. Kept in step with `help/concepts.ts` by
+       shareCatalog.test.ts. -->
   <url>
     <loc>https://taktline.com/i/littles-law</loc>
     <changefreq>yearly</changefreq>
@@ -64,6 +66,81 @@
   </url>
   <url>
     <loc>https://taktline.com/i/theory-of-constraints</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/five-s</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/standard-work</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/visual-management</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/layout</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/one-piece-flow</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/poka-yoke</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/jidoka</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/built-in-quality</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/smed</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/heijunka</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/tpm</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/pdca</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/five-whys</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/pareto</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/respect-for-people</loc>
     <changefreq>yearly</changefreq>
     <priority>0.6</priority>
   </url>

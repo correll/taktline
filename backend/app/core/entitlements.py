@@ -62,6 +62,8 @@ class Entitlement:
     grace_ends_at: Optional[object] = None
     #: Money is moving but has not settled (ACH). Service is on; the UI says so.
     settling: bool = False
+    #: Extra managed connectors bought on top of the plan's included count.
+    connector_addons: int = 0
 
     @property
     def writable(self) -> bool:
@@ -80,6 +82,13 @@ class Entitlement:
     def integrations(self) -> bool:
         return self.plan.integrations
 
+    @property
+    def connector_limit(self) -> Optional[int]:
+        """How many distinct integration providers may be bound. None = any."""
+        if self.plan.connectors is None:
+            return None
+        return self.plan.connectors + self.connector_addons
+
     def as_dict(self) -> dict:
         return {
             "plan": self.plan.code,
@@ -89,7 +98,10 @@ class Entitlement:
             "onPremise": self.on_premise,
             "stationLimit": self.plan.stations,
             "integrations": self.plan.integrations,
-            "monthlyCents": plans.monthly_cents(self.plan.code, self.on_premise),
+            "connectorLimit": self.connector_limit,
+            "connectorAddons": self.connector_addons,
+            "monthlyCents": plans.monthly_cents(self.plan.code, self.on_premise,
+                                                self.connector_addons),
             "trialEndsAt": self.trial_ends_at,
             "currentPeriodEnd": self.period_end,
             "graceEndsAt": self.grace_ends_at,
@@ -111,6 +123,47 @@ def _unlimited(company_id: str, reason: str) -> Entitlement:
     )
 
 
+def _from_licence(cid: str) -> Entitlement:
+    """What the installed licence allows, right now.
+
+    **No licence at all is unmetered.** A self-hosted evaluation, a developer
+    machine and a CI box must all simply work; enforcement is for customers who
+    have signed something and been sent a file. The alternative — deny by
+    default — would mean the first thing a self-hoster meets is a paywall with
+    no way to pay.
+    """
+    from . import licence as licence_mod
+
+    lic = licence_mod.load()
+    if lic is None:
+        return _unlimited(cid, "on_premise_unlicensed")
+
+    plan = plans.get(lic.plan_code)
+    # A licence may narrow its plan (a bespoke station count for a big site);
+    # it may not silently widen one that does not exist.
+    if lic.stations is not None or lic.connectors is not None:
+        plan = Plan(
+            code=plan.code, label=plan.label,
+            stations=lic.stations if lic.stations is not None else plan.stations,
+            integrations=plan.integrations,
+            connectors=lic.connectors if lic.connectors is not None else plan.connectors,
+            monthly_cents=plan.monthly_cents, price_env=plan.price_env,
+            blurb=plan.blurb,
+        )
+
+    common = dict(company_id=cid, plan=plan, on_premise=True,
+                  period_end=lic.expires_at, grace_ends_at=lic.grace_ends_at)
+
+    if not lic.expired:
+        return Entitlement(**common, state=OK, reason=None)
+    # Expired. The same read-only week the cloud gives, for the same reason:
+    # whatever went wrong — an unpaid invoice, a firewall, a forgotten renewal —
+    # they can still see and export their own line while it is sorted out.
+    if utcnow() < lic.grace_ends_at:
+        return Entitlement(**common, state=READ_ONLY, reason="licence_expired")
+    return Entitlement(**common, state=LOCKED, reason="licence_expired")
+
+
 async def resolve(session: AsyncSession, company_id, *, user=None) -> Entitlement:
     """The company's current entitlement. One indexed query."""
     from ..db.tables import Subscription
@@ -128,10 +181,11 @@ async def resolve(session: AsyncSession, company_id, *, user=None) -> Entitlemen
                            on_premise=False, state=OK, reason=None)
 
     # A customer's own box is governed by its licence file, not by a row in a
-    # database they administer. Metering it here would be theatre: they can edit
-    # the row. See the note in pricing.md.
+    # database they administer — metering that row would be theatre, since they
+    # can edit it. The file is signed and carries an expiry, which is what makes
+    # a monthly on-premise charge enforceable.
     if not settings.is_cloud:
-        return _unlimited(cid, "on_premise")
+        return _from_licence(cid)
 
     # Self-hosted or dev with no payment provider configured: the gate must not
     # invent a paywall nobody can pay.
@@ -159,6 +213,7 @@ def _derive(cid: str, row) -> Entitlement:
         company_id=cid, plan=plan, on_premise=row.onPremise,
         trial_ends_at=row.trialEndsAt, period_end=row.currentPeriodEnd,
         grace_ends_at=row.graceEndsAt,
+        connector_addons=getattr(row, "connectorAddons", 0) or 0,
     )
 
     if row.planCode in plans.FREE:
@@ -401,6 +456,55 @@ def ensure_integrations(ent: Entitlement) -> None:
         "code": "plan_limit",
         "resource": "integrations",
         "plan": ent.plan.code,
+    })
+
+
+async def bound_providers(session: AsyncSession, company_id) -> set:
+    """Which integration partners this company currently has wired in.
+
+    **The billable unit is the provider, not the station.** A shop with three
+    ShipStation docks drawn on its floor is using one connector — it is one
+    integration to maintain, and charging per station would tax them for
+    modelling their floor honestly, which is the thing the whole pricing metric
+    is designed not to do.
+    """
+    from ..db.tables import Station
+
+    rows = (await session.execute(
+        select(Station.integrationProvider).where(
+            Station.companyId == company_id,
+            Station.integrationProvider.isnot(None),
+        ).distinct()
+    )).scalars().all()
+    return {r for r in rows if r}
+
+
+async def ensure_connector(session: AsyncSession, company_id, provider: str,
+                           ent: Entitlement) -> None:
+    """Refuse a binding that would add a connector beyond the plan's count.
+
+    Adding another station for a provider already in use is always free — only
+    a *new* partner costs a connector.
+    """
+    ensure_integrations(ent)
+    limit = ent.connector_limit
+    if limit is None:
+        return
+    in_use = await bound_providers(session, company_id)
+    if provider in in_use:
+        return
+    if len(in_use) < limit:
+        return
+    raise HTTPException(403, {
+        "message": (f"Your plan includes {limit} connector"
+                    f"{'' if limit == 1 else 's'} and you are using "
+                    f"{', '.join(sorted(in_use))}. Add another for "
+                    f"${plans.CONNECTOR_CENTS // 100}/month."),
+        "code": "plan_limit",
+        "resource": "connectors",
+        "plan": ent.plan.code,
+        "limit": limit,
+        "used": len(in_use),
     })
 
 

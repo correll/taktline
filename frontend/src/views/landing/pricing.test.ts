@@ -35,13 +35,16 @@ describe('the advertised price is the charged price', () => {
   })
 
   it('matches the landing page', () => {
-    for (const code of ['basic_50', 'pro_50', 'pro_100']) {
+    for (const code of ['basic_50', 'pro_50', 'pro_100', 'plant_250']) {
       const dollars = centsFor(code) / 100
       expect(landing, `$${dollars} (${code}) missing from the landing page`)
         .toContain(`$${dollars}`)
     }
-    const onprem = Number(plansPy.match(/ONPREM_CENTS = (\d+)/)![1]) / 100
-    expect(landing).toContain(`$${onprem}`)
+    for (const konst of ['ONPREM_CENTS', 'CONNECTOR_CENTS']) {
+      const dollars = Number(plansPy.match(new RegExp(`${konst} = (\\d+)`))![1]) / 100
+      expect(landing, `$${dollars} (${konst}) missing from the landing page`)
+        .toContain(`$${dollars}`)
+    }
   })
 
   it('matches the JSON-LD offers a crawler reads', () => {
@@ -50,6 +53,7 @@ describe('the advertised price is the charged price', () => {
     const offers: { name: string; price: string }[] = json.offers.offers
     const byName: Record<string, string> = {
       basic_50: 'Basic', pro_50: 'Professional', pro_100: 'Professional 100',
+      plant_250: 'Plant',
     }
     for (const [code, name] of Object.entries(byName)) {
       const offer = offers.find((o) => o.name === name)
@@ -57,7 +61,7 @@ describe('the advertised price is the charged price', () => {
       expect(Number(offer!.price)).toBe(centsFor(code) / 100)
     }
     expect(Number(json.offers.lowPrice)).toBe(centsFor('basic_50') / 100)
-    expect(Number(json.offers.highPrice)).toBe(centsFor('pro_100') / 100)
+    expect(Number(json.offers.highPrice)).toBe(centsFor('plant_250') / 100)
   })
 
   it('no longer promises anything free forever', () => {

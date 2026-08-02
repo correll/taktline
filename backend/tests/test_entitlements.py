@@ -258,7 +258,7 @@ def test_support_can_reach_a_locked_account(billing, actor):
 def test_the_station_ceiling_is_the_plans(billing, actor, monkeypatch):
     monkeypatch.setitem(plans.PLANS, "basic_50",
                         plans.Plan(code="basic_50", label="Basic", stations=2,
-                                   integrations=False, monthly_cents=2900,
+                                   integrations=False, connectors=0, monthly_cents=2900,
                                    price_env=None, blurb=""))
     a = actor()
     bootstrap_admin(a, "Ceiling co")
@@ -279,7 +279,7 @@ def test_a_line_file_cannot_walk_around_the_station_ceiling(billing, actor, monk
     and because import REPLACES the line, the per-create quota never saw them."""
     monkeypatch.setitem(plans.PLANS, "basic_50",
                         plans.Plan(code="basic_50", label="Basic", stations=2,
-                                   integrations=False, monthly_cents=2900,
+                                   integrations=False, connectors=0, monthly_cents=2900,
                                    price_env=None, blurb=""))
     a = actor()
     bootstrap_admin(a, "Import co")
@@ -480,3 +480,207 @@ def test_read_only_keeps_the_live_board(billing, actor):
               graceEndsAt=utcnow() + timedelta(days=2))
     with a.tc.websocket_connect(f"/ws/events?companyId={a.company}") as ws:
         assert ws is not None
+
+
+# ─── Connectors ──────────────────────────────────────────────────────────────
+
+def _dock(a: Actor, name: str, provider: str, role: str = "sink"):
+    return a.req("POST", "/stations/", {**STATION, "name": name,
+                                        "integrationProvider": provider,
+                                        "integrationRole": role})
+
+
+def test_professional_includes_one_connector(billing, actor):
+    a = actor()
+    bootstrap_admin(a, "One connector co")
+    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
+
+    assert _dock(a, "Dock", "shipstation").status_code == 201
+    r = _dock(a, "ERP", "odoo", "both")
+    assert r.status_code == 403
+    body = r.json()["detail"]
+    assert body["resource"] == "connectors"
+    assert (body["limit"], body["used"]) == (1, 1)
+    assert "shipstation" in body["message"]
+
+
+def test_the_billable_unit_is_the_partner_not_the_station(billing, actor):
+    """A shop with three ShipStation docks is using one connector. Charging per
+    station would tax them for modelling their floor honestly — which is the
+    thing the whole pricing metric exists not to do."""
+    a = actor()
+    bootstrap_admin(a, "Many docks co")
+    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
+
+    for n in ("Dock A", "Dock B", "Dock C"):
+        assert _dock(a, n, "shipstation").status_code == 201, n
+
+
+def test_a_bought_connector_raises_the_count(billing, actor):
+    a = actor()
+    bootstrap_admin(a, "Paid connector co")
+    _set_plan(a.company, planCode="pro_50", stripeStatus="active", connectorAddons=1)
+
+    assert _dock(a, "Dock", "shipstation").status_code == 201
+    assert _dock(a, "ERP", "odoo", "both").status_code == 201
+    assert _dock(a, "Store", "shopify", "source").status_code == 403
+
+
+def test_plant_includes_three(billing, actor):
+    a = actor()
+    bootstrap_admin(a, "Plant co")
+    _set_plan(a.company, planCode="plant_250", stripeStatus="active")
+    for name, provider, role in (("Dock", "shipstation", "sink"),
+                                 ("ERP", "odoo", "both"),
+                                 ("Store", "shopify", "source")):
+        assert _dock(a, name, provider, role).status_code == 201, provider
+    assert _dock(a, "Books", "qbo", "both").status_code == 403
+
+
+def test_basic_has_no_connectors_at_all(billing, actor):
+    a = actor()
+    bootstrap_admin(a, "Basic connector co")
+    _set_plan(a.company, planCode="basic_50", stripeStatus="active")
+    r = _dock(a, "Dock", "shipstation")
+    assert r.status_code == 403
+    # Reported as an integrations problem, not a counting one: the answer is
+    # "upgrade to Professional", not "buy another connector".
+    assert r.json()["detail"]["resource"] == "integrations"
+
+
+def test_a_line_file_cannot_wire_in_more_connectors_than_the_plan(billing, actor):
+    a = actor()
+    bootstrap_admin(a, "File connector co")
+    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
+    doc = {"kind": "taktline-map", "version": 1, "name": "Wired",
+           "stations": [
+               {"ref": "s1", "name": "Dock", "integrationProvider": "shipstation",
+                "integrationRole": "sink"},
+               {"ref": "s2", "name": "ERP", "integrationProvider": "odoo",
+                "integrationRole": "both"},
+           ],
+           "processes": [], "templates": [], "routes": []}
+    r = a.req("POST", "/map-io/import", doc)
+    assert r.status_code == 403
+    assert r.json()["detail"]["resource"] == "connectors"
+
+
+# ─── On-premise licensing ────────────────────────────────────────────────────
+
+@pytest.fixture
+def licensed(tmp_path, monkeypatch):
+    """An on-premise deployment with a signing key, and nothing installed yet."""
+    from app.core import licence as licence_mod
+
+    private, public = licence_mod.generate_keypair()
+    monkeypatch.setattr(settings, "deployment", "onprem", raising=False)
+    monkeypatch.setattr(settings, "licence_public_key", public, raising=False)
+    monkeypatch.setattr(settings, "licence_file", str(tmp_path / "lic.json"),
+                        raising=False)
+    return private
+
+
+def _install(private, **kw):
+    from app.core import licence as licence_mod
+    kw.setdefault("issued_to", "Bramble Metalworks")
+    kw.setdefault("plan_code", "plant_250")
+    return licence_mod.install(licence_mod.issue(private, **kw))
+
+
+def test_an_unlicensed_self_hosted_install_is_not_metered(licensed, actor):
+    """A self-hosted evaluation, a developer machine and a CI box must all just
+    work. Deny-by-default would mean the first thing a self-hoster meets is a
+    paywall with no way to pay."""
+    a = actor()
+    bootstrap_admin(a, "Unlicensed co")
+    ent = _entitlement(a.company)
+    assert ent.state == entitlements.OK
+    assert ent.station_limit is None
+
+
+def test_a_valid_licence_sets_the_plan(licensed, actor):
+    a = actor()
+    bootstrap_admin(a, "Licensed co")
+    _install(licensed, plan_code="pro_50")
+    ent = _entitlement(a.company)
+    assert ent.state == entitlements.OK
+    assert ent.station_limit == 50
+    assert ent.connector_limit == 1
+
+
+def test_a_licence_may_narrow_its_plan(licensed, actor):
+    """A bespoke site count on an otherwise standard plan."""
+    a = actor()
+    bootstrap_admin(a, "Bespoke co")
+    _install(licensed, plan_code="plant_250", stations=80, connectors=5)
+    ent = _entitlement(a.company)
+    assert (ent.station_limit, ent.connector_limit) == (80, 5)
+
+
+def test_an_expired_licence_goes_read_only_then_locked(licensed, actor):
+    """This is what makes a monthly on-premise charge enforceable: stop paying,
+    no new file is issued, the current one runs out."""
+    from app.core import licence as licence_mod
+
+    a = actor()
+    bootstrap_admin(a, "Lapsed onprem co")
+
+    _install(licensed, days=-1)                      # expired an hour ago
+    assert _entitlement(a.company).state == entitlements.READ_ONLY
+
+    _install(licensed, days=-(licence_mod.GRACE_DAYS + 1))
+    assert _entitlement(a.company).state == entitlements.LOCKED
+
+
+def test_a_network_outage_is_not_a_lapse(licensed):
+    """The failure this design is most afraid of. A licence outlives its billing
+    period by a wide margin and renewal starts long before expiry, so a fortnight
+    of no internet changes nothing on the floor."""
+    from app.core import licence as licence_mod
+
+    assert licence_mod.DEFAULT_DAYS > 31, "a monthly licence must outlive a month"
+    slack = licence_mod.DEFAULT_DAYS - licence_mod.REFRESH_AFTER_DAYS
+    assert slack >= 14, f"only {slack} days of renewal slack"
+    assert licence_mod.GRACE_DAYS >= 7
+
+
+def test_a_forged_licence_is_refused(licensed, actor):
+    """The whole point of signing it. They administer the database and the disk;
+    they must not be able to write themselves a licence."""
+    from app.core import licence as licence_mod
+
+    other_private, _ = licence_mod.generate_keypair()
+    forged = licence_mod.issue(other_private, issued_to="Me", plan_code="plant_250")
+    with pytest.raises(licence_mod.LicenceError):
+        licence_mod.verify(forged)
+
+    # And one where the claims were edited after signing.
+    honest = licence_mod.issue(licensed, issued_to="Me", plan_code="pro_50")
+    honest["licence"]["stations"] = 99999
+    with pytest.raises(licence_mod.LicenceError):
+        licence_mod.verify(honest)
+
+
+def test_a_corrupt_licence_file_does_not_stop_the_server(licensed, actor):
+    """It must degrade to unmetered, not to a crash: an operator can then see
+    the problem and install a new file, rather than finding a dead box."""
+    from pathlib import Path
+    from app.core import licence as licence_mod
+
+    Path(settings.licence_file).write_text("{ this is not json")
+    assert licence_mod.load() is None
+    a = actor()
+    bootstrap_admin(a, "Corrupt licence co")
+    assert _entitlement(a.company).state == entitlements.OK
+
+
+def test_the_signature_survives_reformatting(licensed):
+    """A licence gets emailed, pasted and run through editors. Signing the
+    canonical claims rather than the file text means whitespace cannot break
+    it."""
+    import json
+    from app.core import licence as licence_mod
+
+    doc = licence_mod.issue(licensed, issued_to="Me", plan_code="pro_50")
+    reformatted = json.loads(json.dumps(doc, indent=4))
+    assert licence_mod.verify(reformatted).plan_code == "pro_50"

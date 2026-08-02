@@ -399,3 +399,64 @@ async def _handle(session: AsyncSession, event) -> None:
         return
 
     _apply_subscription(row, billing_stripe.fetch_subscription(subscription_id))
+
+
+# ─── Trial opt-out ───────────────────────────────────────────────────────────
+#
+# The link in every trial email. **GET only describes; POST deletes.** A
+# one-click destructive GET is deleted by the first mail scanner that prefetches
+# links — corporate mail filters do this routinely — and the customer never
+# even sees the message.
+
+class TrialStopOut(BaseModel):
+    companyName: str
+    valid: bool
+    stations: int
+    lots: int
+
+
+@router.get("/trial/stop", response_model=TrialStopOut)
+async def describe_trial_stop(company: str, token: str,
+                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """What the opt-out link is about to destroy. Unauthenticated: the token in
+    the email is the authorisation, and all it can do is show this page."""
+    from sqlalchemy import func
+
+    from ..core import lifecycle
+    from ..db.tables import Card as CardRow
+
+    company_uuid = require_uuid(company, "Not found")
+    if not lifecycle.verify_token(str(company_uuid), token):
+        raise HTTPException(404, "Not found")
+    row = await session.get(Company, company_uuid)
+    if row is None:
+        raise HTTPException(404, "Not found")
+    stations = await _station_count(session, company_uuid)
+    lots = (await session.execute(
+        select(func.count()).select_from(CardRow)
+        .where(CardRow.companyId == company_uuid))).scalar_one()
+    return TrialStopOut(companyName=row.name, valid=True, stations=stations, lots=lots)
+
+
+@router.post("/trial/stop", status_code=204)
+async def stop_trial(company: str, token: str,
+                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Delete the trial account, now, at the customer's request.
+
+    Refuses once the company is paying — an opt-out link from a trial email
+    must not be a way to destroy an account somebody has since bought.
+    """
+    from ..core import lifecycle
+
+    company_uuid = require_uuid(company, "Not found")
+    if not lifecycle.verify_token(str(company_uuid), token):
+        raise HTTPException(404, "Not found")
+    row = await session.get(Company, company_uuid)
+    if row is None:
+        return
+    sub = await _subscription(session, company_uuid)
+    if sub.planCode not in (plans.TRIAL,):
+        raise HTTPException(409, "This account is on a paid plan — cancel it in "
+                                 "Settings → Billing instead")
+    await entitlements.release_company(session, company_uuid)
+    await session.delete(row)

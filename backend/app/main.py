@@ -29,7 +29,7 @@ from .routers import (
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
     billing, client_errors, map_io, share, stations, stats,
 )
-from .core import entitlements, sandbox_gc, usage
+from .core import entitlements, lifecycle, sandbox_gc, usage
 from .core.traffic import traffic
 from .db.tables import SupportGrant
 
@@ -102,7 +102,12 @@ async def lifespan(app: FastAPI):
                 print(f"[warn] adapter start failed for station {st.name!r}: {exc}")
     usage.start_flush_task()
     sandbox_gc.start()
+    # Trial drip + deletion. Cloud only: on a customer's own box this
+    # would email their staff our marketing sequence and delete their
+    # company on day 15.
+    lifecycle.start()
     yield
+    lifecycle.stop()
     sandbox_gc.stop()
     await usage.stop_flush_task()
     await plugin_registry.stop_all()

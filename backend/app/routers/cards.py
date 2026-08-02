@@ -6,6 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core import tracking
+from ..core.config import settings
 from ..core.ws_events import queue_event
 from ..core.integrations import can_sink
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid, parse_uuid
@@ -41,6 +43,8 @@ def _to_card(r: CardRow) -> Card:
         description=r.description,
         status=r.status,
         orderId=str(r.orderId) if r.orderId else None,
+        trackingUrl=(f"{settings.frontend_base_url.rstrip('/')}"
+                     f"/o/{r.id}/{tracking.token_for(r.id)}"),
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
     )

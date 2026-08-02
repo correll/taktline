@@ -112,6 +112,10 @@ export interface Card {
   flagged: boolean
   description: string
   status: 'idle' | 'working' | 'done'
+  orderId?: ID | null
+  /** Read-only link for the customer who ordered this lot. Always present; the
+   *  page only answers while the company has customer order tracking on. */
+  trackingUrl?: string | null
   createdAt: string
   updatedAt: string
 }

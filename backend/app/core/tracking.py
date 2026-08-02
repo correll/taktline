@@ -18,11 +18,18 @@ orders by guessing. Turning the setting off stops every link at once — the tok
 still verifies, but `resolve` refuses — and turning it back on restores the same
 links rather than invalidating every one a customer has bookmarked.
 
-**It answers exactly one question.** One order: what it is, how far along, when
-it moved. No other order, no other customer, no prices, no station detail beyond
-the step it is on — and even that is a separate switch, because a shop's process
-is its own business and some will not want it described to the people buying
-from them.
+**It answers exactly one question.** One job: what it is, how far along, when it
+moved. No other job, no other customer, no prices, no station detail beyond the
+step it is on — and even that is a separate switch, because a shop's process is
+its own business and some will not want it described to the people buying from
+them.
+
+A link resolves either a **production order** or a **lot card**, from the same
+URL. That is not generality for its own sake: orders only exist where an ERP or
+a CSV created one, and the shops most likely to want to answer "where is my
+order?" are exactly the ones entering work by hand — for whom the only object
+that exists is the lot. Tracking that could only follow an order was a feature
+those shops could not reach.
 """
 
 from __future__ import annotations
@@ -49,13 +56,16 @@ def _secret() -> bytes:
     return (settings.stripe_webhook_secret or settings.database_url).encode()
 
 
-def token_for(order_id) -> str:
-    return hmac.new(_secret(), f"order-track:{order_id}".encode(),
+def token_for(subject_id) -> str:
+    """One derivation for orders and lots alike: the id is a UUID either way, so
+    there is nothing to disambiguate and no way for one subject's token to open
+    another's."""
+    return hmac.new(_secret(), f"order-track:{subject_id}".encode(),
                     hashlib.sha256).hexdigest()[:_TOKEN_CHARS]
 
 
-def verify(order_id, token: str) -> bool:
-    return hmac.compare_digest(token_for(order_id), token or "")
+def verify(subject_id, token: str) -> bool:
+    return hmac.compare_digest(token_for(subject_id), token or "")
 
 
 @dataclass(frozen=True)
@@ -161,36 +171,62 @@ async def _ordered_stations(session: AsyncSession, company_id, process_id) -> li
     return [(n, names.get(n, "—")) for n in order]
 
 
-async def resolve(session: AsyncSession, order_id, token: str) -> Optional[Tracked]:
-    """The public view of one order, or None if it may not be shown.
+async def resolve(session: AsyncSession, subject_id, token: str) -> Optional[Tracked]:
+    """The public view of one order **or one lot**, or None if it may not be shown.
 
-    None covers every refusal — unknown order, wrong token, tracking switched
-    off — deliberately, so the caller can only ever answer 404 and the page
-    cannot be used to test whether an order exists.
+    None covers every refusal — unknown id, wrong token, tracking switched off —
+    deliberately, so the caller can only ever answer 404 and the page cannot be
+    used to test whether a company has a given job.
     """
     from ..db.tables import Card as CardRow, LotTemplate, ProductionOrder
 
-    order = await session.get(ProductionOrder, order_id)
-    if order is None or not verify(order.id, token):
+    if not verify(subject_id, token):
         return None
 
-    on, show_steps = await enabled_for(session, order.companyId)
+    order = await session.get(ProductionOrder, subject_id)
+    card = None if order is not None else await session.get(CardRow, subject_id)
+    if order is None and card is None:
+        return None
+
+    company_id = order.companyId if order is not None else card.companyId
+    on, show_steps = await enabled_for(session, company_id)
     if not on:
         return None
 
-    template = (await session.get(LotTemplate, order.productTemplateId)
-                if order.productTemplateId else None)
+    if order is not None:
+        template_id = order.productTemplateId
+        reference = order.externalRef or str(order.id)[:8]
+        quantity, quantity_done, status = order.quantity, order.quantityDone, order.status
+        updated = getattr(order, "updatedAt", None) or order.createdAt
+        cards = (await session.execute(
+            select(CardRow).where(CardRow.companyId == company_id,
+                                  CardRow.orderId == order.id)
+        )).scalars().all()
+    else:
+        template_id = card.lotTemplateId
+        # The lot code is the traceability thread a shop already quotes on the
+        # phone, so it is the right thing to show a customer. Falling back to a
+        # slice of the id keeps the page usable for a lot nobody numbered.
+        reference = card.lotNum or str(card.id)[:8]
+        quantity = card.totalQuantity
+        # A lot has no "units finished" counter — that is an order concept, where
+        # some of the released quantity can be complete while the rest is still
+        # in the shop. A lot is one physical group that moves together, so its
+        # completion is its *position*: it is done when it reaches the last step.
+        # Resolved below, once the steps are known.
+        quantity_done = 0
+        status = "in_progress"
+        updated = card.updatedAt or card.createdAt
+        cards = [card]
 
-    cards = (await session.execute(
-        select(CardRow).where(CardRow.companyId == order.companyId,
-                              CardRow.orderId == order.id)
-    )).scalars().all()
+    template = (await session.get(LotTemplate, template_id)
+                if template_id else None)
 
     steps: Optional[list] = None
     step_index = step_total = None
     process_id = template.processId if template is not None else None
     if process_id is not None:
-        ordered = await _ordered_stations(session, order.companyId, process_id)
+        ordered = await _ordered_stations(session, company_id, process_id)
         step_total = len(ordered) or None
         if ordered:
             units_at: dict = {}
@@ -211,15 +247,18 @@ async def resolve(session: AsyncSession, order_id, token: str) -> Optional[Track
                     for i, (sid, name) in enumerate(ordered)
                 ]
 
+    if order is None and step_total and step_index == step_total - 1:
+        status, quantity_done = "completed", quantity
+
     return Tracked(
-        reference=(order.externalRef or str(order.id)[:8]),
-        product=(template.name if template is not None else "Order"),
-        quantity=order.quantity,
-        quantity_done=order.quantityDone,
-        status=order.status,
+        reference=reference,
+        product=(template.name if template is not None else "Job"),
+        quantity=quantity,
+        quantity_done=quantity_done,
+        status=status,
         steps=steps,
         step_index=step_index,
         step_total=step_total,
-        updated_at=getattr(order, "updatedAt", None) or order.createdAt,
+        updated_at=updated,
         show_steps=show_steps,
     )

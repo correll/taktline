@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useCardsStore, useStationsStore, useProcessesStore } from '../../store'
 import { cardsApi, type CardEvent } from '../../api/cards.api'
+import { TrackingLink } from '../../views/lots/OrdersPanel'
+import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 import { color, font, size, shadow } from '../../theme/tokens'
 import type { Card, Station } from '../../models'
 import { formatDistanceToNow } from 'date-fns'
@@ -13,6 +15,7 @@ interface Props {
 }
 
 export default function LotDetailModal({ card: initialCard, onClose, onMove }: Props) {
+  const trackingOn = useGlobalSettingsStore((s) => s.settings.orderTracking)
   const stations   = useStationsStore((s) => s.stations)
   const templates  = useProcessesStore((s) => s.lotTemplates)
   const processes  = useProcessesStore((s) => s.processes)
@@ -190,6 +193,22 @@ export default function LotDetailModal({ card: initialCard, onClose, onMove }: P
                       </div>
                     </div>
                   ))}
+                </Section>
+              )}
+
+              {/* The link for whoever is waiting on this lot. Right here on the
+                  card, because "where is job 4471?" is asked about a lot — an
+                  order only exists if an ERP or a CSV made one. */}
+              {card.trackingUrl && (
+                <Section label="CUSTOMER LINK">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3 }}>
+                    <TrackingLink url={card.trackingUrl} enabled={trackingOn} />
+                    <span style={{ fontSize: 11, color: color.textDim, lineHeight: 1.5 }}>
+                      {trackingOn
+                        ? 'Send this to the customer waiting on it. They see this lot’s progress and nothing else.'
+                        : 'Switch on customer order tracking in Settings → Global to use this.'}
+                    </span>
+                  </div>
                 </Section>
               )}
 

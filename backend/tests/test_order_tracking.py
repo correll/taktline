@@ -266,3 +266,63 @@ def test_an_erp_node_is_not_a_step(actor):
     assert body["stepTotal"] == 4, body["steps"]
     assert [s["name"] for s in body["steps"]] == ["Saw", "Weld", "Paint", "Pack"]
     assert "ShipStation" not in str(body)
+
+
+# ─── Tracking a lot, not only an order ───────────────────────────────────────
+
+def _lot(a: Actor, tmpl: str, proc: str, station: str, qty: int = 6):
+    r = a.req("POST", "/cards/", {"lotTemplateId": tmpl, "processId": proc,
+                                  "lotNum": "L-2208", "totalQuantity": qty,
+                                  "bins": {station: {"count": qty}}})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_a_lot_is_trackable_too(actor):
+    """Orders only exist where an ERP or a CSV made one. The shops most likely
+    to want to answer "where is my order?" enter work by hand, and for them the
+    only object that exists is the lot — so tracking that could only follow an
+    order was a feature they could not reach."""
+    a = actor()
+    bootstrap_admin(a, "By hand co")
+    ids, proc, tmpl = _line(a)
+    card = _lot(a, tmpl, proc, ids[0])
+    _set_tracking(a.company, True)
+
+    body = Actor().req("GET", f"/track/{card['_id']}/"
+                              f"{tracking.token_for(uuid.UUID(card['_id']))}").json()
+    assert body["reference"] == "L-2208"        # the lot code, which is what a shop quotes
+    assert body["product"] == "Bracket"
+    assert body["quantity"] == 6
+    assert [s["name"] for s in body["steps"]] == ["Saw", "Weld", "Paint", "Pack"]
+    assert body["steps"][0]["current"] is True
+
+
+def test_a_lot_at_the_last_step_reads_as_complete(actor):
+    """A lot is one group that moves together, so its completion is its
+    position — there is no partial "units done" the way an order has."""
+    a = actor()
+    bootstrap_admin(a, "Finished co")
+    ids, proc, tmpl = _line(a)
+    card = _lot(a, tmpl, proc, ids[0])
+    _set_tracking(a.company, True)
+    for i in range(3):
+        a.req("POST", f"/cards/{card['_id']}/move",
+              {"fromStationId": ids[i], "toStationId": ids[i + 1], "quantity": 6})
+
+    body = Actor().req("GET", f"/track/{card['_id']}/"
+                              f"{tracking.token_for(uuid.UUID(card['_id']))}").json()
+    assert body["status"] == "completed"
+    assert body["percent"] == 100
+
+
+def test_a_lot_token_does_not_open_an_order(actor):
+    a = actor()
+    bootstrap_admin(a, "Distinct co")
+    ids, proc, tmpl = _line(a)
+    card = _lot(a, tmpl, proc, ids[0])
+    order = _order(a, tmpl)
+    _set_tracking(a.company, True)
+
+    crossed = f"/track/{order['id']}/{tracking.token_for(uuid.UUID(card['_id']))}"
+    assert Actor().req("GET", crossed).status_code == 404

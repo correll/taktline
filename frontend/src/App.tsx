@@ -15,6 +15,7 @@ import { TourManager } from './help/TourManager'
 import { UserManual } from './help/UserManual'
 import { GettingStarted } from './help/GettingStarted'
 import { TipOfTheDay } from './help/TipOfTheDay'
+import { WhatsNew } from './help/WhatsNew'
 import { TaktlineLogo } from './components/TaktlineLogo'
 import { ThemeToggle } from './components/ThemeToggle'
 import { color, font, size, shadow } from './theme/tokens'
@@ -141,6 +142,7 @@ function Shell() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Topbar connection={connection} />
       <OutageBanner />
+      <WhatsNew />
       <PlanBanner />
       <PlanRefusalDialog />
       <LineDoctor />

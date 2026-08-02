@@ -42,6 +42,10 @@ class Card(TimestampedModel):
     description: str = ""
     status: LotStatus = 'idle'
     orderId: Optional[str] = None      # set when released by a production order
+    #: Read-only link for the customer who ordered this lot. Always
+    #: present; the page only answers while the company has customer
+    #: order tracking switched on (Settings → Global).
+    trackingUrl: Optional[str] = None
 
 
 class CardCreate(BaseModel):

@@ -19,6 +19,7 @@ export interface PlatformStatus {
   mrrCents: number
   arrCents: number
   payingCompanies: number
+  compedCompanies: number
   trialingCompanies: number
   atRiskCompanies: number
 }

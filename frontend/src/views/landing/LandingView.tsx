@@ -209,6 +209,14 @@ function Hero() {
 // ─── The thesis ───────────────────────────────────────────────────────────────
 // The one sentence the whole product rests on, given room to land before the
 // page starts explaining how it works.
+//
+// Two beats, and the order is the argument: measure, then optimise, then
+// automate. Automation goes last because it is the destination — and because
+// putting it first is the expensive mistake this product exists to prevent.
+// Automating an unmeasured process buys you a robot doing the wrong thing
+// faster; the shop that maps its flow first knows what the robot should
+// actually do before it signs the order. The same claim is one of the lean tips
+// ("Lean first, then automate"), which is where it came from.
 
 function Thesis() {
   return (
@@ -220,7 +228,8 @@ function Thesis() {
           lineHeight: 1.35, letterSpacing: '-0.01em', fontWeight: 500,
           color: color.textPrimary, textWrap: 'balance',
         }}>
-          You can’t optimize a process nobody has measured.
+          You can’t optimize a process nobody has measured — and you can’t
+          automate one nobody has optimized.
         </p>
       </div>
     </section>
@@ -709,8 +718,22 @@ function Pricing() {
           ))}
         </div>
 
+        {/* Why the number is a fraction of the category, said out loud. A
+            cautious buyer reads "implausibly cheap" as "will they exist in
+            three years?", and the honest answer is a different cost structure
+            rather than a thinner product — which is also the same argument the
+            product makes about factories, applied to us. */}
         <p style={{
-          margin: `${size.sp6} auto 0`, maxWidth: 700, textAlign: 'center',
+          margin: `${size.sp8} auto 0`, maxWidth: 640, textAlign: 'center',
+          fontSize: 15, lineHeight: 1.7, color: color.textSecondary,
+        }}>
+          We run lean ourselves: no sales team, no ad spend, no funnel. You found
+          this through the manual, the book, or somebody who uses it — so what you
+          pay for is the product, not the cost of being sold to.
+        </p>
+
+        <p style={{
+          margin: `${size.sp5} auto 0`, maxWidth: 700, textAlign: 'center',
           fontSize: 13.5, lineHeight: 1.7, color: color.textDim,
         }}>
           Change plan whenever you like — it is pro-rated to the day, so a downgrade two

@@ -4,6 +4,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { money } from '../../api/billing.api'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { useSortable } from './useSortable'
+import { useFilter } from './useFilter'
 import { useAuthStore } from '../../store/auth.store'
 import {
   platformApi, type AuditEntry, type PlatformCompany, type PlatformStatus, type PlatformUser,
@@ -153,6 +154,7 @@ function StatusSection({ status }: { status: PlatformStatus }) {
     ['MRR',                money(status.mrrCents)],
     ['ARR',                money(status.arrCents)],
     ['Paying',             status.payingCompanies],
+    ['Comped',             status.compedCompanies],
     ['On trial',           status.trialingCompanies],
     ['Past due or paused', status.atRiskCompanies],
     ['Live connections',   status.wsConnections],
@@ -284,8 +286,23 @@ function CompaniesSection({ companies, onChanged }: {
 
   // Sorted on the underlying values, never the formatted text — "1.2k" must
   // not sort before "900".
-  const sortable = useSortable(companies, [
+  // Filter first, then sort: sorting a filtered list is what the user means by
+  // "sort the results", and it keeps the sort indicator honest about what is
+  // actually on screen.
+  const filter = useFilter<PlatformCompany>(
+    companies,
+    (c) => [c.name, c.plan, c.planState, c.id],
+    'Filter by name or plan…',
+  )
+  const sortable = useSortable(filter.rows, [
     { label: 'Company',         value: (c) => c.name },
+    // Billing sits next to the name on purpose. It was originally appended
+    // after ten operational columns, which put it past the right edge of a
+    // 900px table — visible only by scrolling, under a pinned actions column.
+    // Plan is the first thing anyone looks at now.
+    { label: 'Plan',            value: (c: PlatformCompany) => c.plan ?? '' },
+    { label: 'MRR',             value: (c: PlatformCompany) => c.mrrCents, descFirst: true },
+    { label: 'Renews',          value: (c: PlatformCompany) => c.renewsAt ?? c.trialEndsAt ?? null },
     { label: 'Active users',    value: (c) => c.activeUsers, descFirst: true },
     { label: 'Stations',        value: (c) => c.stations, descFirst: true },
     { label: 'Lots on floor',   value: (c) => c.cards, descFirst: true },
@@ -293,15 +310,16 @@ function CompaniesSection({ companies, onChanged }: {
     { label: 'API req · month', value: (c) => c.apiRequestsMonth, descFirst: true },
     { label: 'WS msgs · month', value: (c) => c.wsMessagesMonth, descFirst: true },
     { label: 'Last activity',   value: (c) => c.lastActivityAt ?? null, descFirst: true },
-    { label: 'Plan', value: (c: PlatformCompany) => c.plan ?? '' },
-    { label: 'MRR', value: (c: PlatformCompany) => c.mrrCents, descFirst: true },
-    { label: 'Renews', value: (c: PlatformCompany) => c.renewsAt ?? c.trialEndsAt ?? null },
     { label: '', sticky: true },
   ], 'Last activity')
 
   return (
     <section>
-      <SectionTitle>Companies ({companies.length})</SectionTitle>
+      <div style={{ display: 'flex', alignItems: 'center', gap: size.sp4,
+                    flexWrap: 'wrap', marginBottom: size.sp2 }}>
+        <SectionTitle>Companies ({companies.length})</SectionTitle>
+        <div style={{ marginLeft: 'auto' }}>{filter.input}</div>
+      </div>
       {error && <div style={{ fontSize: 12, color: color.statusFault, marginBottom: 6 }}>{error}</div>}
       <div style={{ ...cardListStyle, overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
@@ -310,6 +328,14 @@ function CompaniesSection({ companies, onChanged }: {
             {sortable.rows.map((c) => (
               <tr key={c.id} style={{ borderTop: `1px solid ${color.border}` }}>
                 <td style={{ ...tdStyle, color: color.textPrimary, fontWeight: 500 }}>{c.name}</td>
+                <td style={tdStyle}><PlanCell company={c} /></td>
+                <td style={tdStyle}>{c.mrrCents ? money(c.mrrCents) : '—'}</td>
+                <td style={tdStyle}>
+                  {(c.renewsAt ?? c.trialEndsAt)
+                    ? formatDistanceToNow(new Date(withZ((c.renewsAt ?? c.trialEndsAt)!)),
+                                          { addSuffix: true })
+                    : '—'}
+                </td>
                 <td style={tdStyle} title={`${c.activeUsers} signed in now of ${c.members} members`}>
                   {c.activeUsers} <span style={{ color: color.textDim }}>/ {c.members}</span>
                 </td>
@@ -321,15 +347,7 @@ function CompaniesSection({ companies, onChanged }: {
                 <td style={tdStyle}>
                   {c.lastActivityAt ? formatDistanceToNow(new Date(withZ(c.lastActivityAt)), { addSuffix: true }) : '—'}
                 </td>
-                <td style={tdStyle}>
-                  <PlanCell company={c} />
-                </td>
-                <td style={tdStyle}>{c.mrrCents ? money(c.mrrCents) : '—'}</td>
-                <td style={tdStyle}>
-                  {(c.renewsAt ?? c.trialEndsAt)
-                    ? formatDistanceToNow(new Date(withZ((c.renewsAt ?? c.trialEndsAt)!)), { addSuffix: true })
-                    : '—'}
-                </td>
+
                 {/* Pinned to the right edge. The table is 900px wide inside a
                     box that clips, so on any narrower window the actions sat
                     past the edge and had to be scrolled to — on a scrollbar
@@ -408,7 +426,15 @@ function UsersSection({ users, isOwner, selfId, onChanged }: {
     catch (e) { setError(String(e)) }
   }
 
-  const sortable = useSortable(users, [
+  const filter = useFilter<PlatformUser>(
+    users,
+    // Company names too: "who is at Acme?" is a question support is asked, and
+    // the answer is in a cell rather than in the user's own fields.
+    (u) => [u.email, u.name, u.platformRole, u.id,
+            ...u.companies.map((c) => c.companyName)],
+    'Filter by email, name or company…',
+  )
+  const sortable = useSortable(filter.rows, [
     { label: 'User',      value: (u) => u.email },
     // By how many companies they belong to: the cell lists names, but "which
     // user is in the most companies" is the question this column answers.
@@ -420,7 +446,11 @@ function UsersSection({ users, isOwner, selfId, onChanged }: {
 
   return (
     <section>
-      <SectionTitle>Users ({users.length})</SectionTitle>
+      <div style={{ display: 'flex', alignItems: 'center', gap: size.sp4,
+                    flexWrap: 'wrap', marginBottom: size.sp2 }}>
+        <SectionTitle>Users ({users.length})</SectionTitle>
+        <div style={{ marginLeft: 'auto' }}>{filter.input}</div>
+      </div>
       {error && <div style={{ fontSize: 12, color: color.statusFault, marginBottom: 6 }}>{error}</div>}
       <div style={cardListStyle}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>

@@ -62,12 +62,19 @@ async def platform_status(user: User = Depends(require_platform_staff),
     # Revenue, derived the same way the gate derives entitlement, so the number
     # on the dashboard and the service the customer receives cannot disagree.
     sub_rows = (await session.execute(select(Subscription))).scalars().all()
-    mrr_cents = paying = trialing = at_risk = 0
+    mrr_cents = paying = trialing = comped = at_risk = 0
     for row in sub_rows:
         ent = entitlements._derive(str(row.companyId), row)
-        if row.planCode in plans.PURCHASABLE and ent.state == entitlements.OK:
-            mrr_cents += plans.monthly_cents(row.planCode, row.onPremise)
+        on_paid_plan = row.planCode in plans.PURCHASABLE and ent.state == entitlements.OK
+        if on_paid_plan and row.stripeSubscriptionId:
+            mrr_cents += plans.monthly_cents(row.planCode, row.onPremise,
+                                             row.connectorAddons or 0)
             paying += 1
+        elif on_paid_plan:
+            # A paid plan with no Stripe subscription: staff granted it, or the
+            # billing migration grandfathered them. Real service, no revenue —
+            # and worth its own number rather than being hidden inside MRR.
+            comped += 1
         elif row.planCode == plans.TRIAL and ent.state == entitlements.OK:
             trialing += 1
         if ent.state in (entitlements.READ_ONLY, entitlements.LOCKED):
@@ -106,6 +113,7 @@ async def platform_status(user: User = Depends(require_platform_staff),
         "mrrCents": mrr_cents,
         "arrCents": mrr_cents * 12,
         "payingCompanies": paying,
+        "compedCompanies": comped,
         "trialingCompanies": trialing,
         "atRiskCompanies": at_risk,
     }
@@ -225,6 +233,16 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
     subs = {r.companyId: r for r in (await session.execute(
         select(Subscription))).scalars().all()}
 
+    def _collected(row, ent) -> bool:
+        return (ent.state == entitlements.OK
+                and row.planCode in plans.PURCHASABLE
+                and bool(row.stripeSubscriptionId))
+
+    def _collected_cents(row, ent) -> int:
+        return (plans.monthly_cents(row.planCode, row.onPremise,
+                                    row.connectorAddons or 0)
+                if _collected(row, ent) else 0)
+
     def billing(cid):
         row = subs.get(cid)
         if row is None:
@@ -234,12 +252,13 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
         return {
             "plan": ent.plan.code,
             "planState": ent.state,
-            # Only money actually being collected counts: a trial, a comped
-            # account and a locked one are all $0 of revenue, and a dashboard
-            # that adds them up tells you a comfortable lie.
-            "mrrCents": (plans.monthly_cents(row.planCode, row.onPremise)
-                         if ent.state == entitlements.OK
-                         and row.planCode in plans.PURCHASABLE else 0),
+            # Only money actually being collected. A trial, a locked account
+            # and a **comped** one are all $0 of revenue — and comped is the one
+            # that catches you out, because it wears a paid plan code. Every
+            # company grandfathered by the billing migration is on pro_100 with
+            # no Stripe subscription; counting those put $1,972 of imaginary MRR
+            # on this dashboard the first time it was opened.
+            "mrrCents": _collected_cents(row, ent),
             "renewsAt": row.currentPeriodEnd,
             "trialEndsAt": row.trialEndsAt,
         }

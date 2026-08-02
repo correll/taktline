@@ -44,6 +44,7 @@ const TermsView  = lazyView(() => import('./views/landing/TermsView'))
 const ManualView         = lazyView(() => import('./views/landing/ManualView'))
 const ShareView          = lazyView(() => import('./views/share/ShareView'))
 const TrialStopView      = lazyView(() => import('./views/billing/TrialStopView'))
+const TrackView          = lazyView(() => import('./views/tracking/TrackView'))
 
 /** Publish the *visual* viewport height as --tk-vvh.
  *
@@ -79,6 +80,9 @@ export default function App() {
             {/* The opt-out link in every trial email. Public, and it
                 describes before it destroys — see TrialStopView. */}
             <Route path="/trial/stop"      element={<TrialStopView />} />
+            {/* A shop's own customer following their order. Public, and
+                server-rendered for link previews — routers/tracking.py. */}
+            <Route path="/o/:order/:token" element={<TrackView />} />
               <Route path="/terms"    element={<TermsView />} />
             <Route path="/login"           element={<LoginView />} />
             <Route path="/signup"          element={<SignupView />} />

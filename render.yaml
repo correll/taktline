@@ -30,6 +30,13 @@ services:
     region: oregon
     healthCheckPath: /health
 
+    # Migrations run ONCE, here, before the new instance is started and before
+    # any traffic moves. If this fails the deploy aborts and the currently
+    # running version keeps serving — which is the whole point. Running
+    # `alembic upgrade head` from the container's start command instead means a
+    # bad migration takes the service down and then crash-loops re-running it.
+    preDeployCommand: "alembic upgrade head"
+
     # ONE instance, deliberately. The WebSocket connection registry, the
     # per-IP rate limiter and the usage meter all live in process memory, so a
     # second instance would serve boards that never receive another instance's
@@ -93,3 +100,54 @@ services:
       # SMTP_* trio and the host/user are filled in for you.
       - key: SENDGRID_API_KEY
         sync: false
+
+# ── Staging ───────────────────────────────────────────────────────────────────
+# Uncomment both blocks to get a second, identical deployment tracking a
+# `staging` branch against its own database, so a release can be exercised
+# before it takes customer traffic. See "Deploying without downtime" in
+# DEPLOY.md. It costs a second instance and a second database — delete it again
+# when you are not using it.
+#
+# Two things it must NOT share with production: the database (obviously) and
+# STRIPE_SECRET_KEY. Point staging at Stripe *test* keys, or a test order will
+# charge a real card.
+#
+#  - name: taktline-staging-db
+#    databaseName: taktline_staging
+#    user: taktline
+#    plan: basic-256mb
+#    ipAllowList: []
+#
+#  - type: web
+#    name: taktline-staging
+#    runtime: docker
+#    dockerfilePath: ./Dockerfile
+#    dockerContext: .
+#    plan: starter
+#    region: oregon
+#    branch: staging
+#    healthCheckPath: /health
+#    numInstances: 1
+#    preDeployCommand: "alembic upgrade head"
+#    envVars:
+#      - key: DATABASE_URL
+#        fromDatabase:
+#          name: taktline-staging-db
+#          property: connectionString
+#      - key: TAKTLINE_DEV
+#        value: "0"
+#      - key: COOKIE_SECURE
+#        value: "1"
+#      - key: COOKIE_SAMESITE
+#        value: lax
+#      # Must be the staging host, or the links in its emails point at
+#      # production and a test invite lands on the real site.
+#      - key: FRONTEND_BASE_URL
+#        value: https://taktline-staging.onrender.com
+#      - key: PLATFORM_OWNER_EMAILS
+#        sync: false
+#      # Stripe TEST keys. Never the live ones.
+#      - key: STRIPE_SECRET_KEY
+#        sync: false
+#      - key: STRIPE_WEBHOOK_SECRET
+#        sync: false

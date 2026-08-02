@@ -193,9 +193,14 @@ Scaling out needs a cross-instance relay first (Postgres `LISTEN/NOTIFY` fits:
 no new infrastructure, and it delivers only on commit) plus a shared store for
 the rate limiter.
 
-**Deploys are downtime.** The service is always on, but with one instance every
-deploy costs the ~40 s boot while the new container migrates and starts. Deploy
-outside shift hours once people depend on it.
+**Deploys drop websockets, not requests.** Render brings the new instance up,
+waits for `/health`, moves traffic, and only then stops the old one — so HTTP
+requests are not interrupted even at one instance. What does break is the open
+WebSocket on every tablet, because the process holding it goes away: the boards
+show the amber "reconnecting" strip and come back on their own within a few
+seconds (`api/ws.ts` retries with backoff). Nothing is lost, because the client
+never queues writes. See **Deploying without downtime** below for the part that
+is *not* automatic — the database.
 
 **Password hashing is the CPU floor.** argon2id is deliberately expensive and is
 by far the heaviest thing the app does — everything else answers in ~90 ms.
@@ -205,6 +210,95 @@ login and 27 s for eight tablets signing in at once; tuned, that is 0.2 s and
 6 s. On a larger instance raise `ARGON2_TIME_COST` / `ARGON2_MEMORY_COST_KIB` /
 `ARGON2_PARALLELISM` — hashes record the cost they were made with, so existing
 passwords keep working and migrate to the new cost on their next login.
+
+---
+
+## Deploying without downtime
+
+### What Render already handles
+
+A web service with a `healthCheckPath` gets a zero-downtime deploy by default,
+and `numInstances: 1` does not change that: Render starts the new instance,
+waits for `/health` to answer, moves traffic, and only then stops the old one.
+The two versions overlap for a few seconds by design.
+
+That overlap is the thing to design around, and it is why migrations do **not**
+run from the container's start command. They run once, before the new instance
+starts, from `preDeployCommand` in `render.yaml`. Two consequences worth having:
+a failed migration **aborts the deploy** while the current version carries on
+serving, instead of taking the container down and then crash-looping on the same
+failure; and a restart (an out-of-memory kill, a manual restart) no longer
+re-runs migrations as a side effect of coming back up.
+
+### The part that is not automatic: the schema
+
+For the seconds between the migration finishing and the last old instance
+stopping, **the previous release's code is running against the new schema.**
+That is not hypothetical — it happened during this work: a `NOT NULL` column was
+added without a database-side default, and every insert from the still-running
+old build failed until it went away.
+
+So every migration has to be **expand/contract**: the schema is only ever
+widened in the deploy that needs it, and narrowed a deploy later.
+
+| Change | Safe in one deploy? | What to do |
+|---|---|---|
+| Add a table | yes | — |
+| Add a nullable column | yes | — |
+| Add a `NOT NULL` column | **only with `server_default`** | old code omits it from `INSERT`; keep the default in the model too, or the next `--autogenerate` will drop it |
+| Drop a column | no | deploy 1: stop reading and writing it. deploy 2: drop it |
+| Rename a column | no | add the new one, write both, backfill, ship; then stop writing the old one, ship; then drop it |
+| Change a type | usually no | add a new column and migrate across, as with a rename |
+| Add an index on a large table | needs care | `CREATE INDEX CONCURRENTLY` — a plain `CREATE INDEX` holds a write lock for the duration |
+| Add a `CHECK` / `FOREIGN KEY` | needs care | add `NOT VALID`, then `VALIDATE CONSTRAINT` in a later migration |
+
+`CONCURRENTLY` cannot run inside a transaction, which Alembic opens by default:
+
+```python
+def upgrade() -> None:
+    with op.get_context().autocommit_block():
+        op.create_index("ix_cards_company_lot", "cards", ["companyId", "lotNum"],
+                        postgresql_concurrently=True)
+```
+
+### Testing the new version before it takes traffic
+
+Add a staging service and a staging database to `render.yaml` (both are in
+there, commented, under `# ── Staging ──`). It tracks a `staging` branch and has
+its own database, so nothing you do there can reach a customer.
+
+```bash
+git switch -c staging          # once
+git push -u origin staging     # Render builds and deploys it
+# … exercise it at https://taktline-staging.onrender.com …
+git switch main && git merge --ff-only staging && git push
+```
+
+That is the whole promotion: production auto-deploys from `main`, so a
+fast-forward merge is the switch. The image is rebuilt rather than moved, which
+is worth knowing — it is the same commit, not the same artifact, so a build that
+depends on the network can in principle differ. Pin what matters (the
+`requirements.txt` and `package-lock.json` are both exact).
+
+If you would rather promote deliberately instead of on push, set
+`autoDeploy: false` on the production service and press **Deploy** in the
+dashboard when staging looks right.
+
+### Rolling back
+
+Render keeps previous deploys: **Rollback** in the dashboard puts the old image
+back in about the same time a deploy takes. What it does *not* roll back is the
+database — which is the other half of why migrations are expand/contract. A
+migration that only widened the schema is safe to leave in place while the code
+goes back a version; one that dropped or renamed something is not, and getting
+out of that needs a restore. Every migration in this repo has a working
+`downgrade` (`tests/test_migrations.py` runs them on a scratch database), but a
+downgrade that drops a column drops the data in it.
+
+### A deploy checklist that fits on one line
+
+Migrate forward-compatibly, test on staging, merge to `main`, watch `/health`,
+expect the boards to blink amber for a few seconds.
 
 ---
 
@@ -221,8 +315,13 @@ docker run -p 8000:8000 \
   -e DATABASE_URL=postgresql://user:pass@host/db \
   -e TAKTLINE_DEV=0 \
   -e FRONTEND_BASE_URL=https://your-host \
+  -e RUN_MIGRATIONS=1 \
   taktline
 ```
+
+`RUN_MIGRATIONS=1` makes the container migrate on start. On Render that is done
+by `preDeployCommand` instead (see below), so the variable is left unset there —
+but on a single box with no pre-deploy hook it is what you want.
 
 To use an external database with Render, delete the `databases:` block from
 `render.yaml` and set `DATABASE_URL` to `sync: false`.

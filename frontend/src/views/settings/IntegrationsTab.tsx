@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { apiKeysApi, ordersApi, templatesApi, type ApiKey, type ProductionOrder, type OutboxEvent, type TemplateRef, type ScopeInfo, type ImportResult } from '../../api/integrations.api'
+import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 import { color, font, size } from '../../theme/tokens'
 import IntegrationLocations from './IntegrationLocations'
 
@@ -19,9 +20,43 @@ function Section({ title, children, right }: { title: string; children: React.Re
   )
 }
 
+/** The link a shop gives the customer who placed this order.
+ *
+ *  Shown as disabled rather than hidden when tracking is off: an operator
+ *  looking for "where do I get the tracking link" needs to find out that the
+ *  switch exists, and a control that is simply absent teaches them nothing. */
+function TrackingLink({ order, enabled }: { order: ProductionOrder; enabled: boolean }) {
+  const [copied, setCopied] = useState(false)
+  if (!order.trackingUrl) return <span style={{ color: color.textDim }}>—</span>
+  if (!enabled) {
+    return (
+      <span style={{ fontSize: 11, color: color.textDim }}
+            title="Switch on customer order tracking in Settings → Global">
+        off
+      </span>
+    )
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(order.trackingUrl!)
+      setCopied(true); setTimeout(() => setCopied(false), 1800)
+    } catch { window.prompt('Copy this link', order.trackingUrl!) }
+  }
+  return (
+    <button onClick={copy} style={{
+      background: 'none', border: `1px solid ${color.border}`, borderRadius: size.radius,
+      color: copied ? color.statusRunning : color.textSecondary,
+      fontSize: 11, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit',
+    }}>
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
 export default function IntegrationsTab() {
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [orders, setOrders] = useState<ProductionOrder[]>([])
+  const trackingOn = useGlobalSettingsStore((s) => s.settings.orderTracking)
   const [events, setEvents] = useState<OutboxEvent[]>([])
   const [templates, setTemplates] = useState<TemplateRef[]>([])
   const [scopeCatalog, setScopeCatalog] = useState<ScopeInfo[]>([])
@@ -169,7 +204,7 @@ export default function IntegrationsTab() {
         {orders.length === 0 ? <div style={{ color: color.textDim, fontSize: 13 }}>No production orders yet.</div> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr style={{ borderBottom: `1px solid ${color.border}` }}>
-              <th style={head}>Source</th><th style={head}>Ext. ref</th><th style={head}>Qty</th><th style={head}>Done</th><th style={head}>Status</th>
+              <th style={head}>Source</th><th style={head}>Ext. ref</th><th style={head}>Qty</th><th style={head}>Done</th><th style={head}>Status</th><th style={head}>Customer link</th>
             </tr></thead>
             <tbody>{orders.slice(0, 12).map((o) => (
               <tr key={o.id} style={{ borderBottom: `1px solid ${color.border}` }}>
@@ -178,6 +213,7 @@ export default function IntegrationsTab() {
                 <td style={cell}>{o.quantity}</td>
                 <td style={cell}>{o.quantityDone}</td>
                 <td style={{ ...cell }}><StatusPill s={o.status} /></td>
+                <td style={cell}><TrackingLink order={o} enabled={trackingOn} /></td>
               </tr>
             ))}</tbody>
           </table>

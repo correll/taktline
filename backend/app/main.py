@@ -27,7 +27,7 @@ from .routers import (
     analysis, undo,
     admin, api_keys, auth, cards, companies, global_settings, invitations, lot_templates,
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
-    billing, client_errors, map_io, share, stations, stats,
+    billing, client_errors, map_io, share, stations, stats, tracking,
 )
 from .core import entitlements, lifecycle, sandbox_gc, usage
 from .core.traffic import traffic
@@ -164,6 +164,10 @@ app.include_router(billing.router)
 # /i/<id> falls through to index.html and every social preview shows the
 # generic landing card instead of the item.
 app.include_router(share.router)
+# Public order tracking. Before the SPA catch-all for the same reason as
+# /i/<slug>: these links get pasted into email and chat, which fetch the
+# URL for a preview before any browser runs.
+app.include_router(tracking.router)
 
 
 # ── Traffic counter (feeds the platform dashboard) ────────────────────────────

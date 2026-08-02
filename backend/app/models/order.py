@@ -78,6 +78,10 @@ class OrderPublic(BaseModel):
     attributes: Dict[str, Any] = {}
     createdAt: datetime
     updatedAt: datetime
+    #: The read-only link to give this order's customer. Present on every order
+    #: (the token is derived, not issued), but the page only answers while the
+    #: company has tracking switched on.
+    trackingUrl: Optional[str] = None
 
 
 class OutboxEvent(BaseModel):

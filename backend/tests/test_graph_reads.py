@@ -61,6 +61,12 @@ ALLOWED = {
     "core/line_snapshot.py": {
         "build": "hands rows to core.analysis, which filters boundary links itself",
     },
+    "core/tracking.py": {
+        "_ordered_stations": "topologically orders one process's stations for a "
+                             "customer-facing progress bar; filters boundary "
+                             "links itself (an ERP node is not a step and would "
+                             "inflate the denominator)",
+    },
     "core/lifecycle.py": {
         "_facts": "counts rows for an email — 'you have drawn 3 routes' is about "
                   "what they built, not about the shape of the graph",

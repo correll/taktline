@@ -18,6 +18,8 @@ class GlobalSettings(BaseModel):
     workHours: List[List[int]] = Field(default_factory=default_work_hours)
     # Station-level pace feedback (against measured cycle time) in the Operator view. Never per-operator.
     showCycleArc: bool = False
+    orderTracking: bool = False
+    orderTrackingSteps: bool = True
 
     model_config = {"populate_by_name": True}
 
@@ -26,6 +28,8 @@ class GlobalSettingsUpdate(BaseModel):
     timezone:  Optional[str] = None
     workHours: Optional[List[List[int]]] = None
     showCycleArc: Optional[bool] = None
+    orderTracking: Optional[bool] = None
+    orderTrackingSteps: Optional[bool] = None
 
     @field_validator("workHours")
     @classmethod

@@ -15,6 +15,8 @@ export default function GlobalTab() {
   const [timezone, setTimezone] = useState(settings.timezone)
   const [grid,     setGrid]     = useState<number[][]>(() => validGrid(settings.workHours))
   const [taktArc,  setCycleArc]  = useState(settings.showCycleArc)
+  const [tracking, setTracking]  = useState(settings.orderTracking)
+  const [trackSteps, setTrackSteps] = useState(settings.orderTrackingSteps)
   const [saved,    setSaved]    = useState(false)
   const [error,    setError]    = useState<string | null>(null)
 
@@ -22,11 +24,14 @@ export default function GlobalTab() {
   useEffect(() => { setTimezone(settings.timezone) }, [settings.timezone])
   useEffect(() => { setGrid(validGrid(settings.workHours)) }, [settings.workHours])
   useEffect(() => { setCycleArc(settings.showCycleArc) }, [settings.showCycleArc])
+  useEffect(() => { setTracking(settings.orderTracking) }, [settings.orderTracking])
+  useEffect(() => { setTrackSteps(settings.orderTrackingSteps) }, [settings.orderTrackingSteps])
 
   const handleSave = async () => {
     setError(null); setSaved(false)
     try {
-      await update({ timezone, workHours: grid, showCycleArc: taktArc })
+      await update({ timezone, workHours: grid, showCycleArc: taktArc,
+                     orderTracking: tracking, orderTrackingSteps: trackSteps })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
     } catch (e) { setError(String(e)) }
   }
@@ -75,6 +80,46 @@ export default function GlobalTab() {
               work is the line between useful feedback and monitoring, so switching it on is a
               deliberate local decision (in much of the EU, one for a works council). Stations with
               no measured cycle time show no arc.
+            </span>
+          </label>
+        </div>
+
+        {/* Customer order tracking — opt-in, because it publishes something. */}
+        <div>
+          <FieldLabel>CUSTOMER ORDER TRACKING</FieldLabel>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: size.sp3,
+                          marginTop: 6, cursor: 'pointer', maxWidth: 620 }}>
+            <input
+              type="checkbox" checked={tracking} disabled={loading}
+              onChange={(e) => setTracking(e.target.checked)}
+              style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.55 }}>
+              Give every production order a <b style={{ color: color.textSecondary }}>read-only
+              link</b> you can send to the customer who placed it. They see that order&rsquo;s
+              progress — nothing else, no login, and no way to reach anything of yours.
+              <br />
+              <b style={{ color: color.textSecondary }}>Off by default.</b> The link is
+              unguessable and switching this off stops every one of them immediately; switching
+              it back on restores the same links, so a customer&rsquo;s bookmark keeps working.
+              Copy a link from the order list in Settings &rarr; Integrations.
+            </span>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: size.sp3,
+                          marginTop: size.sp3, marginLeft: size.sp6,
+                          cursor: tracking ? 'pointer' : 'not-allowed',
+                          opacity: tracking ? 1 : 0.5, maxWidth: 580 }}>
+            <input
+              type="checkbox" checked={trackSteps} disabled={loading || !tracking}
+              onChange={(e) => setTrackSteps(e.target.checked)}
+              style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }}
+            />
+            <span style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.55 }}>
+              Name the steps on that page (&ldquo;Saw, Weld, Paint, Pack — here now&rdquo;).
+              Turn it off to show only a percentage: your process is your business, and plenty
+              of shops will happily say &ldquo;60% done&rdquo; without telling a customer which
+              operations they run and which they subcontract.
             </span>
           </label>
         </div>

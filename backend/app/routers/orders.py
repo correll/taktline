@@ -21,6 +21,8 @@ from ..models.common import utcnow
 from ..models.order import CancelByRef, OrderCreate, OrderPublic, OutboxEvent
 from .cards import _record_event
 from .merge import _incoming_routes, _leaf_sources, _gen_lot_code
+from ..core import tracking
+from ..core.config import settings
 from ..core.entitlements import works_read_only
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -33,6 +35,8 @@ def _to_order(o: OrderRow) -> OrderPublic:
         mergeStationId=str(o.mergeStationId) if o.mergeStationId else None,
         quantity=o.quantity, quantityDone=o.quantityDone, status=o.status, note=o.note,
         attributes=o.attributes or {}, createdAt=o.createdAt, updatedAt=o.updatedAt,
+        trackingUrl=(f"{settings.frontend_base_url.rstrip('/')}"
+                     f"/o/{o.id}/{tracking.token_for(o.id)}"),
     )
 
 

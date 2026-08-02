@@ -555,6 +555,16 @@ class GlobalSettings(Base):
     # switching it on has to be a deliberate, local decision.
     showCycleArc: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                               server_default=text("false"), default=False)
+    # Let a customer follow their own order on a public link (core/tracking.py).
+    # Off by default: publishing anything about production is the shop's
+    # decision, not one we make for them.
+    orderTracking: Mapped[bool] = mapped_column(Boolean, nullable=False,
+                                                server_default=text("false"), default=False)
+    # Whether that page names the steps. Separate, because a shop's process is
+    # its own business and plenty will happily say "60% done" while not wanting
+    # to tell a customer they subcontract the plating.
+    orderTrackingSteps: Mapped[bool] = mapped_column(Boolean, nullable=False,
+                                                     server_default=text("true"), default=True)
 
 
 # ─── ERP / production orders ────────────────────────────────────────────────────
@@ -748,7 +758,16 @@ class Subscription(Base):
     onPremise: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     #: Managed connectors bought beyond what the plan includes, billed as a
     #: quantity line on the Stripe subscription.
-    connectorAddons: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #:
+    #: `server_default` is not decoration. Render deploys with overlap — the new
+    #: container runs migrations and passes its health check while the previous
+    #: one is still serving — so for a few seconds instances that predate this
+    #: column are still inserting subscriptions. Without a database-side default
+    #: every one of those is a NotNullViolation. Declaring it here (rather than
+    #: only in the migration) is also what stops the next `--autogenerate` from
+    #: helpfully dropping it again.
+    connectorAddons: Mapped[int] = mapped_column(Integer, nullable=False,
+                                                 server_default=text("0"), default=0)
 
     # Stripe's own subscription status, verbatim: trialing / active / past_due /
     # incomplete / canceled / unpaid. Null until they buy something.

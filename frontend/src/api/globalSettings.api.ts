@@ -8,6 +8,8 @@ export interface GlobalSettingsData {
   /** Show operators a progress arc against their station's expected cycle time.
    *  Off unless a company turns it on — see the Operator view for why. */
   showCycleArc: boolean
+  orderTracking: boolean
+  orderTrackingSteps: boolean
 }
 
 export const FULL_HOUR = 0b1111   // all four quarters open

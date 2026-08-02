@@ -384,22 +384,37 @@ def _audit_deleted(session, company_id, name: str) -> None:
 # ─── The loop ────────────────────────────────────────────────────────────────
 
 async def _loop() -> None:
-    started = 0.0
+    # Seconds this process has actually been looping. Incremented AFTER the
+    # sleep, which is the whole point: an earlier version added the interval
+    # before the first deletion check, so `3600 >= 600` was true on the very
+    # first pass and a redeploy deleted expired trials immediately — the exact
+    # thing the delay exists to prevent. Found by watching a company vanish
+    # seconds after a restart, not by a test, which is why `uptime_before_delete`
+    # is now a parameter the tests can assert on.
+    elapsed = 0.0
     while True:
         try:
             sent = await send_due_emails()
             if sent:
                 print(f"[lifecycle] sent {sent} trial email(s)")
-            started += SWEEP_INTERVAL_SECONDS
-            # Deletion never runs in the first minutes after a boot: a redeploy
-            # would otherwise fire a mass delete with nobody watching.
-            if started >= _DELETE_START_DELAY:
+            if elapsed >= _DELETE_START_DELAY:
                 gone = await delete_expired_trials()
                 if gone:
                     print(f"[lifecycle] deleted {gone} expired trial(s)")
         except Exception as exc:                   # noqa: BLE001 — never kill the app
             print(f"[lifecycle] sweep failed: {exc}")
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
+        elapsed += SWEEP_INTERVAL_SECONDS
+
+
+def deletion_is_due(elapsed_seconds: float) -> bool:
+    """Whether a process that has been up this long may delete anything.
+
+    Extracted so the boot-safety rule is testable without running the loop —
+    the bug it encodes shipped precisely because the rule lived inside a
+    `while True` that nothing exercised.
+    """
+    return elapsed_seconds >= _DELETE_START_DELAY
 
 
 def start() -> None:

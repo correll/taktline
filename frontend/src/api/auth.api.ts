@@ -34,6 +34,15 @@ export interface CompanyMembership {
   timezone: string
   impersonated?: boolean               // platform staff acting via a support grant
   impersonationExpiresAt?: string | null
+  // Billing state, carried on /auth/me so the app knows from its first render
+  // which tenants are on trial, near a ceiling, or locked. UX only — the
+  // server refuses independently, and this can be a stale offline snapshot.
+  plan: string
+  planLabel: string
+  planState: 'ok' | 'read_only' | 'locked'
+  stationLimit: number | null
+  integrations: boolean
+  trialEndsAt: string | null
 }
 
 export interface MeResponse {

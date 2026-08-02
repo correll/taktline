@@ -210,6 +210,23 @@ def _origin_allowed(origin: str, websocket: WebSocket) -> bool:
     return bool(host) and origin in (f"https://{host}", f"http://{host}")
 
 
+async def _reject(websocket: WebSocket, code: int) -> None:
+    """Close with a code the browser can actually read.
+
+    A `close()` before `accept()` never delivers its code — the handshake is
+    refused at the HTTP layer and the client sees 1006 (abnormal closure),
+    which is indistinguishable from the server having fallen over. So the
+    client kept retrying and showing "connection lost" for what were really
+    authorisation and billing decisions. Accepting first costs one round trip
+    and makes the reason legible.
+    """
+    try:
+        await websocket.accept()
+    except Exception:                      # already closed by the peer
+        return
+    await websocket.close(code=code)
+
+
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket):
     """Authenticated, company-scoped event stream.
@@ -223,13 +240,13 @@ async def ws_events(websocket: WebSocket):
     # (no Origin header) are permitted.
     origin = websocket.headers.get("origin")
     if origin is not None and not _origin_allowed(origin, websocket):
-        await websocket.close(code=4403)
+        await _reject(websocket, 4403)
         return
 
     raw = websocket.cookies.get(settings.session_cookie_name)
     company_uuid = parse_uuid(websocket.query_params.get("companyId"))
     if not raw or company_uuid is None:
-        await websocket.close(code=4401)
+        await _reject(websocket, 4401)
         return
 
     async with SessionLocal() as session:
@@ -237,7 +254,7 @@ async def ws_events(websocket: WebSocket):
             select(AuthSession).where(AuthSession.tokenHash == hash_token(raw))
         )).scalars().first()
         if sess_row is None:
-            await websocket.close(code=4401)
+            await _reject(websocket, 4401)
             return
         # Absolute expiry AND the idle window. `get_current_user` checks both
         # (deps/auth.py:104-107); this path only ever checked the first, so a
@@ -248,7 +265,7 @@ async def ws_events(websocket: WebSocket):
                     else settings.session_idle_ttl)
         if (ws_user is None or sess_row.expiresAt <= utcnow()
                 or sess_row.lastSeenAt + timedelta(seconds=idle_ttl) <= utcnow()):
-            await websocket.close(code=4401)
+            await _reject(websocket, 4401)
             return
         membership = (await session.execute(
             select(Membership).where(
@@ -267,7 +284,7 @@ async def ws_events(websocket: WebSocket):
                 )
             )).scalars().first()
             if grant is None:
-                await websocket.close(code=4403)
+                await _reject(websocket, 4403)
                 return
 
         # A locked account loses the live board too. Read-only keeps it: the
@@ -275,7 +292,7 @@ async def ws_events(websocket: WebSocket):
         # exactly what the grace period is for.
         ent = await entitlements.resolve(session, company_uuid, user=ws_user)
         if ent.blocked:
-            await websocket.close(code=4402)
+            await _reject(websocket, 4402)
             return
 
     await ws_manager.connect(websocket, company_uuid)

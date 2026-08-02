@@ -38,6 +38,8 @@ client.interceptors.request.use((config) => {
 // distinction lets the app treat "server unreachable" differently from "denied".
 export class ApiError extends Error {
   status?: number
+  /** Present on 402/403 refusals that carry a plan reason. */
+  refusal?: PlanRefusal
   toString() { return this.message }
 }
 
@@ -47,16 +49,55 @@ export function isNetworkError(e: unknown): boolean {
   return e instanceof ApiError && (e.status === undefined || [502, 503, 504].includes(e.status))
 }
 
+/** The machine-readable body the backend attaches to a refusal.
+ *
+ *  402 (subscription) and 403 (plan limit) both carry one. It exists so the
+ *  client can offer a way forward — "upgrade to Professional", "remove three
+ *  stations" — instead of surfacing a sentence in a toast and leaving the user
+ *  to work out what to do.
+ */
+export interface PlanRefusal {
+  message: string
+  code: 'subscription_required' | 'read_only' | 'plan_limit' | 'over_limit_for_plan'
+  plan?: string
+  resource?: string
+  limit?: number
+  used?: number
+  reason?: string
+  graceEndsAt?: string | null
+}
+
+function refusalOf(data: unknown): PlanRefusal | undefined {
+  const detail = (data as { detail?: unknown })?.detail
+  if (detail && typeof detail === 'object' && 'code' in (detail as object)) {
+    return detail as PlanRefusal
+  }
+  return undefined
+}
+
 // A 401 signals a lost/expired session — broadcast it so the auth provider can
 // redirect to /login (it ignores the expected bootstrap 401).
 client.interceptors.response.use(
   (res) => res.data,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status
+    if (status === 401) {
       window.dispatchEvent(new CustomEvent('taktline:unauthorized'))
     }
-    const apiErr = new ApiError(String(err.response?.data?.detail ?? err.message))
-    apiErr.status = err.response?.status
+    const refusal = refusalOf(err.response?.data)
+    if (refusal && (status === 402 || status === 403)) {
+      // Broadcast rather than redirect. A 402 arrives most often from a write
+      // the user just attempted, and bouncing them out of the view they were
+      // working in loses their place for no gain — the banner and the upgrade
+      // dialog can both be raised from here.
+      window.dispatchEvent(new CustomEvent('taktline:plan-refusal', { detail: refusal }))
+    }
+    const detail = err.response?.data?.detail
+    const message = refusal?.message
+      ?? (typeof detail === 'string' ? detail : err.message)
+    const apiErr = new ApiError(String(message))
+    apiErr.status = status
+    apiErr.refusal = refusal
     return Promise.reject(apiErr)
   }
 )

@@ -363,7 +363,15 @@ export default function MapCanvas({
         position: { x: Math.round(w.x - half), y: Math.round(w.y - half), width: 60, height: 60 },
       } as Omit<Station, '_id' | 'createdAt' | 'updatedAt'>)
         .then((s) => setEditStation(s._id))   // open the edit modal to name it right away
-        .catch(() => {})
+        // Never swallow this. The refusal that matters here is a plan ceiling,
+        // and `.catch(() => {})` turned it into a click that did nothing at
+        // all — the exact failure this file argues against elsewhere. The
+        // client raises the plan dialog for a 402/403; anything else deserves
+        // a line in the console rather than silence.
+        .catch((err) => {
+          if (err?.refusal) return          // PlanRefusalDialog has it
+          console.error('could not create station', err)
+        })
       return
     }
     if (t === 'route') {

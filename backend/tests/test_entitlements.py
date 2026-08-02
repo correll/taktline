@@ -428,3 +428,46 @@ def test_the_sweep_actually_looked_at_something():
         if methods and methods - {"GET"} and not any(path.startswith(p) for p in UNGATED):
             checked += 1
     assert checked > 30, f"the sweep only found {checked} write endpoints"
+
+
+# ─── The WebSocket ───────────────────────────────────────────────────────────
+
+def test_the_socket_says_why_it_refused(billing, actor):
+    """A rejected handshake must carry a code the browser can read.
+
+    `close()` before `accept()` never delivers one — the handshake is refused at
+    the HTTP layer and the client sees 1006, which is indistinguishable from the
+    server having fallen over. So a locked account was told "connection lost —
+    reconnecting automatically", in an amber banner, directly above a second
+    banner correctly saying the account was paused. Two stories, one of them
+    false, and the client retried forever.
+    """
+    from starlette.websockets import WebSocketDisconnect
+
+    a = actor()
+    bootstrap_admin(a, "Socket co")
+    _set_plan(a.company, planCode="trial", trialEndsAt=utcnow() - timedelta(days=1))
+
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with a.tc.websocket_connect(f"/ws/events?companyId={a.company}") as ws:
+            ws.receive_text()
+    assert excinfo.value.code == 4402, "locked should close 4402, not a generic failure"
+
+
+def test_a_healthy_account_still_gets_its_socket(billing, actor):
+    """Guard the guard: a refusal test passes just as well against a socket
+    that never works at all."""
+    a = actor()
+    bootstrap_admin(a, "Live socket co")
+    with a.tc.websocket_connect(f"/ws/events?companyId={a.company}") as ws:
+        assert ws is not None
+
+
+def test_read_only_keeps_the_live_board(billing, actor):
+    """Watching your own floor is exactly what the grace period is for."""
+    a = actor()
+    bootstrap_admin(a, "Watching co")
+    _set_plan(a.company, planCode="basic_50", stripeStatus="past_due",
+              graceEndsAt=utcnow() + timedelta(days=2))
+    with a.tc.websocket_connect(f"/ws/events?companyId={a.company}") as ws:
+        assert ws is not None

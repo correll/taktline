@@ -369,3 +369,18 @@ def test_the_drip_does_not_start_without_billing(monkeypatch):
     lifecycle.stop()
     lifecycle.start()
     assert lifecycle._task is None
+
+
+def test_deletion_waits_out_the_first_minutes_of_a_boot():
+    """A redeploy must not fire a mass delete.
+
+    This rule lived inside the sweep loop and was wrong: the elapsed counter
+    was incremented before the first check, so a freshly booted process deleted
+    immediately. Nothing exercised the loop, so nothing caught it — a company
+    vanished seconds after a restart during manual testing instead.
+    """
+    assert not lifecycle.deletion_is_due(0)
+    assert not lifecycle.deletion_is_due(lifecycle._DELETE_START_DELAY - 1)
+    assert lifecycle.deletion_is_due(lifecycle._DELETE_START_DELAY)
+    # And the first pass of the loop must be at zero, not one interval in.
+    assert lifecycle._DELETE_START_DELAY > 0

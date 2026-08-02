@@ -61,10 +61,15 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
         .where(Membership.userId == user.id)
         .order_by(Company.name)
     )).all()
-    companies = [
-        CompanyMembership(id=str(c.id), name=c.name, slug=c.slug, role=m.role, timezone=c.timezone)
-        for (m, c) in rows
-    ]
+    companies = []
+    for (m, c) in rows:
+        ent = await entitlements.resolve(session, c.id, user=user)
+        companies.append(CompanyMembership(
+            id=str(c.id), name=c.name, slug=c.slug, role=m.role, timezone=c.timezone,
+            plan=ent.plan.code, planLabel=ent.plan.label, planState=ent.state,
+            stationLimit=ent.station_limit, integrations=ent.integrations,
+            trialEndsAt=ent.trial_ends_at,
+        ))
 
     # Platform staff: active impersonation grants appear as extra super_admin
     # "memberships" (flagged) so the switcher/WS/API headers all just work.
@@ -81,10 +86,14 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
         for (g, c) in grant_rows:
             if str(c.id) not in member_ids:
                 member_ids.add(str(c.id))
+                ent = await entitlements.resolve(session, c.id, user=user)
                 companies.append(CompanyMembership(
                     id=str(c.id), name=c.name, slug=c.slug, role="super_admin",
                     timezone=c.timezone, impersonated=True,
                     impersonationExpiresAt=g.expiresAt,
+                    plan=ent.plan.code, planLabel=ent.plan.label,
+                    planState=ent.state, stationLimit=ent.station_limit,
+                    integrations=ent.integrations, trialEndsAt=ent.trial_ends_at,
                 ))
     return MeResponse(user=_to_user_public(user), companies=companies)
 

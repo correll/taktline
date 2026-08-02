@@ -1,5 +1,6 @@
 import { LineDoctor } from './help/LineDoctor'
 import { UndoBar } from './components/UndoBar'
+import { PlanBanner, PlanRefusalDialog } from './components/PlanNotices'
 import React, { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { connectWS, disconnectWS } from './api/ws'
@@ -42,6 +43,7 @@ const LandingView        = lazyView(() => import('./views/landing/LandingView'))
 const TermsView  = lazyView(() => import('./views/landing/TermsView'))
 const ManualView         = lazyView(() => import('./views/landing/ManualView'))
 const ShareView          = lazyView(() => import('./views/share/ShareView'))
+const TrialStopView      = lazyView(() => import('./views/billing/TrialStopView'))
 
 /** Publish the *visual* viewport height as --tk-vvh.
  *
@@ -74,6 +76,9 @@ export default function App() {
             {/* Public share permalink. The OG tags for this URL are written
                 server-side (routers/share.py) — a crawler never gets here. */}
             <Route path="/i/:itemId"       element={<ShareView />} />
+            {/* The opt-out link in every trial email. Public, and it
+                describes before it destroys — see TrialStopView. */}
+            <Route path="/trial/stop"      element={<TrialStopView />} />
               <Route path="/terms"    element={<TermsView />} />
             <Route path="/login"           element={<LoginView />} />
             <Route path="/signup"          element={<SignupView />} />
@@ -132,6 +137,8 @@ function Shell() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Topbar connection={connection} />
       <OutageBanner />
+      <PlanBanner />
+      <PlanRefusalDialog />
       <LineDoctor />
       <UndoBar />
       <OrientationNavigator />

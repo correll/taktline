@@ -90,6 +90,15 @@ class CompanyMembership(BaseModel):
     timezone: str = "UTC"
     impersonated: bool = False
     impersonationExpiresAt: Optional[datetime] = None
+    #: Billing state, so the app knows on its first request which tenants are
+    #: on trial, over their limit, or locked. Without it the company switcher
+    #: cannot mark a locked tenant and a 402 has no company to route to.
+    plan: str = "trial"
+    planLabel: str = "Trial"
+    planState: str = "ok"          # ok | read_only | locked
+    stationLimit: Optional[int] = None
+    integrations: bool = False
+    trialEndsAt: Optional[datetime] = None
 
 
 class MeResponse(BaseModel):

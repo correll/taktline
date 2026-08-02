@@ -38,11 +38,13 @@ async def sweep_once() -> int:
         )).scalars().all()
         await session.execute(delete(User).where(User.id.in_(expired)))
         await session.flush()
+        from . import entitlements
         for cid in company_ids:
             still_used = (await session.execute(
                 select(exists().where(Membership.companyId == cid))
             )).scalar()
             if not still_used:
+                await entitlements.release_company(session, cid)
                 await session.execute(delete(Company).where(Company.id == cid))
         await session.commit()
         return len(expired)

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import settings
 from ..core.traffic import traffic
 from ..core.usage import month_bucket
+from ..core import entitlements
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (
     AuthSession, Card, CardEvent, ClientError as ClientErrorRow, Company, Membership,
@@ -230,6 +231,10 @@ async def delete_platform_company(company_id: str, body: DeleteCompanyBody,
     member_count = (await session.execute(
         select(func.count()).select_from(Membership).where(Membership.companyId == company.id)
     )).scalar_one()
+    # Cancel at Stripe and remove the floor-plan files BEFORE the cascade takes
+    # the rows that point at them. Afterwards there is nothing left to find the
+    # live subscription with, and the customer keeps being billed.
+    await entitlements.release_company(session, company.id)
     await session.delete(company)   # all domain rows cascade via companyId FKs
     _audit(session, actor, "company_deleted", "company", company_id,
            name=company.name, members=member_count)

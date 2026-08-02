@@ -402,3 +402,69 @@ def ensure_integrations(ent: Entitlement) -> None:
         "resource": "integrations",
         "plan": ent.plan.code,
     })
+
+
+# ─── Deleting a company ──────────────────────────────────────────────────────
+
+async def release_company(session: AsyncSession, company_id) -> None:
+    """Everything that must happen *before* a company row is deleted.
+
+    The `companies` FK cascade takes every domain row with it, which is exactly
+    right for the database and silently wrong for two things that live outside
+    it:
+
+    **Stripe keeps billing.** The subscription row carries the only pointer we
+    have to a live Stripe subscription. Cascade it away and the customer is
+    charged monthly for an account that no longer exists — and the first anyone
+    hears of it is a chargeback.
+
+    **Uploaded floor plans stay on disk, and stay public.** Nothing in this
+    codebase has ever deleted a file, and `GET /uploads/{filename}` serves from
+    disk without consulting the database. So a deleted account's floor plan
+    remained retrievable by anyone with the URL, indefinitely. That is a data
+    retention failure independent of billing; it is fixed here because this is
+    the first code path that had a reason to care.
+    """
+    from ..db.tables import Subscription, UploadedImage
+
+    row = (await session.execute(
+        select(Subscription).where(Subscription.companyId == company_id)
+    )).scalars().first()
+    if row is not None and row.stripeSubscriptionId and settings.billing_enabled:
+        try:
+            from . import billing_stripe
+            billing_stripe.cancel(row.stripeSubscriptionId,
+                                  refund_credit_for=row.stripeCustomerId)
+        except Exception as exc:                  # noqa: BLE001
+            # Never block a deletion on Stripe being unreachable — but say so
+            # loudly, because the consequence is a subscription still billing.
+            print(f"[billing] could not cancel {row.stripeSubscriptionId} "
+                  f"for company {company_id}: {exc}")
+
+    await _delete_uploads(session, company_id)
+
+
+async def _delete_uploads(session: AsyncSession, company_id) -> None:
+    from pathlib import Path
+
+    from ..db.tables import UploadedImage
+
+    try:
+        rows = (await session.execute(
+            select(UploadedImage).where(UploadedImage.companyId == company_id)
+        )).scalars().all()
+    except Exception:                             # noqa: BLE001
+        return
+    from ..routers.map_settings import UPLOADS_DIR
+
+    for image in rows:
+        name = getattr(image, "filename", None)
+        if not name:
+            continue
+        # Never let a stored name escape the uploads directory.
+        target = (UPLOADS_DIR / Path(name).name).resolve()
+        if target.is_file() and target.parent == UPLOADS_DIR.resolve():
+            try:
+                target.unlink()
+            except OSError:
+                pass

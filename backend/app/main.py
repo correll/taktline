@@ -27,7 +27,7 @@ from .routers import (
     analysis, undo,
     admin, api_keys, auth, cards, companies, global_settings, invitations, lot_templates,
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
-    client_errors, map_io, share, stations, stats,
+    billing, client_errors, map_io, share, stations, stats,
 )
 from .core import entitlements, sandbox_gc, usage
 from .core.traffic import traffic
@@ -152,6 +152,9 @@ app.include_router(admin.router)
 app.include_router(platform.router)
 app.include_router(client_errors.router)
 app.include_router(map_io.router)
+# Billing. Reachable from a LOCKED account on purpose — a paywall whose
+# payment page sits behind the paywall is a lock with the key inside.
+app.include_router(billing.router)
 # Public share pages. Must be registered before the SPA catch-all below, or
 # /i/<id> falls through to index.html and every social preview shows the
 # generic landing card instead of the item.

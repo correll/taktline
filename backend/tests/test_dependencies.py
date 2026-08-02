@@ -26,7 +26,7 @@ INSTALLS = {
     "argon2-cffi": {"argon2"}, "email-validator": {"email_validator"},
     "aiosmtplib": {"aiosmtplib"}, "openpyxl": {"openpyxl"}, "slowapi": {"slowapi"},
     "fastapi": {"fastapi"}, "uvicorn": {"uvicorn"}, "websockets": {"websockets"},
-    "httpx": {"httpx"},
+    "httpx": {"httpx"}, "pillow": {"PIL"},
 }
 
 

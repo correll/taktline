@@ -4,6 +4,7 @@ import { useHelpStore } from './helpStore'
 import { tipOfTheDay } from './leanTips'
 import { anchorForCategory } from './manualAnchors'
 import { disableTips, recordTipShown, shouldShowTip, todayKey } from './tipSchedule'
+import { ShareModal } from '../share/ShareModal'
 
 /** Daily lean-tip splash: one tip per calendar day, dismissible, with a
  *  persistent opt-out. Stays out of the way of the first-run welcome and the
@@ -14,6 +15,7 @@ export function TipOfTheDay() {
   const openManual = useHelpStore((s) => s.openManual)
 
   const [visible, setVisible] = useState(() => shouldShowTip(localStorage, todayKey()))
+  const [sharing, setSharing] = useState(false)
 
   // Welcome dialog and tour take precedence over the daily tip.
   const showing = visible && calloutDismissed && !tourActive
@@ -73,6 +75,15 @@ export function TipOfTheDay() {
           Learn more in the manual
         </button>
         <button
+          onClick={() => setSharing(true)}
+          style={{
+            background: 'none', border: 'none', color: color.textSecondary,
+            fontSize: 11, cursor: 'pointer', padding: 0,
+          }}
+        >
+          Share
+        </button>
+        <button
           onClick={() => dismiss(true)}
           style={{
             background: 'none', border: 'none', color: color.textDim,
@@ -92,6 +103,18 @@ export function TipOfTheDay() {
           Got it
         </button>
       </div>
+
+      {sharing && (
+        <ShareModal
+          target={{
+            id: tip.id,
+            kind: 'lean tip',
+            suggested: tip.text,
+            subject: `Lean tip: ${tip.category}`,
+          }}
+          onClose={() => setSharing(false)}
+        />
+      )}
     </div>
   )
 }

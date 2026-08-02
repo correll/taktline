@@ -22,4 +22,49 @@
     <priority>0.3</priority>
   </url>
   <url><loc>https://taktline.com/terms</loc></url>
+
+  <!-- The flow-science share pages. Each is a distinct explanation with its
+       own animation, so they are worth indexing; the ninety-four lean-tip
+       pages are not listed, being one sentence each. Kept in step with
+       `help/concepts.ts` by shareCatalog.test.ts. -->
+  <url>
+    <loc>https://taktline.com/i/littles-law</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/kingman</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/balance-efficiency</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/flow-efficiency</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/common-and-special-cause</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/matched-sets</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/monuments</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://taktline.com/i/theory-of-constraints</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.6</priority>
+  </url>
 </urlset>

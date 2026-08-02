@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import { ImprovementStrip } from '../share/ImprovementStrip'
 import { analysisApi, type Finding, type LineReport } from '../api/analysis.api'
 import { useHelpStore } from './helpStore'
 import { useStationsStore } from '../store/stations.store'
@@ -193,6 +194,8 @@ function ReportPanel({ report, busy, onClose }: {
             ))}
           </div>
         )}
+
+        <ImprovementStrip />
       </div>
     </>
   )

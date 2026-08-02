@@ -19,6 +19,14 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Only the share *card image* goes to the backend in dev — `/i/<id>`
+      // itself must stay with Vite so the SPA route renders it. In production
+      // the backend serves both, and `/i/<id>` returns index.html with the
+      // item's Open Graph tags patched in.
+      '^/i/[^/]+/card\\.png$': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     },
   },
   resolve: {

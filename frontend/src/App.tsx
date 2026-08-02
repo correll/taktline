@@ -41,6 +41,7 @@ const CreateCompanyView  = lazyView(() => import('./views/company/CreateCompanyV
 const LandingView        = lazyView(() => import('./views/landing/LandingView'))
 const TermsView  = lazyView(() => import('./views/landing/TermsView'))
 const ManualView         = lazyView(() => import('./views/landing/ManualView'))
+const ShareView          = lazyView(() => import('./views/share/ShareView'))
 
 /** Publish the *visual* viewport height as --tk-vvh.
  *
@@ -70,6 +71,9 @@ export default function App() {
           <Routes>
             <Route path="/"                element={<RootGate />} />
             <Route path="/manual"          element={<ManualView />} />
+            {/* Public share permalink. The OG tags for this URL are written
+                server-side (routers/share.py) — a crawler never gets here. */}
+            <Route path="/i/:itemId"       element={<ShareView />} />
               <Route path="/terms"    element={<TermsView />} />
             <Route path="/login"           element={<LoginView />} />
             <Route path="/signup"          element={<SignupView />} />

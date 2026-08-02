@@ -6,6 +6,7 @@ import { TaktlineLogo } from '../components/TaktlineLogo'
 import { FigureBottleneck, FigureFlow, FigureMerge, FigurePull } from './ManualFigures'
 import { Eq, Frac, Sub, Sup, Term, Times, V } from './Equation'
 import { CHAPTERS_META, MANUAL_ANCHORS, type ChapterId } from './manualAnchors'
+import { ShareConceptButton } from '../share/ShareConceptButton'
 
 /**
  * The manual, as chapters ordered by difficulty rather than one long scroll.
@@ -19,10 +20,18 @@ import { CHAPTERS_META, MANUAL_ANCHORS, type ChapterId } from './manualAnchors'
  * switches chapter and scrolls, exactly as it did when there was one page.
  */
 
+// A heading that names one of the flow-science results carries a share button;
+// every other heading renders exactly as before (`ShareConceptButton` returns
+// null). Driving it off the anchor means the eight cannot drift out of sync
+// with the eight sections.
 const H2: React.FC<{ children: React.ReactNode; id?: string }> = ({ children, id }) => (
   <h2 id={id} style={{ color: color.textPrimary, fontSize: 18, marginTop: size.sp8, marginBottom: size.sp3,
                borderBottom: `1px solid ${color.border}`, paddingBottom: size.sp2,
-               scrollMarginTop: size.sp4 }}>{children}</h2>
+               scrollMarginTop: size.sp4, display: 'flex', alignItems: 'center',
+               gap: size.sp3 }}>
+    <span style={{ flex: 1 }}>{children}</span>
+    <ShareConceptButton anchor={id} />
+  </h2>
 )
 const H3: React.FC<{ children: React.ReactNode; id?: string }> = ({ children, id }) => (
   <h3 id={id} style={{ color: color.textPrimary, fontSize: 14, marginTop: size.sp5, marginBottom: size.sp2,

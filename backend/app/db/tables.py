@@ -691,3 +691,29 @@ class UndoEntry(Base):
     createdAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False, index=True
     )
+
+
+class ShareCard(Base):
+    """A before/after somebody chose to publish.
+
+    Unlike the tips and the flow-science concepts — which are our copy, live in
+    `data/share_catalog.json`, and need no row anywhere — an improvement card
+    is a *company's own measurement*. It therefore exists only when a person
+    pressed Share, and it stores the finished strings rather than a query: the
+    card must keep saying exactly what the preview said, even after the window
+    it was computed over has rolled past.
+
+    `slug` is the public URL (`/i/<slug>`). Deleting the company takes its
+    published cards with it, which is the behaviour a customer would expect of
+    anything carrying their numbers.
+    """
+    __tablename__ = "share_cards"
+
+    id: Mapped[uuid.UUID] = _pk()
+    slug: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    companyId: Mapped[uuid.UUID] = _company_fk()
+    createdBy: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    createdAt: Mapped[datetime] = _created()

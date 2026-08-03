@@ -84,7 +84,6 @@ export default function LandingView() {
         <Founder />
         <WhyTrustUs />
         <FromTheBook />
-        <BusinessModel />
         <Questions />
         <FinalCta />
       </main>
@@ -164,7 +163,7 @@ function Hero() {
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
-          Your line, free forever · no credit card · your data exports any time
+          Free to get started · no credit card · your data exports any time
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textSecondary }}>
           Runs in the browser on <strong style={{ color: color.textPrimary }}>iPhone, iPad and
@@ -581,46 +580,6 @@ function Integrations() {
 }
 
 // ─── Final CTA + footer ───────────────────────────────────────────────────────
-
-// ─── How we make money ───────────────────────────────────────────────────────
-
-function BusinessModel() {
-  return (
-    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
-      <div style={{
-        maxWidth: 820, margin: '0 auto', textAlign: 'center',
-        border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
-        background: color.bgCard, padding: `${size.sp8} ${size.sp6}`,
-      }}>
-        <h2 style={{ ...h2Style, fontSize: 'clamp(20px, 2.8vw, 26px)' }}>
-          Your line is free forever — and here is how we stay in business
-        </h2>
-        <p style={{ margin: `${size.sp4} auto 0`, maxWidth: 620, fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary }}>
-          Running your line on Taktline is free, forever, for every operator — no seat
-          count, no per-station charge, no trial that ends. That is the part we intend
-          never to change. We earn our living from the things a factory actually wants
-          help with:
-        </p>
-        <div style={{
-          margin: `${size.sp5} auto 0`, display: 'flex', gap: size.sp2,
-          flexWrap: 'wrap', justifyContent: 'center',
-        }}>
-          {['Premium support', 'Hosted instances', 'Hardware integration', 'Robotics'].map((item) => (
-            <span key={item} style={{
-              fontSize: 13, color: color.textPrimary, background: color.bgPanel,
-              border: `1px solid ${color.border}`, borderRadius: size.radiusFull,
-              padding: '6px 14px',
-            }}>{item}</span>
-          ))}
-        </div>
-        <p style={{ margin: `${size.sp5} auto 0`, maxWidth: 560, fontSize: 13.5, lineHeight: 1.65, color: color.textDim }}>
-          Nothing in the free product expires, and your data exports any time — so
-          choosing us is never a lock-in.
-        </p>
-      </div>
-    </section>
-  )
-}
 
 // ─── Who is behind it ────────────────────────────────────────────────────────
 

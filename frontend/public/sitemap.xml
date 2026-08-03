@@ -22,6 +22,7 @@
     <priority>0.3</priority>
   </url>
   <url><loc>https://taktline.com/terms</loc></url>
+  <url><loc>https://taktline.com/privacy</loc></url>
 
   <!-- The flow-science share pages. Each is a distinct explanation with its
        own animation, so they are worth indexing; the ninety-four lean-tip

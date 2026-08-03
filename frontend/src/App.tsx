@@ -40,6 +40,7 @@ const AcceptInviteView   = lazyView(() => import('./views/auth/AcceptInviteView'
 const CreateCompanyView  = lazyView(() => import('./views/company/CreateCompanyView'))
 const LandingView        = lazyView(() => import('./views/landing/LandingView'))
 const TermsView  = lazyView(() => import('./views/landing/TermsView'))
+const PrivacyView = lazyView(() => import('./views/landing/PrivacyView'))
 const ManualView         = lazyView(() => import('./views/landing/ManualView'))
 const ShareView          = lazyView(() => import('./views/share/ShareView'))
 
@@ -75,6 +76,7 @@ export default function App() {
                 server-side (routers/share.py) — a crawler never gets here. */}
             <Route path="/i/:itemId"       element={<ShareView />} />
               <Route path="/terms"    element={<TermsView />} />
+            <Route path="/privacy"         element={<PrivacyView />} />
             <Route path="/login"           element={<LoginView />} />
             <Route path="/signup"          element={<SignupView />} />
             <Route path="/verify-email"    element={<VerifyEmailView />} />

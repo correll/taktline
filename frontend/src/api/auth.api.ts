@@ -14,6 +14,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 
 export interface UserPreferences {
   theme?: 'day' | 'night'
+  language?: string    // BCP 47, from i18n/languages.ts
 }
 
 export interface User {
@@ -58,7 +59,8 @@ export const authApi = {
   signup: (email: string, password: string, name?: string,
            opts?: { adoptSandbox?: boolean; companyName?: string
                     acceptedTermsVersion?: string
-                    supplierInvite?: string }): Promise<MessageResponse> =>
+                    supplierInvite?: string
+                    language?: string }): Promise<MessageResponse> =>
     client.post('/auth/signup', { email, password, name, ...opts }),
   verifyEmail: (token: string): Promise<MessageResponse> =>
     client.post('/auth/verify-email', { token }),

@@ -1,3 +1,4 @@
+import { useT } from '../../i18n'
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Heart, ScanLine } from 'lucide-react'
@@ -492,6 +493,7 @@ function LotPicker({
   onStart:        () => void
   onGoToStation:  (id: string, preferred?: Card | null) => void
 }) {
+  const t = useT()
   const stations       = useStationsStore((s) => s.stations)
   const cards          = useCardsStore((s) => s.cards)
   const templates      = useProcessesStore((s) => s.lotTemplates)
@@ -604,9 +606,7 @@ function LotPicker({
       <div>
         <div style={{ fontSize: 20, fontWeight: 700, color: color.textPrimary }}>{station?.name}</div>
         <div style={{ fontSize: 11, color: color.textDim, marginTop: 2 }}>
-          {isMergeStation
-            ? 'Select precursor lots and press MERGE to build the assembly, then work on it'
-            : 'Select a lot to work on, then press START'}
+          {isMergeStation ? t('op.selectPrecursors') : t('op.selectLot')}
         </div>
       </div>
 
@@ -752,7 +752,7 @@ function LotPicker({
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
-                    <div style={{ fontSize: 9, color: color.textDim }}>units</div>
+                    <div style={{ fontSize: 9, color: color.textDim }}>{t('op.units')}</div>
                   </div>
                 </div>
               )
@@ -833,7 +833,7 @@ function LotPicker({
                   )}
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
-                    <div style={{ fontSize: 9, color: color.textDim }}>units</div>
+                    <div style={{ fontSize: 9, color: color.textDim }}>{t('op.units')}</div>
                   </div>
                   <span style={{ color: color.textDim, fontSize: 14, flexShrink: 0 }}>→</span>
                 </div>
@@ -892,7 +892,7 @@ function LotPicker({
               marginTop:    size.sp2,
             }}
           >
-            {isDone ? 'MOVE' : starting ? 'STARTING…' : 'START'}
+            {isDone ? t('op.move') : starting ? t('op.starting') : t('op.start')}
           </button>
         )
       })()}
@@ -916,6 +916,7 @@ function WorkingPanel({
   onElapsed:     (n: number) => void
   onStop:        () => void
 }) {
+  const t = useT()
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
   const [stopping, setStopping] = useState(false)
@@ -1012,7 +1013,7 @@ function WorkingPanel({
         cursor: stopping ? 'not-allowed' : 'pointer',
         opacity: stopping ? 0.7 : 1, boxShadow: shadow.md, transition: 'all 0.15s ease',
       }}>
-        {stopping ? 'FINISHING…' : 'DONE'}
+        {stopping ? t('op.finishing') : t('op.done')}
       </button>
 
       <div style={{ fontSize: 11, color: color.textDim }}>
@@ -1035,6 +1036,7 @@ function DonePanel({
   onContinue:  () => Promise<void>
   onBack:      () => void
 }) {
+  const t = useT()
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
   const routes    = useProcessesStore((s) => s.routes)
@@ -1222,7 +1224,7 @@ function DonePanel({
       {picksDestination ? (
         <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: size.sp3 }}>
           <div style={{ fontSize: 11, color: color.textDim, textAlign: 'center' }}>
-            This lot moves whole — deal the units across the routes.
+            {t('op.wholelot')}
           </div>
           {branches.map((st) => (
             <div
@@ -1285,7 +1287,9 @@ function DonePanel({
               transition: 'all 0.15s ease',
             }}
           >
-            {moving ? 'MOVING…' : `MOVE ${allocTotal} UNIT${allocTotal !== 1 ? 'S' : ''}`}
+            {moving ? t('op.moving')
+                    : t(allocTotal === 1 ? 'op.moveUnits.one' : 'op.moveUnits.many',
+                        { n: allocTotal })}
           </button>
         </div>
       ) : nextStation && (
@@ -1303,7 +1307,7 @@ function DonePanel({
             transition: 'all 0.15s ease',
           }}
         >
-          {moving ? 'MOVING…' : `MOVE → ${destinationLabel}`}
+          {moving ? t('op.moving') : t('op.moveTo', { dest: destinationLabel })}
         </button>
       )}
 
@@ -1322,7 +1326,7 @@ function DonePanel({
           transition:   'all 0.15s ease',
         }}
       >
-        {continuing ? 'STARTING…' : 'CONTINUE WORKING'}
+        {continuing ? t('op.starting') : t('op.continueWorking')}
       </button>
 
       <button onClick={onBack} style={{

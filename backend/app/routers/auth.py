@@ -16,7 +16,7 @@ from ..core.email import (
     send_password_reset_email,
     send_verification_email,
 )
-from ..core import entitlements, plans
+from ..core import entitlements, languages, plans
 from ..core.ratelimit import limiter
 from ..core.security import (dummy_verify, generate_token, hash_password, hash_token,
                              needs_rehash, verify_password)
@@ -175,9 +175,12 @@ async def signup(request: Request, body: SignupBody, session: AsyncSession = Dep
     existing = (await session.execute(select(User).where(User.email == email))).scalars().first()
     link = None
     adopted = False
+    if body.language is not None and not languages.valid(body.language):
+        raise HTTPException(422, f"Unknown language '{body.language}'")
     if existing is None:
         user = User(email=email, passwordHash=hash_password(body.password),
                     emailVerified=False, name=body.name,
+                    preferences={"language": body.language} if body.language else {},
                     termsVersion=body.acceptedTermsVersion,
                     termsAcceptedAt=utcnow() if body.acceptedTermsVersion else None)
         session.add(user)

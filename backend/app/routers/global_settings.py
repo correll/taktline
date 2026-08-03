@@ -14,7 +14,8 @@ def _to_model(r: GlobalSettingsRow) -> GlobalSettings:
     return GlobalSettings(_id=str(r.id), timezone=r.timezone, workHours=r.workHours or [],
                           showCycleArc=bool(r.showCycleArc),
                           orderTracking=bool(r.orderTracking),
-                          orderTrackingSteps=bool(r.orderTrackingSteps))
+                          orderTrackingSteps=bool(r.orderTrackingSteps),
+                          supportedLanguages=list(r.supportedLanguages or ["en"]))
 
 
 async def _get_or_create(session: AsyncSession, company_id) -> GlobalSettingsRow:

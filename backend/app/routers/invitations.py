@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core import languages
 from ..core.config import settings
 from ..core.email import send_invitation_email
 from ..core.ratelimit import limiter
 from ..core.security import generate_token, hash_password, hash_token
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
-from ..db.tables import Company, Invitation, Membership, User
+from ..db.tables import (Company, GlobalSettings as GlobalSettingsRow,
+                         Invitation, Membership, User)
 from ..deps.auth import create_auth_session, ensure_full_account, get_current_user, load_membership, set_auth_cookies
 from ..models.auth import MeResponse
 from ..models.company import (
@@ -52,6 +54,18 @@ async def _valid_pending_invite(session: AsyncSession, token: str) -> Invitation
 
 
 # ── Admin: manage a company's invitations ──────────────────────────────────────
+async def _company_languages(session: AsyncSession, company_id) -> list[str]:
+    """The languages this company runs in — its global_settings row, or every
+    language the product speaks when the row has never been created (a company
+    that never opened Settings has not narrowed anything)."""
+    row = (await session.execute(
+        select(GlobalSettingsRow).where(GlobalSettingsRow.companyId == company_id)
+    )).scalars().first()
+    if row is None or not row.supportedLanguages:
+        return list(languages.LANGUAGES)
+    return list(row.supportedLanguages)
+
+
 @router.post("/companies/{company_id}/invitations", response_model=InvitationPublic, status_code=201)
 async def create_invitation(company_id: str, body: InviteCreate,
                             user: User = Depends(get_current_user),
@@ -131,7 +145,8 @@ async def preview_invitation(token: str, session: AsyncSession = Depends(get_ses
         return InvitePreview(valid=False, reason=status)
     company = await session.get(Company, inv.companyId)
     return InvitePreview(valid=True, companyName=company.name if company else None,
-                         email=inv.email, role=inv.role)
+                         email=inv.email, role=inv.role,
+                         supportedLanguages=await _company_languages(session, inv.companyId))
 
 
 @router.post("/invitations/{token}/accept", response_model=MeResponse)
@@ -173,7 +188,15 @@ async def accept_invitation_signup(token: str, body: AcceptInviteSignup,
     if existing is not None:
         raise HTTPException(409, "An account with this email already exists — please sign in and accept.")
 
-    user = User(email=email, passwordHash=hash_password(body.password), emailVerified=True, name=body.name)
+    if body.language is not None:
+        offered = await _company_languages(session, inv.companyId)
+        if body.language not in offered:
+            raise HTTPException(422,
+                f"This company runs in {', '.join(offered)} — "
+                f"'{body.language}' is not one of them")
+    user = User(email=email, passwordHash=hash_password(body.password),
+                emailVerified=True, name=body.name,
+                preferences={"language": body.language} if body.language else {})
     session.add(user)
     await session.flush()
     session.add(Membership(companyId=inv.companyId, userId=user.id, role=inv.role))

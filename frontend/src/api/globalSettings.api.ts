@@ -10,6 +10,9 @@ export interface GlobalSettingsData {
   showCycleArc: boolean
   orderTracking: boolean
   orderTrackingSteps: boolean
+  /** Which languages this company runs in (i18n/languages.ts). Invited
+   *  operators choose from this set. */
+  supportedLanguages: string[]
 }
 
 export const FULL_HOUR = 0b1111   // all four quarters open

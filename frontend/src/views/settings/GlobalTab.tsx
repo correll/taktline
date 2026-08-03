@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { LANGUAGES, LANGUAGE_CODES } from '../../i18n/languages'
 import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 import { COMMON_TIMEZONES, defaultWorkHours, FULL_HOUR } from '../../api/globalSettings.api'
 import { color, font, size } from '../../theme/tokens'
@@ -17,6 +18,7 @@ export default function GlobalTab() {
   const [taktArc,  setCycleArc]  = useState(settings.showCycleArc)
   const [tracking, setTracking]  = useState(settings.orderTracking)
   const [trackSteps, setTrackSteps] = useState(settings.orderTrackingSteps)
+  const [langs, setLangs] = useState<string[]>(settings.supportedLanguages ?? LANGUAGE_CODES)
   const [saved,    setSaved]    = useState(false)
   const [error,    setError]    = useState<string | null>(null)
 
@@ -26,12 +28,14 @@ export default function GlobalTab() {
   useEffect(() => { setCycleArc(settings.showCycleArc) }, [settings.showCycleArc])
   useEffect(() => { setTracking(settings.orderTracking) }, [settings.orderTracking])
   useEffect(() => { setTrackSteps(settings.orderTrackingSteps) }, [settings.orderTrackingSteps])
+  useEffect(() => { setLangs(settings.supportedLanguages ?? LANGUAGE_CODES) }, [settings.supportedLanguages])
 
   const handleSave = async () => {
     setError(null); setSaved(false)
     try {
       await update({ timezone, workHours: grid, showCycleArc: taktArc,
-                     orderTracking: tracking, orderTrackingSteps: trackSteps })
+                     orderTracking: tracking, orderTrackingSteps: trackSteps,
+                     supportedLanguages: langs })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
     } catch (e) { setError(String(e)) }
   }
@@ -122,6 +126,33 @@ export default function GlobalTab() {
               operations they run and which they subcontract.
             </span>
           </label>
+        </div>
+
+        {/* Languages */}
+        <div>
+          <FieldLabel>LANGUAGES</FieldLabel>
+          <p style={{ fontSize: 11.5, color: color.textDim, margin: '4px 0 10px', lineHeight: 1.5, maxWidth: 620 }}>
+            The languages this company runs in. <b style={{ color: color.textSecondary }}>Operators
+            you invite choose their language from this set</b> — offer only what your lot cards,
+            station names and instructions actually make sense in. Everyone can change their own
+            language later in their account.
+          </p>
+          <div style={{ display: 'flex', gap: size.sp4, flexWrap: 'wrap' }}>
+            {LANGUAGE_CODES.map((code) => (
+              <label key={code} style={{ display: 'flex', alignItems: 'center', gap: size.sp2,
+                                         fontSize: 13, color: color.textPrimary, cursor: 'pointer' }}>
+                <input
+                  type="checkbox" disabled={loading}
+                  checked={langs.includes(code)}
+                  onChange={(e) => setLangs(e.target.checked
+                    ? [...langs, code]
+                    : langs.length > 1 ? langs.filter((l) => l !== code) : langs)}
+                  style={{ width: 15, height: 15 }}
+                />
+                {LANGUAGES[code]}
+              </label>
+            ))}
+          </div>
         </div>
 
         {/* Work hours */}

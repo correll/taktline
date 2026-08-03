@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { globalSettingsApi, defaultWorkHours, type GlobalSettingsData } from '../api/globalSettings.api'
+import { LANGUAGE_CODES } from '../i18n/languages'
 
 interface GlobalSettingsState {
   settings: GlobalSettingsData
@@ -10,7 +11,8 @@ interface GlobalSettingsState {
 
 export const useGlobalSettingsStore = create<GlobalSettingsState>((set) => ({
   settings: { timezone: 'UTC', workHours: defaultWorkHours(), showCycleArc: false,
-              orderTracking: false, orderTrackingSteps: true },
+              orderTracking: false, orderTrackingSteps: true,
+              supportedLanguages: [...LANGUAGE_CODES] },
   loading:  false,
 
   fetch: async () => {

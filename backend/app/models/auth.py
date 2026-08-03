@@ -19,6 +19,9 @@ class SignupBody(BaseModel):
     email: EmailStr
     password: str
     name: Optional[str] = None
+    #: BCP 47 code from core/languages.py. A new account may pick any language
+    #: the product speaks; invited operators are constrained by their company.
+    language: Optional[str] = None
     # Carry the line built in the sandbox over to the new account. Authorised by
     # the sandbox session cookie the browser already holds — no code to copy.
     adoptSandbox: bool = False
@@ -73,6 +76,15 @@ class PreferencesPatch(BaseModel):
     """Partial update of the user's cross-device preferences. Only known keys
     are accepted so the blob can't grow arbitrarily."""
     theme: Optional[str] = None
+    language: Optional[str] = None
+
+    @field_validator("language")
+    @classmethod
+    def _language_valid(cls, v: Optional[str]) -> Optional[str]:
+        from ..core import languages
+        if v is not None and not languages.valid(v):
+            raise ValueError(f"unknown language '{v}'")
+        return v
 
     @field_validator("theme")
     @classmethod

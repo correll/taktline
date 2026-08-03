@@ -1,7 +1,7 @@
 """Pydantic schemas for companies, memberships, and invitations."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr
 
@@ -61,9 +61,14 @@ class InvitePreview(BaseModel):
     email: Optional[EmailStr] = None
     role: Optional[str] = None
     reason: Optional[str] = None   # why invalid, if applicable
+    #: The company's languages (core/languages.py) — what the signup form on
+    #: the invite page may offer. Empty when the invite is invalid.
+    supportedLanguages: List[str] = []
 
 
 class AcceptInviteSignup(BaseModel):
     """Create a new (auto-verified) account and accept the invite in one step."""
     password: str
     name: Optional[str] = None
+    #: Chosen from the company's supportedLanguages — validated server-side.
+    language: Optional[str] = None

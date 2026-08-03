@@ -562,6 +562,13 @@ class GlobalSettings(Base):
     # switching it on has to be a deliberate, local decision.
     showCycleArc: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                               server_default=text("false"), default=False)
+    # Which languages this company runs in (core/languages.py). Operators
+    # invited into the company choose from this set. Defaults to every
+    # language the product speaks — inclusive until the admin narrows it.
+    supportedLanguages: Mapped[list] = mapped_column(
+        JSONB, nullable=False,
+        default=lambda: ["en", "es", "fr-CA", "my", "ht"],
+        server_default=text("""'["en", "es", "fr-CA", "my", "ht"]'::jsonb"""))
     # Let a customer follow their own order on a public link (core/tracking.py).
     # Off by default: publishing anything about production is the shop's
     # decision, not one we make for them.

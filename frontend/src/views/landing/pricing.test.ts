@@ -72,7 +72,8 @@ describe('the advertised price is the charged price', () => {
     // quoting "$116/month" or "up to 50 stations" is quoting a price list
     // that no longer exists.
     for (const ghost of ['$58', '$116', '$290', 'up to 50 stations',
-                         'up to 100 stations', 'up to 250 stations']) {
+                         'up to 100 stations', 'up to 250 stations',
+                         'Two weeks free', 'two weeks free', 'after two weeks']) {
       expect(landing, `the landing page still quotes ${ghost}`).not.toContain(ghost)
       expect(indexHtml, `index.html still quotes ${ghost}`).not.toContain(ghost)
     }

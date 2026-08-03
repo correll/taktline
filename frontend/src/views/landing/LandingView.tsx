@@ -7,6 +7,7 @@ import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
 import { ContactForm } from './ContactForm'
 import { featuredTips } from '../../help/leanTips'
+import { LANGUAGES, LANGUAGE_CODES } from '../../i18n/languages'
 import { LEGAL_ENTITY } from '../../legal/terms'
 import { useAuthStore } from '../../store/auth.store'
 import { useThemeStore } from '../../store/theme.store'
@@ -79,6 +80,7 @@ export default function LandingView() {
         <TheBoard />
         <Steps />
         <OnEveryDevice />
+        <FloorLanguages />
         <TheDoctor />
         <Features />
         <Integrations />
@@ -568,6 +570,49 @@ function Features() {
   )
 }
 
+// ─── Languages ────────────────────────────────────────────────────────────────
+
+/** The names come from the i18n catalogue itself, so this section can never
+ *  advertise a language the picker does not offer — i18n.test.ts already pins
+ *  that catalogue to the backend's allowlist. */
+function FloorLanguages() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 820, margin: '0 auto', textAlign: 'center' }}>
+        <div style={eyebrowStyle}>In their language</div>
+        <h2 style={h2Style}>The floor doesn’t work in English only</h2>
+        <p style={{
+          margin: `${size.sp4} auto 0`, maxWidth: 640, fontSize: 16,
+          lineHeight: 1.7, color: color.textSecondary,
+        }}>
+          The operator’s screen — start, done, move — speaks the language the person
+          holding the tablet thinks in. Everyone picks their own language when they
+          join and can change it any time; you choose which languages your company
+          runs in, so nobody is handed a screen their supervisor can’t read over
+          their shoulder.
+        </p>
+        <div style={{
+          margin: `${size.sp6} auto 0`, display: 'flex', gap: size.sp2,
+          flexWrap: 'wrap', justifyContent: 'center',
+        }}>
+          {LANGUAGE_CODES.map((code) => (
+            <span key={code} style={{
+              fontSize: 14, color: color.textPrimary, background: color.bgCard,
+              border: `1px solid ${color.border}`, borderRadius: size.radiusFull,
+              padding: '7px 16px',
+            }}>
+              {LANGUAGES[code]}
+            </span>
+          ))}
+        </div>
+        <p style={{ margin: `${size.sp4} auto 0`, fontSize: 13, color: color.textDim }}>
+          A worker who can read the system improves it — in any of these.
+        </p>
+      </div>
+    </section>
+  )
+}
+
 // ─── Integrations ─────────────────────────────────────────────────────────────
 
 function Integrations() {
@@ -834,7 +879,7 @@ function WhyTrustUs() {
         }}>
           {[
             ['Little to lose',
-             'Two weeks free with no card, then $29 a month. Every operator and every tablet is included on every tier — there is no seat count, no budget to defend and no procurement to survive.'],
+             'Free for three stations with no card and no expiry, then $2 a station a month. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
             ['Nothing to install',
              'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
             ['Nothing to lock you in',

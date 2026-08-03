@@ -124,13 +124,22 @@ def checkout_session(*, customer_id: str, plan_code: str, on_premise: bool,
     on anything above the entry tier it is worth several percent of revenue —
     and Stripe hosts the mandate flow, which is the part that is genuinely
     fiddly to build.
+
+    **`payment_method_types` is deliberately not passed.** Naming the methods
+    here looks like it says "card and ACH" and actually says "card and ACH and
+    nothing else, ever, until someone deploys". It pins the list at the moment
+    the line was written: Link — Stripe's one-click, which is the single
+    cheapest conversion win available to a checkout — is excluded, and so is
+    every method added later. Omitting the parameter enables dynamic payment
+    methods, which reads the eligible set from Dashboard → Payment methods and
+    orders them per customer. The ACH argument above is unaffected: ACH is
+    switched on in the Dashboard and then simply offered.
     """
     s = _stripe()
     return s.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
         line_items=line_items(plan_code, on_premise, connector_addons),
-        payment_method_types=["card", "us_bank_account"],
         # Software subscriptions are taxed inconsistently by state; switching
         # this on retroactively after a year of sales is expensive and
         # unpleasant. See pricing.md.
@@ -145,17 +154,79 @@ def checkout_session(*, customer_id: str, plan_code: str, on_premise: bool,
     )
 
 
+#: Bump when the feature set in `_portal_configuration_id` changes: a new
+#: configuration is then created and used, rather than editing one that live
+#: portal sessions may still be holding.
+_PORTAL_CONFIG_MARKER = "taktline-portal-v1"
+
+#: Configuration id per API key, so the lookup happens once per process rather
+#: than once per portal open. Keyed by the key because test and live mode are
+#: different accounts with different configuration ids.
+_portal_config_cache: dict[str, str] = {}
+
+
+def _portal_configuration_id(s) -> str:
+    """The portal configuration with plan switching OFF, created on first use.
+
+    **Passed explicitly because the Dashboard default is editable.** Without a
+    `configuration` argument the portal uses whatever the default configuration
+    in the Dashboard currently says, and anyone ticking "let customers switch
+    plans" there silently bypasses the station-count guard in `change_plan` —
+    a customer with 80 stations drops to a 50-station plan and we learn about
+    it from a webhook, after the fact, with no way to refuse. Pinning the
+    configuration in code makes the guard hold regardless of Dashboard state.
+
+    Found again by its metadata marker rather than stored, for the same reason
+    the tracking token is derived rather than stored: nothing to migrate and
+    nothing to lose.
+    """
+    for cfg in s.billing_portal.Configuration.list(
+            active=True, limit=100).auto_paging_iter():
+        if (cfg.get("metadata") or {}).get("taktline") == _PORTAL_CONFIG_MARKER:
+            return cfg["id"]
+    created = s.billing_portal.Configuration.create(
+        features={
+            "payment_method_update": {"enabled": True},
+            "invoice_history": {"enabled": True},
+            # The billing address feeds automatic tax; a customer who moves
+            # should be able to correct it without a support ticket.
+            "customer_update": {"enabled": True,
+                                "allowed_updates": ["email", "name", "address",
+                                                    "phone"]},
+            # At period end, not immediately: they paid for the month, they
+            # keep the month. The `customer.subscription.deleted` webhook then
+            # starts the grace clock and refunds any credit balance.
+            "subscription_cancel": {
+                "enabled": True, "mode": "at_period_end",
+                "cancellation_reason": {
+                    "enabled": True,
+                    "options": ["too_expensive", "missing_features",
+                                "switched_service", "unused", "too_complex",
+                                "other"]},
+            },
+            # OFF, and stated rather than defaulted — this line is the whole
+            # reason the configuration exists. Plan changes go through
+            # `change_plan`, which can say "remove 30 stations first".
+            "subscription_update": {"enabled": False},
+        },
+        metadata={"taktline": _PORTAL_CONFIG_MARKER},
+    )
+    return created["id"]
+
+
 def portal_session(*, customer_id: str, return_url: str):
     """Stripe's own billing portal — payment method, invoices, cancellation.
 
-    **Plan switching is deliberately not enabled here.** The portal talks
-    straight to Stripe, so a customer with 80 stations could drop to a
-    50-station plan in Stripe's UI and we would learn about it from a webhook,
-    after the fact, with no way to refuse. Plan changes go through
-    `change_plan` below, which can say "remove 30 stations first".
+    Plan switching is disabled via the pinned configuration above; plan
+    changes go through `change_plan`.
     """
     s = _stripe()
-    return s.billing_portal.Session.create(customer=customer_id, return_url=return_url)
+    config_id = _portal_config_cache.get(s.api_key)
+    if not config_id:
+        config_id = _portal_configuration_id(s)
+        _portal_config_cache[s.api_key] = config_id
+    return s.billing_portal.Session.create(
+        customer=customer_id, return_url=return_url, configuration=config_id)
 
 
 # ─── Plan changes ────────────────────────────────────────────────────────────
@@ -199,6 +270,18 @@ def cancel(subscription_id: str, *, refund_credit_for: Optional[str] = None):
     if refund_credit_for:
         _refund_credit_balance(s, refund_credit_for)
     return result
+
+
+def refund_credit_balance(customer_id: str) -> None:
+    """Give back any credit balance without cancelling anything.
+
+    The webhook path: a customer who cancels **in the portal** never passes
+    through `cancel` above — the cancellation arrives as
+    `customer.subscription.deleted`, and without this call their credit from an
+    earlier downgrade would sit on the account forever, applied to future
+    invoices that will never exist.
+    """
+    _refund_credit_balance(_stripe(), customer_id)
 
 
 def _refund_credit_balance(s, customer_id: str) -> None:

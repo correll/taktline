@@ -342,6 +342,84 @@ def test_a_dispute_is_treated_as_a_failed_payment(stripe, actor, monkeypatch):
     assert _read_plan(a.company).graceEndsAt is not None
 
 
+# ─── Cancelling ──────────────────────────────────────────────────────────────
+
+def test_a_portal_cancellation_refunds_the_credit_balance(stripe, actor, monkeypatch):
+    """A customer who cancels in the portal never passes through our own
+    cancel path — `customer.subscription.deleted` is the only chance to give
+    back what an earlier downgrade left as a credit balance. Without this,
+    that money sits on the account waiting for invoices that will never come."""
+    a = actor()
+    bootstrap_admin(a, "Leaving co")
+    _set_plan(a.company, planCode="pro_50", stripeStatus="active",
+              stripeSubscriptionId="sub_14", stripeCustomerId="cus_14")
+    refunded = []
+    monkeypatch.setattr(billing_stripe, "refund_credit_balance", refunded.append)
+
+    _webhook(a, _event("customer.subscription.deleted",
+                       {"id": "sub_14", "customer": "cus_14"}, "evt_gone"),
+             monkeypatch)
+
+    assert refunded == ["cus_14"]
+    row = _read_plan(a.company)
+    assert row.stripeStatus == "canceled" and row.graceEndsAt is not None
+
+
+def test_the_portal_cannot_switch_plans(monkeypatch):
+    """`change_plan` can refuse a downgrade that does not fit; the portal
+    cannot. So every portal session must pin a configuration with
+    subscription_update off — the Dashboard's default configuration is
+    editable, and one checkbox there would bypass the station-count guard."""
+    created, sessions = [], []
+
+    class Configuration:
+        existing: list = []
+
+        @staticmethod
+        def list(**kw):
+            class Page:
+                @staticmethod
+                def auto_paging_iter():
+                    return iter(Configuration.existing)
+            return Page
+
+        @staticmethod
+        def create(**kw):
+            created.append(kw)
+            return {"id": "bpc_ours"}
+
+    class Session:
+        @staticmethod
+        def create(**kw):
+            sessions.append(kw)
+            return type("S", (), {"url": "https://portal.stripe.test"})()
+
+    fake = type("FakeSDK", (), {})()
+    fake.api_key = "sk_test_fake"
+    fake.billing_portal = type("BP", (), {"Configuration": Configuration,
+                                          "Session": Session})()
+    monkeypatch.setattr(billing_stripe, "_stripe", lambda: fake)
+    monkeypatch.setattr(billing_stripe, "_portal_config_cache", {})
+
+    billing_stripe.portal_session(customer_id="cus_1", return_url="https://x")
+
+    features = created[0]["features"]
+    assert features["subscription_update"] == {"enabled": False}
+    assert features["subscription_cancel"]["enabled"] is True
+    assert sessions[0]["configuration"] == "bpc_ours"
+
+    # The second open reuses it (cached), and a fresh process finds it again
+    # by its metadata marker rather than creating a sibling.
+    billing_stripe.portal_session(customer_id="cus_1", return_url="https://x")
+    monkeypatch.setattr(billing_stripe, "_portal_config_cache", {})
+    Configuration.existing = [
+        {"id": "bpc_ours",
+         "metadata": {"taktline": billing_stripe._PORTAL_CONFIG_MARKER}}]
+    billing_stripe.portal_session(customer_id="cus_1", return_url="https://x")
+    assert len(created) == 1
+    assert all(s["configuration"] == "bpc_ours" for s in sessions)
+
+
 def test_an_unknown_event_is_acknowledged_not_rejected(stripe, actor, monkeypatch):
     """Stripe retries a failing endpoint for three days and then disables it.
     An event type we do not handle must never be the reason that happens."""

@@ -19,7 +19,7 @@ httpx>=0.27
 # Billing. Only imported when STRIPE_SECRET_KEY is set — a self-hosted install
 # runs without it — but declared unconditionally, because "it is only needed on
 # one code path" is exactly how httpx went missing and 500'd in production.
-stripe>=11
+stripe>=15.3,<16   # payment dependency: pin the major, or a rebuild can take a breaking one
 # Verifies the Ed25519 signature on an on-premise licence file
 # (`core/licence.py`). The public half is baked into the image; the private half
 # never leaves the release machine.

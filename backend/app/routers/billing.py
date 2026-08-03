@@ -438,6 +438,16 @@ async def _handle(session: AsyncSession, event) -> None:
         row.stripeStatus = "canceled"
         row.graceEndsAt = entitlements.grace_deadline()
         row.updatedAt = utcnow()
+        # An earlier downgrade may have left a credit balance, which Stripe
+        # only ever applies to future invoices — of which there are now none.
+        # Give it back. (A cancellation through our own code path — company
+        # deletion — refunds inside `billing_stripe.cancel`; a portal
+        # cancellation arrives here instead. The refund is idempotent: a zero
+        # balance returns without doing anything.) Row fields are set first so
+        # a Stripe failure here — recorded on the billing event by the
+        # endpoint — still leaves the cancellation applied.
+        if row.stripeCustomerId:
+            billing_stripe.refund_credit_balance(row.stripeCustomerId)
         return
 
     _apply_subscription(row, billing_stripe.fetch_subscription(subscription_id))

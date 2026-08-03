@@ -270,17 +270,9 @@ async def import_map(doc: MapDocument,
                 raise HTTPException(422,
                     f"Station {st.ref!r}: {st.integrationProvider} cannot be bound as '{role}'")
 
-    # An import REPLACES the line, so the connector count is whatever the file
-    # asks for — not the file plus what is already there.
-    connector_limit = ent.connector_limit
-    if connector_limit is not None and len(file_providers) > connector_limit:
-        raise HTTPException(403, {
-            "message": (f"This file wires in {len(file_providers)} connectors; "
-                        f"your {ent.plan.label} plan includes {connector_limit}."),
-            "code": "plan_limit", "resource": "connectors",
-            "plan": ent.plan.code, "limit": connector_limit,
-            "used": len(file_providers),
-        })
+    # Connectors are deliberately unmetered (plans.py) — a file may wire in as
+    # many providers as it likes; only the integrations capability was checked
+    # above, per bound station.
 
     # Quotas apply to a file exactly as they apply to the editor.
     #
@@ -399,6 +391,10 @@ async def import_map(doc: MapDocument,
         ms.pixelsPerUnit = doc.mapSettings.pixelsPerUnit
         ms.stationSizeUnits = doc.mapSettings.stationSizeUnits
         ms.updatedAt = utcnow()
+
+    # The import replaced the whole line — the new station count is the new
+    # price, so report it (best-effort; never blocks the import).
+    await entitlements.report_station_count(session, ctx.company_id)
 
     return {
         "stations": len(doc.stations), "processes": len(doc.processes),

@@ -8,13 +8,15 @@ writing down.
 
 Four of those, because each one is a way to lose money or a customer:
 
-**1. Proration is not one setting.** `create_prorations` — the obvious choice,
-and what most guides show — creates line items that are *not invoiced until the
-next cycle*. Two days into a $116 month, switching to $29 produces a credit of
-about $108 and a charge of about $27, netting to a $0 invoice and a ~$52 credit
-balance. Not a $29 bill. And on an *upgrade* it hands over the better plan for
-a whole month before any money moves. So upgrades use `always_invoice` (charge
-the difference now) and downgrades use `create_prorations` (credit forward).
+**1. Proration is not one setting — and the station quantity never prorates.**
+A station count changes many times a month while someone draws their floor;
+prorating each change would produce a drizzle of cent-sized line items and an
+unreadable invoice, so quantity updates use `proration_behavior='none'` and
+the count current at the period boundary is what the month costs. The
+**on-premise add-on** is different: turning it on grants a licence *now*, so
+it is invoiced now (`always_invoice`); turning it off credits forward
+(`create_prorations` — the obvious single setting for both directions would
+either hand out a licence free for a month or bill for one being returned).
 
 **2. Webhooks are triggers, not payloads.** Stripe does not guarantee delivery
 order, so acting on the object inside the event means a stale
@@ -54,13 +56,11 @@ def _stripe():
     return stripe
 
 
-def price_for(plan_code: str) -> str:
-    ids = plans.price_ids()
-    price = ids.get(plan_code)
+def station_price() -> str:
+    price = plans.price_ids().get("taktline")
     if not price:
         raise HTTPException(
-            503, f"No Stripe price configured for '{plan_code}' — set "
-                 f"{plans.PLANS[plan_code].price_env}")
+            503, f"No Stripe price configured — set {plans.STATION_PRICE_ENV}")
     return price
 
 
@@ -72,24 +72,17 @@ def onprem_price() -> str:
     return price
 
 
-def connector_price() -> str:
-    price = plans.price_ids().get("connector")
-    if not price:
-        raise HTTPException(503, f"No Stripe price configured for extra "
-                                 f"connectors — set {plans.CONNECTOR_PRICE_ENV}")
-    return price
+def line_items(stations: int, on_premise: bool) -> list[dict]:
+    """One tiered price whose quantity is the station count, plus the add-on.
 
-
-def line_items(plan_code: str, on_premise: bool,
-               connector_addons: int = 0) -> list[dict]:
-    items = [{"price": price_for(plan_code), "quantity": 1}]
+    The tiers on the price itself carry the floor and the cap, so Stripe does
+    the whole clamp — see `plans.station_tiers()`. Quantity is at least 1: a
+    company with no stations yet is still buying the floor, and Stripe refuses
+    a zero-quantity line anyway.
+    """
+    items = [{"price": station_price(), "quantity": max(1, stations)}]
     if on_premise:
         items.append({"price": onprem_price(), "quantity": 1})
-    if connector_addons > 0:
-        # A quantity, not N separate lines: Stripe prorates a quantity change
-        # the same way it prorates a plan change, so going from two extra
-        # connectors to one behaves like any other downgrade.
-        items.append({"price": connector_price(), "quantity": connector_addons})
     return items
 
 
@@ -115,9 +108,8 @@ def ensure_customer(sub, company_name: str, email: str) -> str:
 
 # ─── Checkout ────────────────────────────────────────────────────────────────
 
-def checkout_session(*, customer_id: str, plan_code: str, on_premise: bool,
-                     company_id: str, success_url: str, cancel_url: str,
-                     connector_addons: int = 0):
+def checkout_session(*, customer_id: str, stations: int, on_premise: bool,
+                     company_id: str, success_url: str, cancel_url: str):
     """A hosted checkout for a first purchase.
 
     Card **and** ACH. ACH is 0.8% capped at $5 against 2.9% + 30¢ for cards, so
@@ -139,16 +131,14 @@ def checkout_session(*, customer_id: str, plan_code: str, on_premise: bool,
     return s.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
-        line_items=line_items(plan_code, on_premise, connector_addons),
+        line_items=line_items(stations, on_premise),
         # Software subscriptions are taxed inconsistently by state; switching
         # this on retroactively after a year of sales is expensive and
         # unpleasant. See pricing.md.
         automatic_tax={"enabled": True},
         customer_update={"address": "auto", "name": "auto"},
         subscription_data={"metadata": {"companyId": company_id,
-                                        "planCode": plan_code,
-                                        "onPremise": str(on_premise).lower(),
-                                        "connectorAddons": str(connector_addons)}},
+                                        "onPremise": str(on_premise).lower()}},
         success_url=success_url,
         cancel_url=cancel_url,
     )
@@ -229,30 +219,65 @@ def portal_session(*, customer_id: str, return_url: str):
         customer=customer_id, return_url=return_url, configuration=config_id)
 
 
-# ─── Plan changes ────────────────────────────────────────────────────────────
+# ─── Changing a live subscription ────────────────────────────────────────────
 
-def change_plan(*, subscription_id: str, plan_code: str, on_premise: bool,
-                upgrading: bool, connector_addons: int = 0):
-    """Move a live subscription to another plan, prorated to the day.
+def update_station_quantity(subscription_id: str, quantity: int):
+    """Report the current station count as the subscription's quantity.
 
-    See the module docstring for why `proration_behavior` differs by direction.
-    `payment_behavior='allow_incomplete'` matters for ACH: an upgrade invoiced
-    immediately would otherwise fail while the transfer is still clearing, and
-    the customer would be told their upgrade was declined when it was merely
-    slow.
+    No proration — see the module docstring. The count at the period boundary
+    is what the month costs, so drawing and redrawing a floor mid-cycle
+    produces no invoice noise at all. Skips the API write when Stripe already
+    has the number, since this is called on every station create/delete.
     """
     s = _stripe()
     current = s.Subscription.retrieve(subscription_id, expand=["items"])
-    # Replace every existing line rather than patching one: the on-premise
-    # add-on may be arriving or leaving in the same change.
-    deletions = [{"id": item.id, "deleted": True} for item in current["items"]["data"]]
+    price_id = station_price()
+    for item in current["items"]["data"]:
+        if item["price"]["id"] == price_id:
+            if int(item.get("quantity", 0) or 0) == quantity:
+                return current
+            return s.Subscription.modify(
+                subscription_id,
+                items=[{"id": item["id"], "quantity": quantity}],
+                proration_behavior="none",
+            )
+    # No station item at all would mean the subscription predates this model;
+    # add the line rather than silently reporting nothing.
     return s.Subscription.modify(
         subscription_id,
-        items=deletions + line_items(plan_code, on_premise, connector_addons),
-        proration_behavior="always_invoice" if upgrading else "create_prorations",
+        items=[{"price": price_id, "quantity": quantity}],
+        proration_behavior="none",
+    )
+
+
+def set_on_premise(subscription_id: str, on_premise: bool):
+    """Add or remove the on-premise add-on on a live subscription.
+
+    Adding invoices now — the licence is granted now. Removing credits
+    forward. `payment_behavior='allow_incomplete'` matters for ACH: an
+    immediate invoice would otherwise fail while the transfer is still
+    clearing, and the customer would be told their add-on was declined when
+    it was merely slow.
+    """
+    s = _stripe()
+    current = s.Subscription.retrieve(subscription_id, expand=["items"])
+    price_id = onprem_price()
+    existing = next((item for item in current["items"]["data"]
+                     if item["price"]["id"] == price_id), None)
+    if on_premise and existing is None:
+        items = [{"price": price_id, "quantity": 1}]
+        proration = "always_invoice"
+    elif not on_premise and existing is not None:
+        items = [{"id": existing["id"], "deleted": True}]
+        proration = "create_prorations"
+    else:
+        return current                              # already as asked
+    return s.Subscription.modify(
+        subscription_id,
+        items=items,
+        proration_behavior=proration,
         payment_behavior="allow_incomplete",
-        metadata={"planCode": plan_code, "onPremise": str(on_premise).lower(),
-                  "connectorAddons": str(connector_addons)},
+        metadata={"onPremise": str(on_premise).lower()},
     )
 
 
@@ -347,27 +372,25 @@ def fetch_subscription(subscription_id: str):
     return _stripe().Subscription.retrieve(subscription_id)
 
 
-def plan_from_subscription(obj) -> tuple[str, bool, int]:
-    """Read (planCode, onPremise, connectorAddons) off a Stripe subscription.
+def shape_of_subscription(obj) -> tuple[Optional[int], bool]:
+    """Read (stations, onPremise) off a Stripe subscription.
 
     Prefers the price ids on the live line items over the metadata, because
     metadata is what *we* last wrote and the items are what Stripe will
-    actually bill. When they disagree, the items are the truth.
+    actually bill. When they disagree, the items are the truth. `stations` is
+    None when no station line was found at all — a shape this code never
+    creates, reported as unknown rather than invented as zero.
     """
     ids = plans.price_ids()
     by_price = {v: k for k, v in ids.items() if v}
-    plan_code, on_premise, addons = None, False, 0
+    stations, on_premise = None, False
     for item in obj.get("items", {}).get("data", []):
         code = by_price.get(item.get("price", {}).get("id"))
         if code == "onprem":
             on_premise = True
-        elif code == "connector":
-            addons = int(item.get("quantity", 0) or 0)
-        elif code:
-            plan_code = code
-    if plan_code is None:
-        meta = obj.get("metadata") or {}
-        plan_code = meta.get("planCode") or plans.TRIAL
-        on_premise = on_premise or (meta.get("onPremise") == "true")
-        addons = addons or int(meta.get("connectorAddons") or 0)
-    return plan_code, on_premise, addons
+        elif code == "taktline":
+            stations = int(item.get("quantity", 1) or 1)
+    if stations is None:
+        on_premise = on_premise or (
+            (obj.get("metadata") or {}).get("onPremise") == "true")
+    return stations, on_premise

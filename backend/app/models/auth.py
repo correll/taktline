@@ -101,7 +101,6 @@ class CompanyMembership(BaseModel):
     planState: str = "ok"          # ok | read_only | locked
     stationLimit: Optional[int] = None
     integrations: bool = False
-    trialEndsAt: Optional[datetime] = None
 
 
 class MeResponse(BaseModel):

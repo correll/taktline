@@ -1,43 +1,38 @@
 import { useCallback, useEffect, useState } from 'react'
-import { billingApi, money, type Plan, type Subscription } from '../../api/billing.api'
+import { billingApi, money, monthlyCentsFor, type Pricing, type Subscription }
+  from '../../api/billing.api'
 import { useAuthStore } from '../../store/auth.store'
 import { color, font, size } from '../../theme/tokens'
 
 /**
- * Settings → Billing: what you are on, what you are using, and what else there
- * is.
+ * Settings → Billing: what this line costs, and why.
  *
- * Two things this screen is careful about.
- *
- * **It says what a change will cost, before it happens.** Proration is the
- * part of a subscription people distrust, and with reason — most products let
- * you click "downgrade" and then send a bill that does not match. Upgrades are
- * charged now, pro-rated for the days remaining; downgrades credit forward.
- * Both are stated on the button.
- *
- * **It never shows a control that cannot work.** Over your station count for
- * the plan you are picking, the button explains what to remove rather than
- * failing after the click.
+ * There is no plan picker, because there is no plan to pick. The price IS the
+ * station count — $2 a station, never less than the floor, never more than
+ * the cap — so this screen's job is to show that arithmetic honestly: your N
+ * stations × $2, clamped, with the two boundary numbers stated. Drawing a
+ * station changes the price next period; nothing here needs a decision beyond
+ * "start paying" and, later, the on-premise add-on and the portal.
  */
 export default function BillingTab() {
   const activeCompanyId = useAuthStore((s) => s.activeCompanyId)
   const refreshMe = useAuthStore((s) => s.refresh)
   const [sub, setSub] = useState<Subscription | null>(null)
-  const [plans, setPlans] = useState<Plan[]>([])
+  const [pricing, setPricing] = useState<Pricing | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [onPremise, setOnPremise] = useState(false)
+  const [wantOnPremise, setWantOnPremise] = useState(false)
 
   const load = useCallback(async () => {
     if (!activeCompanyId) return
     try {
       const [s, p] = await Promise.all([
         billingApi.subscription(activeCompanyId),
-        billingApi.plans(),
+        billingApi.pricing(),
       ])
       setSub(s)
-      setPlans(p.filter((x) => x.purchasable))
-      setOnPremise(s.onPremise)
+      setPricing(p)
+      setWantOnPremise(s.onPremise)
     } catch (e) {
       setError(String(e))
     }
@@ -46,9 +41,14 @@ export default function BillingTab() {
   useEffect(() => { void load() }, [load])
 
   if (!activeCompanyId) return null
-  if (!sub) {
+  if (!sub || !pricing) {
     return <p style={{ color: color.textDim, fontSize: 13 }}>{error ?? 'Loading…'}</p>
   }
+
+  const paying = sub.plan === 'taktline' && sub.hasPaymentMethod
+  const stations = sub.usage.stations
+  const wouldPay = monthlyCentsFor(stations, pricing)
+    + (wantOnPremise ? pricing.onpremCents : 0)
 
   const go = async (fn: () => Promise<{ url: string }>, key: string) => {
     setBusy(key); setError(null)
@@ -60,17 +60,12 @@ export default function BillingTab() {
     }
   }
 
-  const switchTo = async (code: string) => {
-    setBusy(code); setError(null)
+  const toggleOnPremise = async (enabled: boolean) => {
+    setBusy('onprem'); setError(null)
     try {
-      if (sub.hasPaymentMethod && sub.plan !== 'trial') {
-        setSub(await billingApi.changePlan(activeCompanyId, code, onPremise))
-        await refreshMe()
-      } else {
-        const { url } = await billingApi.checkout(activeCompanyId, code, onPremise)
-        window.location.href = url
-        return
-      }
+      setSub(await billingApi.setOnPremise(activeCompanyId, enabled))
+      setWantOnPremise(enabled)
+      await refreshMe()
     } catch (e) {
       setError(String(e))
     } finally {
@@ -80,32 +75,52 @@ export default function BillingTab() {
 
   return (
     <div style={{ maxWidth: 760 }}>
-      <CurrentPlan sub={sub} />
+      <CurrentPlan sub={sub} pricing={pricing} />
 
       {sub.billingEnabled ? (
-        <>
-          <h3 style={h3}>{sub.plan === 'trial' ? 'Choose a plan' : 'Change plan'}</h3>
-          <label style={{
-            display: 'flex', alignItems: 'center', gap: size.sp2, margin: `0 0 ${size.sp4}`,
-            fontSize: 13, color: color.textSecondary, cursor: 'pointer',
-          }}>
-            <input type="checkbox" checked={onPremise}
-                   onChange={(e) => setOnPremise(e.target.checked)} />
-            Run on our own hardware (+$199/month)
-          </label>
-
-          <div style={{ display: 'grid', gap: size.sp3 }}>
-            {plans.map((p) => (
-              <PlanCard
-                key={p.code} plan={p} sub={sub} onPremise={onPremise}
-                busy={busy === p.code}
-                onPick={() => switchTo(p.code)}
-              />
-            ))}
-          </div>
-
-          {sub.hasPaymentMethod && (
-            <div style={{ marginTop: size.sp5 }}>
+        sub.plan === 'free' ? (
+          <>
+            <h3 style={h3}>Go beyond {pricing.freeStations} stations</h3>
+            <PriceExplainer pricing={pricing} stations={stations} />
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: size.sp2,
+              margin: `${size.sp4} 0`, fontSize: 13, color: color.textSecondary,
+              cursor: 'pointer',
+            }}>
+              <input type="checkbox" checked={wantOnPremise}
+                     onChange={(e) => setWantOnPremise(e.target.checked)} />
+              Run on our own hardware (+{money(pricing.onpremCents)}/month)
+            </label>
+            <button onClick={() => go(() => billingApi.checkout(activeCompanyId, wantOnPremise),
+                                      'checkout')}
+                    disabled={busy === 'checkout'} style={primary}>
+              {busy === 'checkout' ? 'Opening…'
+                : `Subscribe — ${money(wouldPay)}/month for your ${stations || 'first'} station${stations === 1 ? '' : 's'}`}
+            </button>
+            <p style={note}>
+              Handled by Stripe. Card and US bank transfer (ACH) are both accepted.
+              The price follows your floor by itself: add a station and next
+              month costs {money(pricing.perStationCents)} more, remove one and
+              it costs {money(pricing.perStationCents)} less. Nothing to renegotiate.
+            </p>
+          </>
+        ) : (
+          <>
+            {paying && (
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: size.sp2,
+                margin: `0 0 ${size.sp4}`, fontSize: 13, color: color.textSecondary,
+                cursor: busy === 'onprem' ? 'wait' : 'pointer',
+              }}>
+                <input type="checkbox" checked={sub.onPremise}
+                       disabled={busy === 'onprem'}
+                       onChange={(e) => toggleOnPremise(e.target.checked)} />
+                On-premise add-on (+{money(pricing.onpremCents)}/month) —{' '}
+                {sub.onPremise ? 'removing credits your next invoice'
+                               : 'adding is charged today, pro-rated'}
+              </label>
+            )}
+            <div>
               <button
                 onClick={() => go(() => billingApi.portal(activeCompanyId), 'portal')}
                 disabled={busy === 'portal'}
@@ -114,12 +129,14 @@ export default function BillingTab() {
                 {busy === 'portal' ? 'Opening…' : 'Payment method, invoices and cancellation'}
               </button>
               <p style={note}>
-                Handled by Stripe. Card and US bank transfer (ACH) are both accepted;
-                bank transfer costs us less, so it is the one we prefer on the larger plans.
+                Handled by Stripe. If you cancel, you keep the month you paid
+                for; after that the account pauses and nothing is ever deleted —
+                a line of {pricing.freeStations} stations or fewer simply
+                becomes a free account again.
               </p>
             </div>
-          )}
-        </>
+          </>
+        )
       ) : (
         <p style={note}>
           This deployment is not connected to a payment provider, so nothing here is
@@ -141,7 +158,7 @@ export default function BillingTab() {
 
 // ─── Current plan ────────────────────────────────────────────────────────────
 
-function CurrentPlan({ sub }: { sub: Subscription }) {
+function CurrentPlan({ sub, pricing }: { sub: Subscription; pricing: Pricing }) {
   const used = sub.usage.stations
   const limit = sub.usage.stationLimit
   const pct = limit ? Math.min(100, (used / limit) * 100) : 0
@@ -161,6 +178,7 @@ function CurrentPlan({ sub }: { sub: Subscription }) {
         {sub.monthlyCents > 0 && (
           <span style={{ fontSize: 14, color: color.textSecondary }}>
             {money(sub.monthlyCents)}/month
+            {' · '}{used} station{used === 1 ? '' : 's'}
           </span>
         )}
         <StateChip sub={sub} />
@@ -193,23 +211,50 @@ function CurrentPlan({ sub }: { sub: Subscription }) {
 
       <div style={{ marginTop: size.sp3, fontSize: 12.5, color: color.textDim }}>
         {sub.integrations
-          ? 'ERP and shop-system integrations are included.'
-          : 'Integrations are not included on this plan.'}
+          ? 'Every ERP and shop-system connector is included.'
+          : `Integrations come with the paid plan — every connector included, ` +
+            `unlimited stations at ${money(pricing.perStationCents)} each.`}
       </div>
     </section>
   )
 }
 
+/** The whole model, in one strip the reader can check with a pencil. */
+function PriceExplainer({ pricing, stations }: { pricing: Pricing; stations: number }) {
+  const rows: Array<[string, string]> = [
+    [`Up to ${pricing.freeStations} stations`, 'free, forever'],
+    [`${money(pricing.perStationCents)} per station / month`,
+     `never less than ${money(pricing.minimumCents)}`],
+    [`From ${pricing.capStations} stations`,
+     `capped at ${money(pricing.capCents)} — you will never pay more`],
+  ]
+  return (
+    <div style={{
+      display: 'grid', gap: 6, margin: `0 0 ${size.sp2}`,
+      fontSize: 13, color: color.textSecondary,
+    }}>
+      {rows.map(([a, b]) => (
+        <div key={a} style={{ display: 'flex', gap: size.sp3 }}>
+          <span style={{ minWidth: 210, color: color.textPrimary }}>{a}</span>
+          <span style={{ color: color.textDim }}>{b}</span>
+        </div>
+      ))}
+      {stations > 0 && (
+        <div style={{ marginTop: 4, fontFamily: font.mono, fontSize: 12.5 }}>
+          Your line today: {stations} × {money(pricing.perStationCents)} →{' '}
+          {money(monthlyCentsFor(stations, pricing))}/month
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Deadline({ sub }: { sub: Subscription }) {
-  const when = sub.state === 'read_only' ? sub.graceEndsAt
-             : sub.plan === 'trial' ? sub.trialEndsAt
-             : sub.currentPeriodEnd
+  const when = sub.state === 'read_only' ? sub.graceEndsAt : sub.currentPeriodEnd
   if (!when) return null
   const date = new Date(when.endsWith('Z') || when.includes('+') ? when : `${when}Z`)
   const days = Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86_400_000))
-  const label = sub.state === 'read_only' ? 'Read-only until'
-              : sub.plan === 'trial' ? 'Trial ends'
-              : 'Renews'
+  const label = sub.state === 'read_only' ? 'Read-only until' : 'Renews'
   return (
     <div style={{ marginTop: size.sp2, fontSize: 13, color: color.textSecondary }}>
       {label} {date.toLocaleDateString()} · {days} day{days === 1 ? '' : 's'}
@@ -238,63 +283,6 @@ function Chip({ children, tone = color.textDim }: { children: React.ReactNode; t
   )
 }
 
-// ─── One plan ────────────────────────────────────────────────────────────────
-
-function PlanCard({ plan, sub, onPremise, busy, onPick }: {
-  plan: Plan; sub: Subscription; onPremise: boolean; busy: boolean; onPick: () => void
-}) {
-  const current = plan.code === sub.plan && onPremise === sub.onPremise
-  const total = plan.monthlyCents + (onPremise ? 19900 : 0)
-  const currentTotal = sub.monthlyCents
-  const isUpgrade = total > currentTotal
-  const tooSmall = plan.stations !== null && sub.usage.stations > plan.stations
-
-  return (
-    <div style={{
-      border: `1px solid ${current ? color.bluePrimary : color.border}`,
-      borderRadius: size.radiusMd, padding: size.sp4,
-      background: current ? `${color.bluePrimary}0D` : 'transparent',
-      display: 'flex', alignItems: 'center', gap: size.sp4, flexWrap: 'wrap',
-    }}>
-      <div style={{ flex: 1, minWidth: 240 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: size.sp2 }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: color.textPrimary }}>
-            {plan.label}
-          </span>
-          <span style={{ fontSize: 14, color: color.textSecondary }}>
-            {money(total)}/month
-          </span>
-          {current && <Chip tone={color.blueBright}>current</Chip>}
-        </div>
-        <p style={{ margin: `4px 0 0`, fontSize: 12.5, color: color.textDim, lineHeight: 1.5 }}>
-          {plan.blurb}
-        </p>
-      </div>
-
-      {!current && (
-        <div style={{ textAlign: 'right' }}>
-          <button onClick={onPick} disabled={busy || tooSmall}
-                  style={tooSmall ? ghostDisabled : primary}>
-            {busy ? 'Working…'
-              : sub.hasPaymentMethod && sub.plan !== 'trial'
-                ? (isUpgrade ? 'Upgrade' : 'Switch')
-                : 'Choose'}
-          </button>
-          <div style={{ ...note, marginTop: 4, maxWidth: 260, textAlign: 'right' }}>
-            {tooSmall
-              ? `Remove ${sub.usage.stations - (plan.stations ?? 0)} stations first`
-              : sub.hasPaymentMethod && sub.plan !== 'trial'
-                ? (isUpgrade
-                    ? 'Charged today for the days left in this month'
-                    : 'Credited to your next invoice, to the day')
-                : ''}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const h3 = {
@@ -308,7 +296,7 @@ const note = {
 
 const primary = {
   background: color.bluePrimary, color: '#fff', border: 'none',
-  borderRadius: size.radius, padding: '8px 18px', fontSize: 13, fontWeight: 600,
+  borderRadius: size.radius, padding: '10px 20px', fontSize: 13.5, fontWeight: 600,
   cursor: 'pointer', fontFamily: 'inherit',
 } as const
 
@@ -317,5 +305,3 @@ const ghost = {
   borderRadius: size.radius, padding: '8px 16px', fontSize: 13, cursor: 'pointer',
   fontFamily: 'inherit',
 } as const
-
-const ghostDisabled = { ...ghost, opacity: 0.5, cursor: 'not-allowed' } as const

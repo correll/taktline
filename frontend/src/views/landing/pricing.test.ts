@@ -16,11 +16,11 @@ import { describe, expect, it } from 'vitest'
 const plansPy = readFileSync(
   resolve(__dirname, '../../../../backend/app/core/plans.py'), 'utf-8')
 
-function centsFor(code: string): number {
-  const block = plansPy.split(`"${code}": Plan(`)[1]
-  const m = block?.match(/monthly_cents=(\d+)/)
-  if (!m) throw new Error(`no monthly_cents for ${code} in plans.py`)
-  return Number(m[1])
+function constant(name: string): number {
+  // Values in plans.py may carry Python digit separators: 39_900.
+  const m = plansPy.match(new RegExp(`${name} = ([\\d_]+)`))
+  if (!m) throw new Error(`no ${name} in plans.py`)
+  return Number(m[1].replace(/_/g, ''))
 }
 
 const landing = readFileSync(resolve(__dirname, 'LandingView.tsx'), 'utf-8')
@@ -30,20 +30,26 @@ describe('the advertised price is the charged price', () => {
   it('reads real numbers out of plans.py', () => {
     // Guard the guard: a parser that silently returned 0 would make every
     // assertion below vacuous.
-    expect(centsFor('basic_50')).toBeGreaterThan(0)
-    expect(centsFor('pro_100')).toBeGreaterThan(centsFor('basic_50'))
+    expect(constant('PER_STATION_CENTS')).toBeGreaterThan(0)
+    expect(constant('CAP_CENTS')).toBeGreaterThan(constant('MIN_CENTS'))
   })
 
   it('matches the landing page', () => {
-    for (const code of ['basic_50', 'pro_50', 'pro_100', 'plant_250']) {
-      const dollars = centsFor(code) / 100
-      expect(landing, `$${dollars} (${code}) missing from the landing page`)
-        .toContain(`$${dollars}`)
-    }
-    for (const konst of ['ONPREM_CENTS', 'CONNECTOR_CENTS']) {
-      const dollars = Number(plansPy.match(new RegExp(`${konst} = (\\d+)`))![1]) / 100
-      expect(landing, `$${dollars} (${konst}) missing from the landing page`)
-        .toContain(`$${dollars}`)
+    const perStation = constant('PER_STATION_CENTS') / 100
+    const min = constant('MIN_CENTS') / 100
+    const cap = constant('CAP_CENTS') / 100
+    const free = constant('FREE_STATIONS')
+    const onprem = constant('ONPREM_CENTS') / 100
+
+    for (const [what, needle] of [
+      ['the per-station price', `$${perStation} per station`],
+      ['the floor', `$${min}`],
+      ['the cap', `$${cap}`],
+      ['the free tier', `up to ${free} stations`],
+      ['on-premise', `$${onprem}/month`],
+    ] as Array<[string, string]>) {
+      expect(landing, `${what} (${needle}) missing from the landing page`)
+        .toContain(needle)
     }
   })
 
@@ -51,17 +57,25 @@ describe('the advertised price is the charged price', () => {
     const json = JSON.parse(
       indexHtml.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)![1])
     const offers: { name: string; price: string }[] = json.offers.offers
-    const byName: Record<string, string> = {
-      basic_50: 'Basic', pro_50: 'Professional', pro_100: 'Professional 100',
-      plant_250: 'Plant',
+    const paid = offers.find((o) => o.name === 'Taktline')
+    const free = offers.find((o) => o.name === 'Free')
+    expect(free, 'no JSON-LD offer named Free').toBeDefined()
+    expect(Number(free!.price)).toBe(0)
+    expect(paid, 'no JSON-LD offer named Taktline').toBeDefined()
+    expect(Number(paid!.price)).toBe(constant('PER_STATION_CENTS') / 100)
+    expect(Number(json.offers.lowPrice)).toBe(0)
+    expect(Number(json.offers.highPrice)).toBe(constant('CAP_CENTS') / 100)
+  })
+
+  it('never promises a banded plan again', () => {
+    // The retired tiers are the copy-paste most likely to come back. A page
+    // quoting "$116/month" or "up to 50 stations" is quoting a price list
+    // that no longer exists.
+    for (const ghost of ['$58', '$116', '$290', 'up to 50 stations',
+                         'up to 100 stations', 'up to 250 stations']) {
+      expect(landing, `the landing page still quotes ${ghost}`).not.toContain(ghost)
+      expect(indexHtml, `index.html still quotes ${ghost}`).not.toContain(ghost)
     }
-    for (const [code, name] of Object.entries(byName)) {
-      const offer = offers.find((o) => o.name === name)
-      expect(offer, `no JSON-LD offer named ${name}`).toBeDefined()
-      expect(Number(offer!.price)).toBe(centsFor(code) / 100)
-    }
-    expect(Number(json.offers.lowPrice)).toBe(centsFor('basic_50') / 100)
-    expect(Number(json.offers.highPrice)).toBe(centsFor('plant_250') / 100)
   })
 
   it('no longer promises anything free forever', () => {

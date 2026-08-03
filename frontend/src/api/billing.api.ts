@@ -3,14 +3,15 @@ import { client } from './client'
 // `client` unwraps `response.data` in an interceptor, so these return the body
 // directly — no `.then(r => r.data)`.
 
-export interface Plan {
-  code: string
-  label: string
-  stations: number | null
-  integrations: boolean
-  monthlyCents: number
-  blurb: string
-  purchasable: boolean
+/** The whole price list — one metered plan, so it is arithmetic, not tiers. */
+export interface Pricing {
+  freeStations: number
+  perStationCents: number
+  minimumCents: number
+  capCents: number
+  minStations: number
+  capStations: number
+  onpremCents: number
 }
 
 export interface Subscription {
@@ -22,7 +23,6 @@ export interface Subscription {
   stationLimit: number | null
   integrations: boolean
   monthlyCents: number
-  trialEndsAt: string | null
   currentPeriodEnd: string | null
   graceEndsAt: string | null
   settling: boolean
@@ -31,37 +31,32 @@ export interface Subscription {
   hasPaymentMethod: boolean
 }
 
-export interface TrialStop {
-  companyName: string
-  valid: boolean
-  stations: number
-  lots: number
-}
-
 export const billingApi = {
-  plans: (): Promise<Plan[]> => client.get('/billing/plans'),
+  pricing: (): Promise<Pricing> => client.get('/billing/plans'),
 
   subscription: (companyId: string): Promise<Subscription> =>
     client.get(`/billing/${companyId}/subscription`),
 
-  /** Returns a Stripe-hosted URL to send the browser to. */
-  checkout: (companyId: string, planCode: string, onPremise = false): Promise<{ url: string }> =>
-    client.post(`/billing/${companyId}/checkout`, { planCode, onPremise }),
+  /** Returns a Stripe-hosted URL to send the browser to. The station count is
+   *  not a parameter: the server bills the line it can see. */
+  checkout: (companyId: string, onPremise = false): Promise<{ url: string }> =>
+    client.post(`/billing/${companyId}/checkout`, { onPremise }),
 
   /** Payment method, invoices and cancellation — Stripe's own portal. */
   portal: (companyId: string): Promise<{ url: string }> =>
     client.post(`/billing/${companyId}/portal`, {}),
 
-  /** Prorated to the day. Upgrades are invoiced now; downgrades credit forward. */
-  changePlan: (companyId: string, planCode: string, onPremise = false): Promise<Subscription> =>
-    client.post(`/billing/${companyId}/change-plan`, { planCode, onPremise }),
+  /** The one plan change that exists. Adding is invoiced today; removing
+   *  credits forward. */
+  setOnPremise: (companyId: string, enabled: boolean): Promise<Subscription> =>
+    client.post(`/billing/${companyId}/on-premise`, { enabled }),
+}
 
-  /** What the opt-out link in a trial email is about to destroy. */
-  describeTrialStop: (companyId: string, token: string): Promise<TrialStop> =>
-    client.get('/billing/trial/stop', { params: { company: companyId, token } }),
-
-  stopTrial: (companyId: string, token: string): Promise<void> =>
-    client.post('/billing/trial/stop', null, { params: { company: companyId, token } }),
+/** The clamp, mirrored from `plans.monthly_cents_for` for instant display.
+ *  The server's number is authoritative; this exists so the price updates as
+ *  the reader thinks about station counts, without a round trip each time. */
+export function monthlyCentsFor(stations: number, p: Pricing): number {
+  return Math.min(Math.max(stations * p.perStationCents, p.minimumCents), p.capCents)
 }
 
 export function money(cents: number): string {

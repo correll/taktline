@@ -1,4 +1,4 @@
-"""Create the Stripe products and prices Taktline sells, idempotently.
+"""Create the two Stripe prices Taktline sells, idempotently.
 
     STRIPE_SECRET_KEY=sk_... .venv/bin/python setup_stripe.py
 
@@ -6,27 +6,28 @@ Prints the STRIPE_PRICE_* lines to paste into .env / render.yaml. Run once per
 mode — the sandbox/test key and the live key are different accounts with
 different price ids, which is why the ids live in env vars and not in code.
 
-Idempotent by **lookup key** (`taktline_<code>`): a re-run finds the existing
-price and prints its id rather than minting a sibling. A price's amount is
-immutable in Stripe, so if the amount here disagrees with the one found, the
-script says so and exits nonzero — changing a sell price is a deliberate
-operation (create the new price, move the lookup key, keep billing existing
-subscribers the old one), not something a bootstrap should do on its own.
+Two prices, that is all:
 
-Two decisions worth writing down:
+**The station price** (`taktline_station`) is a single tiered price carrying
+the whole model — $2 per station with the $29 floor and the $399 cap expressed
+as volume tiers, so Stripe does the clamp and an invoice can never disagree
+with pricing.md. The subscription's *quantity* is the station count, reported
+by the app whenever the floor changes (`entitlements.report_station_count`).
 
-**Tax codes are set here, on the product,** because with `automatic_tax` on
-they are what Stripe Tax reasons from. The cloud plans and the connector
-add-on are `txcd_10103001` (SaaS, business use) — several states exempt
-exactly this while taxing downloaded software, so the *specific* code is the
-difference between charging a customer tax their state does not owe and not.
-The on-premise add-on is `txcd_10202003` (downloadable software, business
-use): it runs on the customer's hardware, which is the distinction those same
-states draw.
+**The on-premise add-on** is a flat monthly line on the same subscription.
 
-**`tax_behavior` is exclusive** (tax added on top). US B2B convention — and
-with automatic tax enabled, a price with no tax behavior fails at checkout,
-so it must be said explicitly.
+Idempotent by **lookup key**: a re-run finds the existing price and prints its
+id rather than minting a sibling. Prices are immutable in Stripe, so if the
+tiers or amount found disagree with `plans.py` the script says so and exits
+nonzero — changing the price is a deliberate operation (create the new price,
+move the lookup key, keep billing existing subscribers the old one), not
+something a bootstrap should do on its own.
+
+Tax: both prices are `txcd_10103001` (SaaS, business use) with
+`tax_behavior=exclusive` — with automatic tax on, a price with no tax
+behavior fails at checkout. The on-premise add-on is sold as the *service* of
+running the software (licence + updates), so it keeps the SaaS code; the Box
+hardware is invoiced separately and is NOT set up here.
 """
 
 from __future__ import annotations
@@ -36,67 +37,81 @@ import sys
 
 from app.core import plans
 
-#: SaaS, business use. NOT txcd_10103000, which is personal use — states tax
-#: the two differently.
-SAAS_TAX_CODE = "txcd_10103001"
-#: Downloadable software, business use — the on-premise build.
-ONPREM_TAX_CODE = "txcd_10202003"
+SAAS_TAX_CODE = "txcd_10103001"     # business use — NOT ..000, which is personal
+
+STATION_LOOKUP = "taktline_station"
+ONPREM_LOOKUP = "taktline_onprem"
 
 
-def sellables() -> list[dict]:
-    items = []
-    for plan in plans.PLANS.values():
-        if not plan.price_env:
-            continue
-        items.append({
-            "code": plan.code,
-            "name": f"Taktline {plan.label} — up to {plan.stations} stations",
-            "cents": plan.monthly_cents,
-            "env": plan.price_env,
-            "tax_code": SAAS_TAX_CODE,
-        })
-    items.append({
-        "code": "onprem",
-        "name": "Taktline on-premise add-on",
-        "cents": plans.ONPREM_CENTS,
-        "env": plans.ONPREM_PRICE_ENV,
-        "tax_code": ONPREM_TAX_CODE,
-    })
-    items.append({
-        "code": "connector",
-        "name": "Taktline additional connector",
-        "cents": plans.CONNECTOR_CENTS,
-        "env": plans.CONNECTOR_PRICE_ENV,
-        "tax_code": SAAS_TAX_CODE,
-    })
-    return items
+def _tiers_match(price, want: list[dict]) -> bool:
+    got = price.get("tiers") or []
+    if len(got) != len(want):
+        return False
+    for g, w in zip(got, want):
+        up_to = g.get("up_to")                       # None = the inf tier
+        if (w["up_to"] == "inf") != (up_to is None):
+            return False
+        if w["up_to"] != "inf" and up_to != w["up_to"]:
+            return False
+        if g.get("flat_amount") != w.get("flat_amount"):
+            return False
+        if g.get("unit_amount") != w.get("unit_amount"):
+            return False
+    return True
 
 
-def ensure_price(stripe, item: dict) -> tuple[str, bool]:
-    """Return (price id, ok). ok=False means an amount mismatch was found."""
-    lookup_key = f"taktline_{item['code']}"
-    found = stripe.Price.list(lookup_keys=[lookup_key], limit=1)["data"]
+def ensure_station_price(stripe) -> tuple[str, bool]:
+    want = plans.station_tiers()
+    found = stripe.Price.list(lookup_keys=[STATION_LOOKUP], limit=1,
+                              expand=["data.tiers"])["data"]
     if found:
         price = found[0]
-        if price["unit_amount"] != item["cents"]:
-            print(f"  !! {lookup_key}: exists at {price['unit_amount']}¢, "
-                  f"code says {item['cents']}¢ — create the new price and "
-                  f"move the lookup key by hand, this script will not.")
+        if not _tiers_match(price, want):
+            print(f"  !! {STATION_LOOKUP}: exists with different tiers than "
+                  f"plans.py — create the new price and move the lookup key "
+                  f"by hand, this script will not.")
             return price["id"], False
-        print(f"  ok {lookup_key}: {price['id']} (existing)")
+        print(f"  ok {STATION_LOOKUP}: {price['id']} (existing)")
         return price["id"], True
     price = stripe.Price.create(
-        lookup_key=lookup_key,
+        lookup_key=STATION_LOOKUP,
         currency="usd",
-        unit_amount=item["cents"],
+        recurring={"interval": "month"},
+        billing_scheme="tiered",
+        tiers_mode="volume",         # the tier containing the total applies to
+        tiers=want,                  # ALL units — the clamp, not a staircase
+        tax_behavior="exclusive",
+        product_data={"name": "Taktline — per station",
+                      "tax_code": SAAS_TAX_CODE,
+                      "metadata": {"taktline": "station"}},
+        metadata={"taktline": "station"},
+    )
+    print(f"  ok {STATION_LOOKUP}: {price['id']} (created)")
+    return price["id"], True
+
+
+def ensure_onprem_price(stripe) -> tuple[str, bool]:
+    found = stripe.Price.list(lookup_keys=[ONPREM_LOOKUP], limit=1)["data"]
+    if found:
+        price = found[0]
+        if price["unit_amount"] != plans.ONPREM_CENTS:
+            print(f"  !! {ONPREM_LOOKUP}: exists at {price['unit_amount']}¢, "
+                  f"plans.py says {plans.ONPREM_CENTS}¢ — resolve by hand.")
+            return price["id"], False
+        print(f"  ok {ONPREM_LOOKUP}: {price['id']} (existing)")
+        return price["id"], True
+    price = stripe.Price.create(
+        lookup_key=ONPREM_LOOKUP,
+        currency="usd",
+        unit_amount=plans.ONPREM_CENTS,
         recurring={"interval": "month"},
         tax_behavior="exclusive",
-        product_data={"name": item["name"],
-                      "tax_code": item["tax_code"],
-                      "metadata": {"taktline": item["code"]}},
-        metadata={"taktline": item["code"]},
+        product_data={"name": "Taktline on-premise add-on",
+                      "tax_code": SAAS_TAX_CODE,
+                      "metadata": {"taktline": "onprem"}},
+        metadata={"taktline": "onprem"},
     )
-    print(f"  ok {lookup_key}: {price['id']} (created)")
+    print(f"  ok {ONPREM_LOOKUP}: {price['id']} (created)")
     return price["id"], True
 
 
@@ -110,17 +125,14 @@ def main() -> int:
 
     stripe.api_key = key
     mode = "LIVE" if key.startswith(("sk_live", "rk_live")) else "test/sandbox"
-    print(f"Creating Taktline products and prices ({mode} mode)…")
+    print(f"Creating Taktline prices ({mode} mode)…")
 
-    env_lines, ok = [], True
-    for item in sellables():
-        price_id, item_ok = ensure_price(stripe, item)
-        ok = ok and item_ok
-        env_lines.append(f"{item['env']}={price_id}")
+    station_id, ok1 = ensure_station_price(stripe)
+    onprem_id, ok2 = ensure_onprem_price(stripe)
 
     print("\nEnvironment:")
-    for line in env_lines:
-        print(f"  {line}")
+    print(f"  {plans.STATION_PRICE_ENV}={station_id}")
+    print(f"  {plans.ONPREM_PRICE_ENV}={onprem_id}")
 
     print("\nStill manual, in the Dashboard:")
     print("  - Tax: origin address + your registrations "
@@ -131,7 +143,7 @@ def main() -> int:
           "emails; align the retry end-state with the 7-day grace window")
     print("  - Developers → Webhooks: endpoint /billing/webhook with the "
           "events in billing_stripe.HANDLED → STRIPE_WEBHOOK_SECRET")
-    return 0 if ok else 2
+    return 0 if ok1 and ok2 else 2
 
 
 if __name__ == "__main__":

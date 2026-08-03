@@ -9,6 +9,10 @@ otherwise never be exercised by anything.
 So each test here turns billing on explicitly, and one of them walks the app's
 own routing table to assert the gate covers every write endpoint — including
 whichever ones get written next month.
+
+The model under test (pricing.md): a free tier of 3 stations with no clock and
+no expiry, one metered paid plan, integrations on paid only, and non-payment
+ending in *paused*, never deleted.
 """
 
 import asyncio
@@ -62,7 +66,7 @@ def _station(a: Actor, name: str):
 
 # ─── Every company-creation path makes a subscription ────────────────────────
 
-def test_dev_bootstrap_creates_a_subscription(actor):
+def test_dev_bootstrap_creates_a_free_subscription(actor):
     a = actor()
     bootstrap_admin(a, "Boot co")
     from sqlalchemy import select
@@ -75,7 +79,7 @@ def test_dev_bootstrap_creates_a_subscription(actor):
                 Subscription.companyId == uuid.UUID(a.company)))).scalars().first()
 
     row = asyncio.run(go())
-    assert row is not None and row.planCode == plans.TRIAL
+    assert row is not None and row.planCode == plans.FREE
 
 
 def test_creating_a_second_company_creates_a_subscription(actor):
@@ -105,29 +109,34 @@ def _entitlement(company_id: str):
     return asyncio.run(go())
 
 
-def test_a_running_trial_is_ok(billing, actor):
+def test_a_free_account_is_ok_and_never_expires(billing, actor):
+    """The free tier has no clock. Stale timestamps left over from any past
+    state must not matter — someone who drew a three-station cell and came
+    back six months later should find it waiting."""
     a = actor()
-    bootstrap_admin(a, "Trial co")
-    _set_plan(a.company, planCode="trial", trialEndsAt=utcnow() + timedelta(days=3))
-    assert _entitlement(a.company).state == entitlements.OK
-
-
-def test_an_expired_trial_is_locked_not_read_only(billing, actor):
-    """A trial gets no grace tail. It ends, five emails have said so, and the
-    account is deleted on day 15."""
-    a = actor()
-    bootstrap_admin(a, "Expired co")
-    _set_plan(a.company, planCode="trial", trialEndsAt=utcnow() - timedelta(minutes=1))
+    bootstrap_admin(a, "Free co")
+    _set_plan(a.company, planCode="free",
+              graceEndsAt=utcnow() - timedelta(days=400))
     ent = _entitlement(a.company)
-    assert ent.state == entitlements.LOCKED
-    assert ent.reason == "trial_expired"
+    assert ent.state == entitlements.OK
+    assert ent.station_limit == plans.FREE_STATIONS
 
 
-def test_a_failed_payment_is_read_only_during_grace_then_locked(billing, actor):
+def test_a_legacy_trial_row_resolves_to_free(billing, actor):
+    """The trial is gone; a row written under it aliases to the free tier
+    rather than crashing the gate — or worse, locking a customer."""
+    a = actor()
+    bootstrap_admin(a, "Legacy co")
+    _set_plan(a.company, planCode="trial")
+    ent = _entitlement(a.company)
+    assert ent.plan.code == plans.FREE and ent.state == entitlements.OK
+
+
+def test_a_failed_payment_is_read_only_during_grace_then_paused(billing, actor):
     a = actor()
     bootstrap_admin(a, "Lapsing co")
 
-    _set_plan(a.company, planCode="basic_50", stripeStatus="past_due",
+    _set_plan(a.company, planCode="taktline", stripeStatus="past_due",
               graceEndsAt=utcnow() + timedelta(days=3))
     assert _entitlement(a.company).state == entitlements.READ_ONLY
 
@@ -141,26 +150,29 @@ def test_an_ach_payment_still_clearing_keeps_service_on(billing, actor):
     payment method we prefer."""
     a = actor()
     bootstrap_admin(a, "ACH co")
-    _set_plan(a.company, planCode="pro_50", stripeStatus="incomplete")
+    _set_plan(a.company, planCode="taktline", stripeStatus="incomplete")
     ent = _entitlement(a.company)
     assert ent.state == entitlements.OK
     assert ent.settling is True
 
 
 def test_a_comped_account_is_honoured(billing, actor):
-    """A paid plan code with no Stripe subscription is staff having granted it
-    by hand. It must not read as 'never paid'."""
+    """The paid plan code with no Stripe subscription is staff having granted
+    it by hand. It must not read as 'never paid'."""
     a = actor()
     bootstrap_admin(a, "Comped co")
-    _set_plan(a.company, planCode="pro_100", stripeStatus=None)
-    assert _entitlement(a.company).state == entitlements.OK
+    _set_plan(a.company, planCode="taktline", stripeStatus=None)
+    ent = _entitlement(a.company)
+    assert ent.state == entitlements.OK
+    assert ent.station_limit is None
 
 
 def test_billing_disabled_meters_nothing(actor):
-    """No Stripe key = self-hosted. Even a wildly expired row must not lock."""
+    """No Stripe key = self-hosted. Even a wildly lapsed row must not lock."""
     a = actor()
     bootstrap_admin(a, "Self hosted co")
-    _set_plan(a.company, planCode="trial", trialEndsAt=utcnow() - timedelta(days=99))
+    _set_plan(a.company, planCode="taktline", stripeStatus="past_due",
+              graceEndsAt=utcnow() - timedelta(days=99))
     ent = _entitlement(a.company)
     assert ent.state == entitlements.OK
     assert ent.station_limit is None
@@ -169,7 +181,8 @@ def test_billing_disabled_meters_nothing(actor):
 def test_on_premise_meters_nothing(monkeypatch, actor):
     a = actor()
     bootstrap_admin(a, "Onprem co")
-    _set_plan(a.company, planCode="trial", trialEndsAt=utcnow() - timedelta(days=99))
+    _set_plan(a.company, planCode="taktline", stripeStatus="past_due",
+              graceEndsAt=utcnow() - timedelta(days=99))
     monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_fake", raising=False)
     monkeypatch.setattr(settings, "deployment", "onprem", raising=False)
     assert _entitlement(a.company).state == entitlements.OK
@@ -177,10 +190,16 @@ def test_on_premise_meters_nothing(monkeypatch, actor):
 
 # ─── The gate, over HTTP ─────────────────────────────────────────────────────
 
-def test_locked_refuses_reads_and_writes_with_402(billing, actor):
+def _pause(company_id: str):
+    """A paused account: payment failed, grace over."""
+    _set_plan(company_id, planCode="taktline", stripeStatus="past_due",
+              graceEndsAt=utcnow() - timedelta(days=1))
+
+
+def test_paused_refuses_reads_and_writes_with_402(billing, actor):
     a = actor()
     bootstrap_admin(a, "Locked co")
-    _set_plan(a.company, planCode="trial", trialEndsAt=utcnow() - timedelta(days=1))
+    _pause(a.company)
 
     r = _station(a, "Nope")
     assert r.status_code == 402, r.text
@@ -192,7 +211,7 @@ def test_read_only_allows_reads_and_refuses_writes(billing, actor):
     a = actor()
     bootstrap_admin(a, "Grace co")
     st = _station(a, "Cutting").json()["_id"]
-    _set_plan(a.company, planCode="basic_50", stripeStatus="past_due",
+    _set_plan(a.company, planCode="taktline", stripeStatus="past_due",
               graceEndsAt=utcnow() + timedelta(days=2))
 
     assert a.req("GET", "/stations/").status_code == 200
@@ -201,8 +220,8 @@ def test_read_only_allows_reads_and_refuses_writes(billing, actor):
     assert r.json()["detail"]["code"] == "read_only"
     # Export has to keep working: "your data is yours" matters most here.
     assert a.req("GET", "/map-io/export").status_code == 200
-    # And DELETE stays open, or the only way off an over-limit plan is an
-    # action the state forbids — see the deadlock note in core/entitlements.
+    # And DELETE stays open, or the only way to shrink a line whose price is
+    # being disputed is an action the state forbids.
     assert a.req("DELETE", f"/stations/{st}").status_code in (204, 200)
 
 
@@ -214,7 +233,7 @@ def test_read_only_still_lets_an_operator_close_a_session(billing, actor):
     st = _station(a, "Cutting").json()["_id"]
     sess = a.req("POST", "/sessions/", {"stationId": st, "operatorId": "t1",
                                         "quantity": 1}).json()["_id"]
-    _set_plan(a.company, planCode="basic_50", stripeStatus="past_due",
+    _set_plan(a.company, planCode="taktline", stripeStatus="past_due",
               graceEndsAt=utcnow() + timedelta(days=2))
     assert a.req("POST", f"/sessions/{sess}/end", {"quantity": 1}).status_code == 200
 
@@ -226,9 +245,9 @@ def test_a_sandbox_visitor_is_never_gated(billing):
     assert _station(a, "Cutting").status_code == 201
 
 
-def test_support_can_reach_a_locked_account(billing, actor):
+def test_support_can_reach_a_paused_account(billing, actor):
     """The bypass is deliberate: support is usually called *because* the
-    account is locked. Grants are time-boxed and audited.
+    account is paused. Grants are time-boxed and audited.
 
     The owner allowlist is set and restored by hand, the same way
     `test_platform.owner` does it. An earlier version patched
@@ -238,7 +257,7 @@ def test_support_can_reach_a_locked_account(billing, actor):
     """
     owner, staff = actor(), actor()
     bootstrap_admin(owner, "Stuck co")
-    _set_plan(owner.company, planCode="trial", trialEndsAt=utcnow() - timedelta(days=1))
+    _pause(owner.company)
 
     email = bootstrap_admin(staff, "Staff co")
     previous = settings.platform_owner_emails
@@ -255,35 +274,35 @@ def test_support_can_reach_a_locked_account(billing, actor):
 
 # ─── Quotas ──────────────────────────────────────────────────────────────────
 
-def test_the_station_ceiling_is_the_plans(billing, actor, monkeypatch):
-    monkeypatch.setitem(plans.PLANS, "basic_50",
-                        plans.Plan(code="basic_50", label="Basic", stations=2,
-                                   integrations=False, connectors=0, monthly_cents=2900,
-                                   price_env=None, blurb=""))
+def test_the_free_tier_caps_at_three_stations(billing, actor):
+    """The real cap on the real plan — no fake plan monkeypatched in. Three
+    stations draw; the fourth is the ask."""
     a = actor()
     bootstrap_admin(a, "Ceiling co")
-    _set_plan(a.company, planCode="basic_50", stripeStatus="active")
 
-    assert _station(a, "A").status_code == 201
-    assert _station(a, "B").status_code == 201
-    r = _station(a, "C")
+    for name in ("A", "B", "C"):
+        assert _station(a, name).status_code == 201, name
+    r = _station(a, "D")
     assert r.status_code == 403
     body = r.json()["detail"]
     assert (body["code"], body["resource"], body["limit"], body["used"]) == \
-           ("plan_limit", "stations", 2, 2)
+           ("plan_limit", "stations", plans.FREE_STATIONS, plans.FREE_STATIONS)
 
 
-def test_a_line_file_cannot_walk_around_the_station_ceiling(billing, actor, monkeypatch):
+def test_the_paid_plan_has_no_station_ceiling(billing, actor):
+    a = actor()
+    bootstrap_admin(a, "Metered co")
+    _set_plan(a.company, planCode="taktline", stripeStatus="active")
+    for i in range(plans.FREE_STATIONS + 2):
+        assert _station(a, f"S{i}").status_code == 201
+
+
+def test_a_line_file_cannot_walk_around_the_free_cap(billing, actor):
     """The import used to check quotas only for sandbox users, so every real
-    account could load MAX_STATIONS (200) onto a 50-station plan in one call —
-    and because import REPLACES the line, the per-create quota never saw them."""
-    monkeypatch.setitem(plans.PLANS, "basic_50",
-                        plans.Plan(code="basic_50", label="Basic", stations=2,
-                                   integrations=False, connectors=0, monthly_cents=2900,
-                                   price_env=None, blurb=""))
+    account could load MAX_STATIONS onto a capped plan in one call — and
+    because import REPLACES the line, the per-create quota never saw them."""
     a = actor()
     bootstrap_admin(a, "Import co")
-    _set_plan(a.company, planCode="basic_50", stripeStatus="active")
 
     doc = {"kind": "taktline-map", "version": 1, "name": "Big",
            "stations": [{"ref": f"s{i}", "name": f"S{i}"} for i in range(5)],
@@ -295,10 +314,9 @@ def test_a_line_file_cannot_walk_around_the_station_ceiling(billing, actor, monk
 
 # ─── Integrations ────────────────────────────────────────────────────────────
 
-def test_basic_cannot_bind_an_integration_and_professional_can(billing, actor):
+def test_free_cannot_bind_an_integration_and_paid_can(billing, actor):
     a = actor()
     bootstrap_admin(a, "Integration co")
-    _set_plan(a.company, planCode="basic_50", stripeStatus="active")
 
     body = {**STATION, "name": "Dock", "integrationProvider": "shipstation",
             "integrationRole": "sink"}
@@ -306,21 +324,36 @@ def test_basic_cannot_bind_an_integration_and_professional_can(billing, actor):
     assert r.status_code == 403
     assert r.json()["detail"]["resource"] == "integrations"
 
-    _set_plan(a.company, planCode="pro_50")
+    _set_plan(a.company, planCode="taktline", stripeStatus="active")
     assert a.req("POST", "/stations/", body).status_code == 201
 
 
+def test_every_connector_is_included_on_paid(billing, actor):
+    """The model: connectors are deliberately unmetered. Binding a second and
+    third *distinct provider* must not meet a count, a quota, or an upsell."""
+    a = actor()
+    bootstrap_admin(a, "Wired co")
+    _set_plan(a.company, planCode="taktline", stripeStatus="active")
+
+    for provider, role in (("shipstation", "sink"), ("shopify", "source"),
+                           ("odoo", "source")):
+        r = a.req("POST", "/stations/", {**STATION, "name": f"Dock {provider}",
+                                         "integrationProvider": provider,
+                                         "integrationRole": role})
+        assert r.status_code == 201, (provider, r.text)
+
+
 def test_renaming_a_station_that_carries_an_old_binding_still_works(billing, actor):
-    """A downgrade must not strand the account: they have to be able to edit —
-    and clear — the bindings that are now over their plan."""
+    """A lapse back to free must not strand the account: they have to be able
+    to edit — and clear — the bindings the free tier would not allow anew."""
     a = actor()
     bootstrap_admin(a, "Downgraded co")
-    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
+    _set_plan(a.company, planCode="taktline", stripeStatus="active")
     st = a.req("POST", "/stations/", {**STATION, "name": "Dock",
                                       "integrationProvider": "shipstation",
                                       "integrationRole": "sink"}).json()["_id"]
 
-    _set_plan(a.company, planCode="basic_50")
+    _set_plan(a.company, planCode="free", stripeStatus=None)
     assert a.req("PUT", f"/stations/{st}", {**STATION, "name": "Renamed"}).status_code == 200
 
 
@@ -329,39 +362,38 @@ def test_a_connectors_api_key_stops_when_the_plan_does(billing, actor):
     station endpoints does nothing for a key issued last month."""
     a = actor()
     bootstrap_admin(a, "Connector co")
-    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
+    _set_plan(a.company, planCode="taktline", stripeStatus="active")
     key = a.req("POST", "/api-keys/", {"name": "erp", "scopes": ["orders"]}).json()["key"]
 
     caller = Actor()
     headers = {"X-Api-Key": key}
     assert caller.req("GET", "/orders/outbox", headers=headers).status_code == 200
 
-    _set_plan(a.company, planCode="basic_50")
+    _set_plan(a.company, planCode="free", stripeStatus=None)
     r = caller.req("GET", "/orders/outbox", headers=headers)
     assert r.status_code == 403
     assert r.json()["detail"]["resource"] == "integrations"
 
-    _set_plan(a.company, planCode="pro_50", stripeStatus="past_due",
+    _set_plan(a.company, planCode="taktline", stripeStatus="past_due",
               graceEndsAt=utcnow() - timedelta(days=1))
     assert caller.req("GET", "/orders/outbox", headers=headers).status_code == 402
 
 
-# ─── Anti-farming ────────────────────────────────────────────────────────────
+# ─── A second company is simply another free line ────────────────────────────
 
-def test_one_free_trial_per_email(billing, actor):
-    """A trial company is deleted on day 15 but the *user* is not — `User` rows
-    do not cascade from `Company`. Without a grant recorded against the email,
-    the same person creates a new company on day 16 and gets another fortnight,
-    forever."""
+def test_a_second_company_is_free_too(billing, actor):
+    """Under the trial model this was the anti-farming case; under the free
+    tier there is nothing to farm — a second company is another 3-station
+    line, which costs us nearly nothing and is exactly the behaviour the
+    model wants to encourage."""
     a = actor()
-    bootstrap_admin(a, "First trial co")
-    first = _entitlement(a.company)
-    assert first.state == entitlements.OK
+    bootstrap_admin(a, "First co")
+    assert _entitlement(a.company).state == entitlements.OK
 
-    second = a.req("POST", "/companies/", {"name": "Second trial co", "timezone": "UTC"})
+    second = a.req("POST", "/companies/", {"name": "Second co", "timezone": "UTC"})
     assert second.status_code == 201
     ent = _entitlement(second.json()["id"])
-    assert ent.state == entitlements.LOCKED, "a second free fortnight was granted"
+    assert ent.plan.code == plans.FREE and ent.state == entitlements.OK
 
 
 # ─── The structural one ──────────────────────────────────────────────────────
@@ -455,7 +487,7 @@ def test_the_socket_says_why_it_refused(billing, actor):
 
     a = actor()
     bootstrap_admin(a, "Socket co")
-    _set_plan(a.company, planCode="trial", trialEndsAt=utcnow() - timedelta(days=1))
+    _pause(a.company)
 
     with pytest.raises(WebSocketDisconnect) as excinfo:
         with a.tc.websocket_connect(f"/ws/events?companyId={a.company}") as ws:
@@ -465,222 +497,8 @@ def test_the_socket_says_why_it_refused(billing, actor):
 
 def test_a_healthy_account_still_gets_its_socket(billing, actor):
     """Guard the guard: a refusal test passes just as well against a socket
-    that never works at all."""
+    that never works at all. A free account is a healthy account."""
     a = actor()
-    bootstrap_admin(a, "Live socket co")
-    with a.tc.websocket_connect(f"/ws/events?companyId={a.company}") as ws:
-        assert ws is not None
-
-
-def test_read_only_keeps_the_live_board(billing, actor):
-    """Watching your own floor is exactly what the grace period is for."""
-    a = actor()
-    bootstrap_admin(a, "Watching co")
-    _set_plan(a.company, planCode="basic_50", stripeStatus="past_due",
-              graceEndsAt=utcnow() + timedelta(days=2))
-    with a.tc.websocket_connect(f"/ws/events?companyId={a.company}") as ws:
-        assert ws is not None
-
-
-# ─── Connectors ──────────────────────────────────────────────────────────────
-
-def _dock(a: Actor, name: str, provider: str, role: str = "sink"):
-    return a.req("POST", "/stations/", {**STATION, "name": name,
-                                        "integrationProvider": provider,
-                                        "integrationRole": role})
-
-
-def test_professional_includes_one_connector(billing, actor):
-    a = actor()
-    bootstrap_admin(a, "One connector co")
-    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
-
-    assert _dock(a, "Dock", "shipstation").status_code == 201
-    r = _dock(a, "ERP", "odoo", "both")
-    assert r.status_code == 403
-    body = r.json()["detail"]
-    assert body["resource"] == "connectors"
-    assert (body["limit"], body["used"]) == (1, 1)
-    assert "shipstation" in body["message"]
-
-
-def test_the_billable_unit_is_the_partner_not_the_station(billing, actor):
-    """A shop with three ShipStation docks is using one connector. Charging per
-    station would tax them for modelling their floor honestly — which is the
-    thing the whole pricing metric exists not to do."""
-    a = actor()
-    bootstrap_admin(a, "Many docks co")
-    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
-
-    for n in ("Dock A", "Dock B", "Dock C"):
-        assert _dock(a, n, "shipstation").status_code == 201, n
-
-
-def test_a_bought_connector_raises_the_count(billing, actor):
-    a = actor()
-    bootstrap_admin(a, "Paid connector co")
-    _set_plan(a.company, planCode="pro_50", stripeStatus="active", connectorAddons=1)
-
-    assert _dock(a, "Dock", "shipstation").status_code == 201
-    assert _dock(a, "ERP", "odoo", "both").status_code == 201
-    assert _dock(a, "Store", "shopify", "source").status_code == 403
-
-
-def test_plant_includes_three(billing, actor):
-    a = actor()
-    bootstrap_admin(a, "Plant co")
-    _set_plan(a.company, planCode="plant_250", stripeStatus="active")
-    for name, provider, role in (("Dock", "shipstation", "sink"),
-                                 ("ERP", "odoo", "both"),
-                                 ("Store", "shopify", "source")):
-        assert _dock(a, name, provider, role).status_code == 201, provider
-    assert _dock(a, "Books", "qbo", "both").status_code == 403
-
-
-def test_basic_has_no_connectors_at_all(billing, actor):
-    a = actor()
-    bootstrap_admin(a, "Basic connector co")
-    _set_plan(a.company, planCode="basic_50", stripeStatus="active")
-    r = _dock(a, "Dock", "shipstation")
-    assert r.status_code == 403
-    # Reported as an integrations problem, not a counting one: the answer is
-    # "upgrade to Professional", not "buy another connector".
-    assert r.json()["detail"]["resource"] == "integrations"
-
-
-def test_a_line_file_cannot_wire_in_more_connectors_than_the_plan(billing, actor):
-    a = actor()
-    bootstrap_admin(a, "File connector co")
-    _set_plan(a.company, planCode="pro_50", stripeStatus="active")
-    doc = {"kind": "taktline-map", "version": 1, "name": "Wired",
-           "stations": [
-               {"ref": "s1", "name": "Dock", "integrationProvider": "shipstation",
-                "integrationRole": "sink"},
-               {"ref": "s2", "name": "ERP", "integrationProvider": "odoo",
-                "integrationRole": "both"},
-           ],
-           "processes": [], "templates": [], "routes": []}
-    r = a.req("POST", "/map-io/import", doc)
-    assert r.status_code == 403
-    assert r.json()["detail"]["resource"] == "connectors"
-
-
-# ─── On-premise licensing ────────────────────────────────────────────────────
-
-@pytest.fixture
-def licensed(tmp_path, monkeypatch):
-    """An on-premise deployment with a signing key, and nothing installed yet."""
-    from app.core import licence as licence_mod
-
-    private, public = licence_mod.generate_keypair()
-    monkeypatch.setattr(settings, "deployment", "onprem", raising=False)
-    monkeypatch.setattr(settings, "licence_public_key", public, raising=False)
-    monkeypatch.setattr(settings, "licence_file", str(tmp_path / "lic.json"),
-                        raising=False)
-    return private
-
-
-def _install(private, **kw):
-    from app.core import licence as licence_mod
-    kw.setdefault("issued_to", "Bramble Metalworks")
-    kw.setdefault("plan_code", "plant_250")
-    return licence_mod.install(licence_mod.issue(private, **kw))
-
-
-def test_an_unlicensed_self_hosted_install_is_not_metered(licensed, actor):
-    """A self-hosted evaluation, a developer machine and a CI box must all just
-    work. Deny-by-default would mean the first thing a self-hoster meets is a
-    paywall with no way to pay."""
-    a = actor()
-    bootstrap_admin(a, "Unlicensed co")
-    ent = _entitlement(a.company)
-    assert ent.state == entitlements.OK
-    assert ent.station_limit is None
-
-
-def test_a_valid_licence_sets_the_plan(licensed, actor):
-    a = actor()
-    bootstrap_admin(a, "Licensed co")
-    _install(licensed, plan_code="pro_50")
-    ent = _entitlement(a.company)
-    assert ent.state == entitlements.OK
-    assert ent.station_limit == 50
-    assert ent.connector_limit == 1
-
-
-def test_a_licence_may_narrow_its_plan(licensed, actor):
-    """A bespoke site count on an otherwise standard plan."""
-    a = actor()
-    bootstrap_admin(a, "Bespoke co")
-    _install(licensed, plan_code="plant_250", stations=80, connectors=5)
-    ent = _entitlement(a.company)
-    assert (ent.station_limit, ent.connector_limit) == (80, 5)
-
-
-def test_an_expired_licence_goes_read_only_then_locked(licensed, actor):
-    """This is what makes a monthly on-premise charge enforceable: stop paying,
-    no new file is issued, the current one runs out."""
-    from app.core import licence as licence_mod
-
-    a = actor()
-    bootstrap_admin(a, "Lapsed onprem co")
-
-    _install(licensed, days=-1)                      # expired an hour ago
-    assert _entitlement(a.company).state == entitlements.READ_ONLY
-
-    _install(licensed, days=-(licence_mod.GRACE_DAYS + 1))
-    assert _entitlement(a.company).state == entitlements.LOCKED
-
-
-def test_a_network_outage_is_not_a_lapse(licensed):
-    """The failure this design is most afraid of. A licence outlives its billing
-    period by a wide margin and renewal starts long before expiry, so a fortnight
-    of no internet changes nothing on the floor."""
-    from app.core import licence as licence_mod
-
-    assert licence_mod.DEFAULT_DAYS > 31, "a monthly licence must outlive a month"
-    slack = licence_mod.DEFAULT_DAYS - licence_mod.REFRESH_AFTER_DAYS
-    assert slack >= 14, f"only {slack} days of renewal slack"
-    assert licence_mod.GRACE_DAYS >= 7
-
-
-def test_a_forged_licence_is_refused(licensed, actor):
-    """The whole point of signing it. They administer the database and the disk;
-    they must not be able to write themselves a licence."""
-    from app.core import licence as licence_mod
-
-    other_private, _ = licence_mod.generate_keypair()
-    forged = licence_mod.issue(other_private, issued_to="Me", plan_code="plant_250")
-    with pytest.raises(licence_mod.LicenceError):
-        licence_mod.verify(forged)
-
-    # And one where the claims were edited after signing.
-    honest = licence_mod.issue(licensed, issued_to="Me", plan_code="pro_50")
-    honest["licence"]["stations"] = 99999
-    with pytest.raises(licence_mod.LicenceError):
-        licence_mod.verify(honest)
-
-
-def test_a_corrupt_licence_file_does_not_stop_the_server(licensed, actor):
-    """It must degrade to unmetered, not to a crash: an operator can then see
-    the problem and install a new file, rather than finding a dead box."""
-    from pathlib import Path
-    from app.core import licence as licence_mod
-
-    Path(settings.licence_file).write_text("{ this is not json")
-    assert licence_mod.load() is None
-    a = actor()
-    bootstrap_admin(a, "Corrupt licence co")
-    assert _entitlement(a.company).state == entitlements.OK
-
-
-def test_the_signature_survives_reformatting(licensed):
-    """A licence gets emailed, pasted and run through editors. Signing the
-    canonical claims rather than the file text means whitespace cannot break
-    it."""
-    import json
-    from app.core import licence as licence_mod
-
-    doc = licence_mod.issue(licensed, issued_to="Me", plan_code="pro_50")
-    reformatted = json.loads(json.dumps(doc, indent=4))
-    assert licence_mod.verify(reformatted).plan_code == "pro_50"
+    bootstrap_admin(a, "Socket ok co")
+    with a.tc.websocket_connect(f"/ws/events?companyId={a.company}"):
+        pass

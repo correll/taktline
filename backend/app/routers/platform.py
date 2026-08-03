@@ -61,22 +61,29 @@ async def platform_status(user: User = Depends(require_platform_staff),
 
     # Revenue, derived the same way the gate derives entitlement, so the number
     # on the dashboard and the service the customer receives cannot disagree.
+    # The metered price needs each company's station count — one grouped query.
     sub_rows = (await session.execute(select(Subscription))).scalars().all()
-    mrr_cents = paying = trialing = comped = at_risk = 0
+    station_counts = dict((await session.execute(
+        select(Station.companyId, func.count()).group_by(Station.companyId)
+    )).all())
+    mrr_cents = paying = free_lines = comped = at_risk = 0
     for row in sub_rows:
         ent = entitlements._derive(str(row.companyId), row)
-        on_paid_plan = row.planCode in plans.PURCHASABLE and ent.state == entitlements.OK
+        on_paid_plan = (plans.get(row.planCode).code == plans.PAID
+                        and ent.state == entitlements.OK)
         if on_paid_plan and row.stripeSubscriptionId:
-            mrr_cents += plans.monthly_cents(row.planCode, row.onPremise,
-                                             row.connectorAddons or 0)
+            mrr_cents += plans.monthly_cents_for(
+                station_counts.get(row.companyId, 0))
+            if row.onPremise:
+                mrr_cents += plans.ONPREM_CENTS
             paying += 1
         elif on_paid_plan:
             # A paid plan with no Stripe subscription: staff granted it, or the
             # billing migration grandfathered them. Real service, no revenue —
             # and worth its own number rather than being hidden inside MRR.
             comped += 1
-        elif row.planCode == plans.TRIAL and ent.state == entitlements.OK:
-            trialing += 1
+        elif plans.get(row.planCode).code == plans.FREE:
+            free_lines += 1
         if ent.state in (entitlements.READ_ONLY, entitlements.LOCKED):
             at_risk += 1
     stations_total = await count(select(func.count()).select_from(Station))
@@ -114,7 +121,7 @@ async def platform_status(user: User = Depends(require_platform_staff),
         "arrCents": mrr_cents * 12,
         "payingCompanies": paying,
         "compedCompanies": comped,
-        "trialingCompanies": trialing,
+        "freeCompanies": free_lines,
         "atRiskCompanies": at_risk,
     }
 
@@ -235,32 +242,31 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
 
     def _collected(row, ent) -> bool:
         return (ent.state == entitlements.OK
-                and row.planCode in plans.PURCHASABLE
+                and plans.get(row.planCode).code == plans.PAID
                 and bool(row.stripeSubscriptionId))
 
-    def _collected_cents(row, ent) -> int:
-        return (plans.monthly_cents(row.planCode, row.onPremise,
-                                    row.connectorAddons or 0)
-                if _collected(row, ent) else 0)
+    def _collected_cents(cid, row, ent) -> int:
+        if not _collected(row, ent):
+            return 0
+        cents = plans.monthly_cents_for(stations.get(cid, 0))
+        return cents + (plans.ONPREM_CENTS if row.onPremise else 0)
 
     def billing(cid):
         row = subs.get(cid)
         if row is None:
             return {"plan": None, "planState": None, "mrrCents": 0,
-                    "renewsAt": None, "trialEndsAt": None}
+                    "renewsAt": None}
         ent = entitlements._derive(str(cid), row)
         return {
             "plan": ent.plan.code,
             "planState": ent.state,
-            # Only money actually being collected. A trial, a locked account
-            # and a **comped** one are all $0 of revenue — and comped is the one
-            # that catches you out, because it wears a paid plan code. Every
-            # company grandfathered by the billing migration is on pro_100 with
-            # no Stripe subscription; counting those put $1,972 of imaginary MRR
-            # on this dashboard the first time it was opened.
-            "mrrCents": _collected_cents(row, ent),
+            # Only money actually being collected. A free line, a locked
+            # account and a **comped** one are all $0 of revenue — and comped
+            # is the one that catches you out, because it wears the paid plan
+            # code with no Stripe subscription behind it. Counting those once
+            # put $1,972 of imaginary MRR on this dashboard.
+            "mrrCents": _collected_cents(cid, row, ent),
             "renewsAt": row.currentPeriodEnd,
-            "trialEndsAt": row.trialEndsAt,
         }
 
     return [{

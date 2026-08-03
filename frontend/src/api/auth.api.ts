@@ -42,7 +42,6 @@ export interface CompanyMembership {
   planState: 'ok' | 'read_only' | 'locked'
   stationLimit: number | null
   integrations: boolean
-  trialEndsAt: string | null
 }
 
 export interface MeResponse {

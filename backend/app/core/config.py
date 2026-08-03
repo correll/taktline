@@ -114,12 +114,11 @@ class Settings(BaseSettings):
     default_admin_password: str = "change-me-admin-0000"
 
     # ── Deployment mode ───────────────────────────────────────────────────────
-    # "cloud" is taktline.com: trials expire, accounts are billed and the
-    # lifecycle mailer runs. "onprem" is a customer's own box — it must never
-    # run the sandbox janitor, the trial drip or the deletion sweep, or their
-    # server would email their staff our marketing sequence and delete their
-    # own company on day 15. Entitlement on-prem comes from a signed licence
-    # file, not from a subscription row (see core/licence.py).
+    # "cloud" is taktline.com: accounts are metered and billed. "onprem" is a
+    # customer's own box — it must never run the sandbox janitor, or their
+    # server would delete their own visitors' lines. Entitlement on-prem comes
+    # from a signed licence file, not from a subscription row (see
+    # core/licence.py).
     deployment: str = "cloud"
 
     @property
@@ -133,14 +132,12 @@ class Settings(BaseSettings):
     # self-hosted deployment runs in.
     stripe_secret_key: Optional[str] = None
     stripe_webhook_secret: Optional[str] = None
-    # Price ids per plan — see core/plans.py. Test and live mode have different
-    # ids, which is why these are environment and not checked-in constants.
-    stripe_price_basic_50: Optional[str] = None
-    stripe_price_pro_50: Optional[str] = None
-    stripe_price_pro_100: Optional[str] = None
-    stripe_price_plant_250: Optional[str] = None
+    # Price ids — see core/plans.py. `taktline` is the single tiered
+    # per-station price; `onprem` the flat add-on. Test and live mode have
+    # different ids, which is why these are environment and not checked-in
+    # constants.
+    stripe_price_taktline: Optional[str] = None
     stripe_price_onprem: Optional[str] = None
-    stripe_price_connector: Optional[str] = None
 
     @property
     def billing_enabled(self) -> bool:

@@ -32,15 +32,18 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 
 # ─── Shapes ──────────────────────────────────────────────────────────────────
 
-class PlanOut(BaseModel):
-    code: str
-    label: str
-    stations: Optional[int]
-    integrations: bool
-    connectors: Optional[int] = None
-    monthlyCents: int
-    blurb: str
-    purchasable: bool
+class PricingOut(BaseModel):
+    """The whole price list — one metered plan, so this is arithmetic, not a
+    table of tiers. The client renders from these numbers rather than from
+    prose, and the same numbers build the Stripe price (`plans.station_tiers`)."""
+    freeStations: int
+    perStationCents: int
+    minimumCents: int
+    capCents: int
+    #: Where the floor stops and the cap starts biting, for display.
+    minStations: int
+    capStations: int
+    onpremCents: int
 
 
 class UsageOut(BaseModel):
@@ -56,11 +59,9 @@ class SubscriptionOut(BaseModel):
     onPremise: bool
     stationLimit: Optional[int] = None
     integrations: bool
-    connectorLimit: Optional[int] = None
-    connectorAddons: int = 0
-    connectorsUsed: int = 0
+    #: What this account costs at its current station count — the number the
+    #: billing tab shows next to "N stations × $2".
     monthlyCents: int
-    trialEndsAt: Optional[str] = None
     currentPeriodEnd: Optional[str] = None
     graceEndsAt: Optional[str] = None
     settling: bool = False
@@ -71,15 +72,11 @@ class SubscriptionOut(BaseModel):
 
 
 class CheckoutIn(BaseModel):
-    planCode: str
     onPremise: bool = False
-    connectorAddons: int = Field(0, ge=0, le=20)
 
 
-class ChangePlanIn(BaseModel):
-    planCode: str
-    onPremise: bool = False
-    connectorAddons: int = Field(0, ge=0, le=20)
+class OnPremiseIn(BaseModel):
+    enabled: bool
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -112,20 +109,16 @@ async def _station_count(session: AsyncSession, company_uuid) -> int:
 
 # ─── Read ────────────────────────────────────────────────────────────────────
 
-@router.get("/plans", response_model=list[PlanOut])
-async def list_plans():
+@router.get("/plans", response_model=PricingOut)
+async def pricing():
     """The price list. Public to any signed-in user — it is on the website too."""
-    out = []
-    for code, plan in plans.PLANS.items():
-        if code in (plans.SANDBOX, plans.SELF_HOSTED, plans.ENTERPRISE):
-            continue
-        out.append(PlanOut(
-            code=plan.code, label=plan.label, stations=plan.stations,
-            integrations=plan.integrations, connectors=plan.connectors,
-            monthlyCents=plan.monthly_cents,
-            blurb=plan.blurb, purchasable=code in plans.PURCHASABLE,
-        ))
-    return out
+    return PricingOut(
+        freeStations=plans.FREE_STATIONS,
+        perStationCents=plans.PER_STATION_CENTS,
+        minimumCents=plans.MIN_CENTS, capCents=plans.CAP_CENTS,
+        minStations=plans.MIN_STATIONS, capStations=plans.CAP_STATIONS,
+        onpremCents=plans.ONPREM_CENTS,
+    )
 
 
 @router.get("/{company_id}/subscription", response_model=SubscriptionOut)
@@ -140,15 +133,20 @@ async def get_subscription(company_id: str, user: User = Depends(get_current_use
     ent = await entitlements.resolve(session, company_uuid, user=user)
     used = await _station_count(session, company_uuid)
 
+    # What this account costs: the metered clamp at its current count, plus
+    # the add-on. Free (and sandbox, self-hosted, comped) accounts cost 0.
+    monthly = 0
+    if ent.plan.code == plans.PAID and row.stripeSubscriptionId:
+        monthly = plans.monthly_cents_for(used)
+        if ent.on_premise:
+            monthly += plans.ONPREM_CENTS
+
     return SubscriptionOut(
         plan=ent.plan.code, planLabel=ent.plan.label, state=ent.state,
         reason=ent.reason, onPremise=ent.on_premise,
         stationLimit=ent.station_limit, integrations=ent.integrations,
-        connectorLimit=ent.connector_limit, connectorAddons=ent.connector_addons,
-        connectorsUsed=len(await entitlements.bound_providers(session, company_uuid)),
-        monthlyCents=plans.monthly_cents(ent.plan.code, ent.on_premise,
-                                         ent.connector_addons),
-        trialEndsAt=_iso(row.trialEndsAt), currentPeriodEnd=_iso(row.currentPeriodEnd),
+        monthlyCents=monthly,
+        currentPeriodEnd=_iso(row.currentPeriodEnd),
         graceEndsAt=_iso(row.graceEndsAt), settling=ent.settling,
         usage=UsageOut(stations=used, stationLimit=ent.station_limit),
         billingEnabled=settings.billing_enabled,
@@ -157,83 +155,36 @@ async def get_subscription(company_id: str, user: User = Depends(get_current_use
 
 
 # ─── Buying and changing ─────────────────────────────────────────────────────
-
-async def _refuse_if_connectors_do_not_fit(session: AsyncSession, company_uuid,
-                                           plan_code: str, addons: int) -> None:
-    """Same rule as stations, applied to connectors.
-
-    A shop wired into Odoo and ShipStation dropping to a plan with one included
-    connector and no add-ons has to unwire one first. Letting it through would
-    mean silently breaking a live ERP sync, which is the worst possible way for
-    a customer to discover a billing change.
-    """
-    plan = plans.get(plan_code)
-    if plan.connectors is None:
-        return
-    limit = plan.connectors + max(0, addons)
-    in_use = await entitlements.bound_providers(session, company_uuid)
-    if len(in_use) <= limit:
-        return
-    raise HTTPException(409, {
-        "message": (f"You have {len(in_use)} connectors wired in "
-                    f"({', '.join(sorted(in_use))}) and this plan covers "
-                    f"{limit}. Unwire one, or add a connector."),
-        "code": "over_limit_for_plan",
-        "resource": "connectors",
-        "plan": plan_code, "limit": limit, "used": len(in_use),
-    })
-
-
-async def _refuse_if_plan_is_too_small(session: AsyncSession, company_uuid,
-                                       plan_code: str) -> None:
-    """A downgrade that does not fit is refused, not silently applied.
-
-    The alternative — accept it and disable whatever is over the line — has no
-    honest UI. Twenty stations would have to either vanish or stay visible and
-    not work, and this codebase already has a rule about that: an affordance
-    that cannot work is worse than none.
-    """
-    plan = plans.get(plan_code)
-    if plan.stations is None:
-        return
-    used = await _station_count(session, company_uuid)
-    if used <= plan.stations:
-        return
-    raise HTTPException(409, {
-        "message": (f"You have {used} stations and {plan.label} covers "
-                    f"{plan.stations}. Remove {used - plan.stations} before "
-                    f"switching."),
-        "code": "over_limit_for_plan",
-        "plan": plan_code, "limit": plan.stations, "used": used,
-    })
-
-
-def _validate_purchasable(plan_code: str) -> None:
-    if plan_code not in plans.PURCHASABLE:
-        raise HTTPException(400, f"'{plan_code}' is not a plan you can buy")
-
+#
+# There is nothing to choose. The paid plan is the station count the company
+# already has, at $2 each within the floor and the cap — so checkout carries a
+# quantity, not a plan code, and there is no downgrade to refuse: a shop that
+# removes stations simply pays less next period.
 
 @router.post("/{company_id}/checkout")
 async def start_checkout(company_id: str, body: CheckoutIn, request: Request,
                          user: User = Depends(get_current_user),
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
-    """A hosted Stripe checkout for the chosen plan. Returns a URL to send them to."""
+    """A hosted Stripe checkout for this line. Returns a URL to send them to."""
     await _owner(company_id, user, session)
     company_uuid = require_uuid(company_id, "Company not found")
-    _validate_purchasable(body.planCode)
-    await _refuse_if_plan_is_too_small(session, company_uuid, body.planCode)
-    await _refuse_if_connectors_do_not_fit(session, company_uuid, body.planCode,
-                                           body.connectorAddons)
 
     row = await _subscription(session, company_uuid)
+    # A live subscription — even one whose payment is failing — is managed in
+    # the portal. A second checkout here would mint a second subscription; the
+    # recovery path for past_due is a new card, not a new purchase.
+    if row.stripeSubscriptionId and row.stripeStatus in ("active", "incomplete",
+                                                         "past_due"):
+        raise HTTPException(409, "Already subscribed — manage it in the portal")
+    stations = await _station_count(session, company_uuid)
     company = await session.get(Company, company_uuid)
     customer = billing_stripe.ensure_customer(row, company.name if company else "", user.email)
     await session.flush()
 
     base = settings.frontend_base_url.rstrip("/")
     sess = billing_stripe.checkout_session(
-        customer_id=customer, plan_code=body.planCode, on_premise=body.onPremise,
-        connector_addons=body.connectorAddons, company_id=str(company_uuid),
+        customer_id=customer, stations=stations, on_premise=body.onPremise,
+        company_id=str(company_uuid),
         success_url=f"{base}/settings?tab=billing&checkout=done",
         cancel_url=f"{base}/settings?tab=billing&checkout=cancelled",
     )
@@ -255,34 +206,24 @@ async def open_portal(company_id: str, user: User = Depends(get_current_user),
     return {"url": sess.url}
 
 
-@router.post("/{company_id}/change-plan", response_model=SubscriptionOut)
-async def change_plan(company_id: str, body: ChangePlanIn,
-                      user: User = Depends(get_current_user),
-                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
-    """Move between plans, prorated to the day.
+@router.post("/{company_id}/on-premise", response_model=SubscriptionOut)
+async def toggle_on_premise(company_id: str, body: OnPremiseIn,
+                            user: User = Depends(get_current_user),
+                            session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Add or drop the on-premise add-on — the one plan change that exists.
 
-    An upgrade is invoiced immediately and a downgrade credits forward — see
-    `core/billing_stripe` for why one setting for both is wrong in each
-    direction.
+    Adding is invoiced now (the licence is granted now); removing credits
+    forward. Station count is not touched here: it follows the floor
+    automatically (`entitlements.report_station_count`).
     """
     await _owner(company_id, user, session)
     company_uuid = require_uuid(company_id, "Company not found")
-    _validate_purchasable(body.planCode)
-    await _refuse_if_plan_is_too_small(session, company_uuid, body.planCode)
-    await _refuse_if_connectors_do_not_fit(session, company_uuid, body.planCode,
-                                           body.connectorAddons)
 
     row = await _subscription(session, company_uuid)
     if not row.stripeSubscriptionId:
         raise HTTPException(409, "No active subscription — start a checkout instead")
 
-    upgrading = (plans.monthly_cents(body.planCode, body.onPremise, body.connectorAddons)
-                 > plans.monthly_cents(row.planCode, row.onPremise, row.connectorAddons))
-    obj = billing_stripe.change_plan(
-        subscription_id=row.stripeSubscriptionId, plan_code=body.planCode,
-        on_premise=body.onPremise, upgrading=upgrading,
-        connector_addons=body.connectorAddons)
-
+    obj = billing_stripe.set_on_premise(row.stripeSubscriptionId, body.enabled)
     _apply_subscription(row, obj)
     await session.flush()
     return await get_subscription(company_id, user, session)
@@ -299,10 +240,12 @@ def _apply_subscription(row: Subscription, obj) -> None:
     """
     from datetime import datetime, timezone
 
-    plan_code, on_premise, addons = billing_stripe.plan_from_subscription(obj)
-    row.planCode = plan_code
+    _stations, on_premise = billing_stripe.shape_of_subscription(obj)
+    # A live Stripe subscription IS the paid plan; there is nothing else it
+    # could be. The station quantity is not copied anywhere — the stations
+    # table is the truth and Stripe's quantity is the report of it.
+    row.planCode = plans.PAID
     row.onPremise = on_premise
-    row.connectorAddons = addons
     row.stripeSubscriptionId = obj["id"]
     row.stripeStatus = obj["status"]
     period_end = obj.get("current_period_end")
@@ -433,15 +376,25 @@ async def _handle(session: AsyncSession, event) -> None:
         return
 
     if kind == "customer.subscription.deleted":
-        # Cancelled. They keep the data; the plan lapses at period end, which
-        # `entitlements` derives from the row rather than from a job running.
+        # Cancelled. They keep the data. A line that still fits the free tier
+        # simply becomes free — a three-station shop that stops paying is
+        # exactly who the free tier is for. A bigger line keeps its grace
+        # window and then pauses; nothing is deleted either way.
+        stations = (await session.execute(
+            select(func.count()).select_from(StationRow)
+            .where(StationRow.companyId == row.companyId))).scalar_one()
+        if stations <= plans.FREE_STATIONS:
+            row.planCode = plans.FREE
+            row.graceEndsAt = None
+        else:
+            row.graceEndsAt = entitlements.grace_deadline()
         row.stripeStatus = "canceled"
-        row.graceEndsAt = entitlements.grace_deadline()
+        row.stripeSubscriptionId = None
         row.updatedAt = utcnow()
-        # An earlier downgrade may have left a credit balance, which Stripe
-        # only ever applies to future invoices — of which there are now none.
-        # Give it back. (A cancellation through our own code path — company
-        # deletion — refunds inside `billing_stripe.cancel`; a portal
+        # An earlier credit (an on-premise removal, a Stripe-side adjustment)
+        # would only ever apply to future invoices — of which there are now
+        # none. Give it back. (A cancellation through our own code path —
+        # company deletion — refunds inside `billing_stripe.cancel`; a portal
         # cancellation arrives here instead. The refund is idempotent: a zero
         # balance returns without doing anything.) Row fields are set first so
         # a Stripe failure here — recorded on the billing event by the
@@ -498,62 +451,3 @@ async def install_licence(body: LicenceIn, user: User = Depends(get_current_user
     return {"licence": lic.as_dict()}
 
 
-# ─── Trial opt-out ───────────────────────────────────────────────────────────
-#
-# The link in every trial email. **GET only describes; POST deletes.** A
-# one-click destructive GET is deleted by the first mail scanner that prefetches
-# links — corporate mail filters do this routinely — and the customer never
-# even sees the message.
-
-class TrialStopOut(BaseModel):
-    companyName: str
-    valid: bool
-    stations: int
-    lots: int
-
-
-@router.get("/trial/stop", response_model=TrialStopOut)
-async def describe_trial_stop(company: str, token: str,
-                              session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
-    """What the opt-out link is about to destroy. Unauthenticated: the token in
-    the email is the authorisation, and all it can do is show this page."""
-    from sqlalchemy import func
-
-    from ..core import lifecycle
-    from ..db.tables import Card as CardRow
-
-    company_uuid = require_uuid(company, "Not found")
-    if not lifecycle.verify_token(str(company_uuid), token):
-        raise HTTPException(404, "Not found")
-    row = await session.get(Company, company_uuid)
-    if row is None:
-        raise HTTPException(404, "Not found")
-    stations = await _station_count(session, company_uuid)
-    lots = (await session.execute(
-        select(func.count()).select_from(CardRow)
-        .where(CardRow.companyId == company_uuid))).scalar_one()
-    return TrialStopOut(companyName=row.name, valid=True, stations=stations, lots=lots)
-
-
-@router.post("/trial/stop", status_code=204)
-async def stop_trial(company: str, token: str,
-                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
-    """Delete the trial account, now, at the customer's request.
-
-    Refuses once the company is paying — an opt-out link from a trial email
-    must not be a way to destroy an account somebody has since bought.
-    """
-    from ..core import lifecycle
-
-    company_uuid = require_uuid(company, "Not found")
-    if not lifecycle.verify_token(str(company_uuid), token):
-        raise HTTPException(404, "Not found")
-    row = await session.get(Company, company_uuid)
-    if row is None:
-        return
-    sub = await _subscription(session, company_uuid)
-    if sub.planCode not in (plans.TRIAL,):
-        raise HTTPException(409, "This account is on a paid plan — cancel it in "
-                                 "Settings → Billing instead")
-    await entitlements.release_company(session, company_uuid)
-    await session.delete(row)

@@ -29,13 +29,10 @@ async def create_company(body: CompanyCreate, user: User = Depends(get_current_u
     await session.flush()
     # The creator becomes the company's super-admin (its owner).
     session.add(Membership(companyId=company.id, userId=user.id, role="super_admin"))
-    # A second company does NOT get a second free fortnight — the grant is
-    # recorded against the email, so `start_trial_if_unstarted` hands this one a
-    # trial that has already ended if they have had one before.
+    # Every company starts on the free tier — no clock, no grant to record.
     await entitlements.ensure_subscription(session, company.id)
     # If they came here because a customer asked them to, record it.
     await attribute_signup(session, company.id, body.supplierInvite)
-    await entitlements.start_trial_if_unstarted(session, user)
     return _to_company(company, role="super_admin")
 
 

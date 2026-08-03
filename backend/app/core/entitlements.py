@@ -15,10 +15,11 @@ technical ones:
                 This is where a failed payment lands for `GRACE_DAYS`. It exists
                 because "your data is yours" has to stay true at exactly the
                 moment it is least convenient for us.
-``locked``      402 on everything except auth, company listing and billing. The
-                data is kept, indefinitely. Nothing is deleted, ever, for
-                non-payment — only an unconverted *trial* is deleted, and that
-                is announced five times first.
+``locked``      the account is *paused*: 402 on everything except auth,
+                company listing and billing. The data is kept, indefinitely —
+                nothing is ever deleted for non-payment, and paying again
+                restores the account exactly as it was. Free accounts never
+                reach this state at all: they have no clock and no expiry.
 """
 
 from __future__ import annotations
@@ -57,13 +58,10 @@ class Entitlement:
     #: Machine-readable cause, surfaced to the client so it can render a path
     #: forward rather than an apology. None when state is ok.
     reason: Optional[str]
-    trial_ends_at: Optional[object] = None
     period_end: Optional[object] = None
     grace_ends_at: Optional[object] = None
     #: Money is moving but has not settled (ACH). Service is on; the UI says so.
     settling: bool = False
-    #: Extra managed connectors bought on top of the plan's included count.
-    connector_addons: int = 0
 
     @property
     def writable(self) -> bool:
@@ -82,13 +80,6 @@ class Entitlement:
     def integrations(self) -> bool:
         return self.plan.integrations
 
-    @property
-    def connector_limit(self) -> Optional[int]:
-        """How many distinct integration providers may be bound. None = any."""
-        if self.plan.connectors is None:
-            return None
-        return self.plan.connectors + self.connector_addons
-
     def as_dict(self) -> dict:
         return {
             "plan": self.plan.code,
@@ -98,11 +89,6 @@ class Entitlement:
             "onPremise": self.on_premise,
             "stationLimit": self.plan.stations,
             "integrations": self.plan.integrations,
-            "connectorLimit": self.connector_limit,
-            "connectorAddons": self.connector_addons,
-            "monthlyCents": plans.monthly_cents(self.plan.code, self.on_premise,
-                                                self.connector_addons),
-            "trialEndsAt": self.trial_ends_at,
             "currentPeriodEnd": self.period_end,
             "graceEndsAt": self.grace_ends_at,
             "settling": self.settling,
@@ -140,15 +126,12 @@ def _from_licence(cid: str) -> Entitlement:
 
     plan = plans.get(lic.plan_code)
     # A licence may narrow its plan (a bespoke station count for a big site);
-    # it may not silently widen one that does not exist.
-    if lic.stations is not None or lic.connectors is not None:
+    # it may not silently widen one that does not exist. A `connectors` field
+    # in an older licence file is ignored — connectors are no longer metered.
+    if lic.stations is not None:
         plan = Plan(
-            code=plan.code, label=plan.label,
-            stations=lic.stations if lic.stations is not None else plan.stations,
-            integrations=plan.integrations,
-            connectors=lic.connectors if lic.connectors is not None else plan.connectors,
-            monthly_cents=plan.monthly_cents, price_env=plan.price_env,
-            blurb=plan.blurb,
+            code=plan.code, label=plan.label, stations=lic.stations,
+            integrations=plan.integrations, blurb=plan.blurb,
         )
 
     common = dict(company_id=cid, plan=plan, on_premise=True,
@@ -197,10 +180,10 @@ async def resolve(session: AsyncSession, company_id, *, user=None) -> Entitlemen
     )).scalars().first()
 
     if row is None:
-        # Should not happen — every company-creation path makes one. If it does,
-        # a usable-but-visibly-temporary plan is the least harmful guess: it
-        # neither bricks a paying customer nor hands out the top tier.
-        return Entitlement(company_id=cid, plan=plans.get(plans.TRIAL),
+        # Should not happen — every company-creation path makes one. If it
+        # does, the free tier is the least harmful guess: it neither bricks a
+        # paying customer's data access nor hands out unlimited stations.
+        return Entitlement(company_id=cid, plan=plans.get(plans.FREE),
                            on_premise=False, state=OK, reason="no_subscription")
 
     return _derive(cid, row)
@@ -211,16 +194,12 @@ def _derive(cid: str, row) -> Entitlement:
     plan = plans.get(row.planCode)
     common = dict(
         company_id=cid, plan=plan, on_premise=row.onPremise,
-        trial_ends_at=row.trialEndsAt, period_end=row.currentPeriodEnd,
-        grace_ends_at=row.graceEndsAt,
-        connector_addons=getattr(row, "connectorAddons", 0) or 0,
+        period_end=row.currentPeriodEnd, grace_ends_at=row.graceEndsAt,
     )
 
-    if row.planCode in plans.FREE:
-        # A trial has no grace period and no read-only tail: it ends, and then
-        # the account is deleted on day 15. The five emails are the warning.
-        if row.trialEndsAt is not None and now >= row.trialEndsAt:
-            return Entitlement(**common, state=LOCKED, reason="trial_expired")
+    if plan.code == plans.FREE:
+        # No clock, no expiry, no states. A free account is simply OK, forever
+        # — the 3-station quota is the whole of its metering.
         return Entitlement(**common, state=OK, reason=None)
 
     # A paid plan with no Stripe subscription is a comped account — staff granted
@@ -244,24 +223,15 @@ def grace_deadline():
     return utcnow() + timedelta(days=plans.GRACE_DAYS)
 
 
-def trial_deadline():
-    return utcnow() + timedelta(days=plans.TRIAL_DAYS)
-
-
 # ─── Creating the row ────────────────────────────────────────────────────────
 
 async def ensure_subscription(session: AsyncSession, company_id, *,
-                              plan_code: str = plans.TRIAL):
+                              plan_code: str = plans.FREE):
     """Give a company a subscription row if it has none.
 
     Called from every path that creates a company — there are four, and missing
-    one means a company that is silently ungated forever.
-
-    It deliberately does **not** start the trial clock. Starting a trial is a
-    grant against a person, not a property of a company, and it happens in
-    exactly one place (`start_trial_if_unstarted`). When this function could
-    also start one, there were two paths that set a deadline and only one that
-    recorded the grant — so a second company got a second free fortnight.
+    one means a company that is silently ungated forever. Every company starts
+    free; there is no clock to start, because the free tier has no expiry.
     """
     from ..db.tables import Subscription
 
@@ -271,53 +241,10 @@ async def ensure_subscription(session: AsyncSession, company_id, *,
     if existing is not None:
         return existing
 
-    row = Subscription(companyId=company_id, planCode=plan_code, trialEndsAt=None)
+    row = Subscription(companyId=company_id, planCode=plan_code)
     session.add(row)
     await session.flush()
     return row
-
-
-async def start_trial_if_unstarted(session: AsyncSession, user) -> None:
-    """Start the 14-day clock on first verified login, for every company where
-    this user is the sole super_admin and the trial has not begun.
-
-    Also records the grant against the **email**, which is what stops a deleted
-    trial from being restarted forever: `User` rows do not cascade with a
-    company, so without this a verified user can create a new company on day 16
-    and get another fortnight, indefinitely.
-    """
-    from ..db.tables import Membership, Subscription, TrialGrant
-
-    if not settings.billing_enabled or getattr(user, "isSandbox", False):
-        return
-
-    rows = (await session.execute(
-        select(Subscription)
-        .join(Membership, Membership.companyId == Subscription.companyId)
-        .where(Membership.userId == user.id,
-               Membership.role == "super_admin",
-               Subscription.planCode == plans.TRIAL,
-               Subscription.trialEndsAt.is_(None))
-    )).scalars().all()
-    if not rows:
-        return
-
-    used = (await session.execute(
-        select(TrialGrant).where(TrialGrant.email == user.email)
-    )).scalars().first()
-
-    for row in rows:
-        if used is None:
-            row.trialEndsAt = trial_deadline()
-        else:
-            # Second trial on the same email: it starts already over, so the
-            # account is read-only-then-locked rather than silently free. They
-            # keep everything they made and can buy a plan at any time.
-            row.trialEndsAt = utcnow()
-
-    if used is None:
-        session.add(TrialGrant(email=user.email))
-    await session.flush()
 
 
 # ─── Quotas ──────────────────────────────────────────────────────────────────
@@ -439,73 +366,66 @@ def check_request(ent: Entitlement, request) -> None:
 
 
 def _locked_message(ent: Entitlement) -> str:
-    if ent.reason == "trial_expired":
-        return ("Your trial has ended. Choose a plan to carry on — your line is "
-                "exactly as you left it.")
     return ("This account is paused because a payment did not go through. "
             "Your data is safe; update your payment method to continue.")
 
 
 def ensure_integrations(ent: Entitlement) -> None:
-    """Refuse an ERP/shop binding on a plan that does not include them."""
+    """Refuse an ERP/shop binding on a tier that does not include them.
+
+    Only the free tier and the sandbox lack integrations. On the paid plan
+    every catalogue connector is included, deliberately unmetered — see
+    plans.py. There is no per-connector count to check, anywhere.
+    """
     if ent.integrations:
         return
     raise HTTPException(403, {
-        "message": (f"Integrations are part of Professional. "
-                    f"Your plan is {ent.plan.label}."),
+        "message": ("Integrations come with the paid plan — every connector "
+                    f"in the catalogue, included. Your plan is {ent.plan.label}."),
         "code": "plan_limit",
         "resource": "integrations",
         "plan": ent.plan.code,
     })
 
 
-async def bound_providers(session: AsyncSession, company_id) -> set:
-    """Which integration partners this company currently has wired in.
+# ─── Reporting the station count to Stripe ───────────────────────────────────
 
-    **The billable unit is the provider, not the station.** A shop with three
-    ShipStation docks drawn on its floor is using one connector — it is one
-    integration to maintain, and charging per station would tax them for
-    modelling their floor honestly, which is the thing the whole pricing metric
-    is designed not to do.
+async def report_station_count(session: AsyncSession, company_id) -> None:
+    """Tell Stripe how many stations this company has, as the subscription's
+    **quantity** — current state, not an accumulating meter.
+
+    Called after anything that changes the count: creating or deleting a
+    station, importing a line, resetting a company. Quantity changes do not
+    prorate — a shop that removes stations simply pays less next period, and
+    one that adds pays more next period, which is the honest reading of a
+    monthly price.
+
+    **Best-effort on purpose.** Stripe being down must never stop someone
+    drawing their floor; a count that could not be reported is re-reported on
+    the next change, and the number Stripe bills is whatever was current at
+    the period boundary.
     """
-    from ..db.tables import Station
-
-    rows = (await session.execute(
-        select(Station.integrationProvider).where(
-            Station.companyId == company_id,
-            Station.integrationProvider.isnot(None),
-        ).distinct()
-    )).scalars().all()
-    return {r for r in rows if r}
-
-
-async def ensure_connector(session: AsyncSession, company_id, provider: str,
-                           ent: Entitlement) -> None:
-    """Refuse a binding that would add a connector beyond the plan's count.
-
-    Adding another station for a provider already in use is always free — only
-    a *new* partner costs a connector.
-    """
-    ensure_integrations(ent)
-    limit = ent.connector_limit
-    if limit is None:
+    if not settings.billing_enabled:
         return
-    in_use = await bound_providers(session, company_id)
-    if provider in in_use:
+    from ..db.tables import Station, Subscription
+
+    row = (await session.execute(
+        select(Subscription).where(Subscription.companyId == company_id)
+    )).scalars().first()
+    if row is None or not row.stripeSubscriptionId:
         return
-    if len(in_use) < limit:
-        return
-    raise HTTPException(403, {
-        "message": (f"Your plan includes {limit} connector"
-                    f"{'' if limit == 1 else 's'} and you are using "
-                    f"{', '.join(sorted(in_use))}. Add another for "
-                    f"${plans.CONNECTOR_CENTS // 100}/month."),
-        "code": "plan_limit",
-        "resource": "connectors",
-        "plan": ent.plan.code,
-        "limit": limit,
-        "used": len(in_use),
-    })
+    count = (await session.execute(
+        select(func.count()).select_from(Station)
+        .where(Station.companyId == company_id)
+    )).scalar_one()
+    try:
+        from . import billing_stripe
+
+        billing_stripe.update_station_quantity(row.stripeSubscriptionId,
+                                               max(1, count))
+    except Exception as exc:                      # noqa: BLE001
+        print(f"[billing] could not report {count} stations for company "
+              f"{company_id}: {exc}")
 
 
 # ─── Deleting a company ──────────────────────────────────────────────────────

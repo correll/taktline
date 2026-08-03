@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core import entitlements
 from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import (
     WorkSession as SessionRow,
@@ -25,6 +26,8 @@ async def reset_all(ctx: CompanyContext = Depends(require_super_admin),
     left intact."""
     for table in (SessionRow, CardRow, LotTemplateRow, RouteRow, ProcessRow, StationRow):
         await session.execute(delete(table).where(table.companyId == ctx.company_id))
+    # Zero stations now — tell Stripe (best-effort; the count is the price).
+    await entitlements.report_station_count(session, ctx.company_id)
 
 
 @router.post("/reset-statistics")

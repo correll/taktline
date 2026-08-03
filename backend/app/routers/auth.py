@@ -69,7 +69,6 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
             id=str(c.id), name=c.name, slug=c.slug, role=m.role, timezone=c.timezone,
             plan=ent.plan.code, planLabel=ent.plan.label, planState=ent.state,
             stationLimit=ent.station_limit, integrations=ent.integrations,
-            trialEndsAt=ent.trial_ends_at,
         ))
 
     # Platform staff: active impersonation grants appear as extra super_admin
@@ -94,7 +93,7 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
                     impersonationExpiresAt=g.expiresAt,
                     plan=ent.plan.code, planLabel=ent.plan.label,
                     planState=ent.state, stationLimit=ent.station_limit,
-                    integrations=ent.integrations, trialEndsAt=ent.trial_ends_at,
+                    integrations=ent.integrations,
                 ))
     return MeResponse(user=_to_user_public(user), companies=companies)
 
@@ -151,10 +150,10 @@ async def _adopt_sandbox(session: AsyncSession, request: Request, new_user: User
             continue                       # a real member is present — never touch it
         session.add(Membership(companyId=m.companyId, userId=new_user.id, role="super_admin"))
         # It stops being a sandbox the moment a real person owns it, so it
-        # stops being on the sandbox plan too. The trial clock does not start
-        # here — the account is not verified yet (see start_trial_if_unstarted).
+        # stops being on the sandbox plan too. It becomes a free account —
+        # there is no clock to start, because the free tier has none.
         sub = await entitlements.ensure_subscription(session, m.companyId)
-        sub.planCode = plans.TRIAL
+        sub.planCode = plans.FREE
         if company_name and company_name.strip():
             company = await session.get(Company, m.companyId)
             if company is not None:
@@ -259,10 +258,6 @@ async def login(request: Request, response: Response, body: LoginBody,
     # existing user would keep paying the old price forever.
     if needs_rehash(user.passwordHash):
         user.passwordHash = hash_password(body.password)
-    # The trial clock starts here, not at signup: signup happens BEFORE email
-    # verification, so a clock started there gives someone who verifies on day
-    # ten a four-day trial. Idempotent — only unstarted trials are touched.
-    await entitlements.start_trial_if_unstarted(session, user)
     raw, csrf = await create_auth_session(session, user, request)
     set_auth_cookies(response, raw, csrf)
     return await _me_response(session, user)
@@ -415,7 +410,6 @@ async def dev_bootstrap(request: Request, response: Response, body: DevBootstrap
     await session.flush()
     session.add(Membership(companyId=company.id, userId=user.id, role="super_admin"))
     await entitlements.ensure_subscription(session, company.id)
-    await entitlements.start_trial_if_unstarted(session, user)
     raw, csrf = await create_auth_session(session, user, request)
     set_auth_cookies(response, raw, csrf)
     return {"companyId": str(company.id), "csrfToken": csrf, "userId": str(user.id), "email": email}

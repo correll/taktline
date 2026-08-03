@@ -20,18 +20,13 @@ export function usePlan() {
   const used = Object.keys(stations).length
   const remaining = limit === null ? null : Math.max(0, limit - used)
 
-  const trialEndsAt = company?.trialEndsAt ? new Date(company.trialEndsAt) : null
-  const daysLeft = trialEndsAt
-    ? Math.max(0, Math.ceil((trialEndsAt.getTime() - Date.now()) / 86_400_000))
-    : null
-
   return {
-    plan: company?.plan ?? 'trial',
-    planLabel: company?.planLabel ?? 'Trial',
+    plan: company?.plan ?? 'free',
+    planLabel: company?.planLabel ?? 'Free',
     state: company?.planState ?? 'ok',
     locked: company?.planState === 'locked',
     readOnly: company?.planState === 'read_only',
-    isTrial: company?.plan === 'trial',
+    isFree: company?.plan === 'free',
     isSandbox: company?.plan === 'sandbox',
     integrations: company?.integrations ?? false,
     stationLimit: limit,
@@ -41,7 +36,5 @@ export function usePlan() {
     atStationLimit: limit !== null && used >= limit,
     /** Close enough that saying so is useful rather than nagging. */
     nearStationLimit: limit !== null && used >= limit * 0.8 && used < limit,
-    trialEndsAt,
-    trialDaysLeft: daysLeft,
   }
 }

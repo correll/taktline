@@ -72,14 +72,6 @@ async def _strip_split_semantics(session: AsyncSession, company_id, station_uuid
             r.updatedAt = utcnow()
 
 
-async def _check_connector_quota(session, ctx, provider, ent) -> None:
-    """A *new* partner costs a connector; another station for one already wired
-    in does not."""
-    if provider is None or ent is None:
-        return
-    await entitlements.ensure_connector(session, ctx.company_id, provider, ent)
-
-
 def _validate_integration(provider, role, ent=None) -> None:
     """A bound location must name a partner Taktline ships a connector for, and
     a role it can actually play. Rejecting here rather than at the DB keeps the
@@ -128,11 +120,12 @@ async def create_station(body: StationCreate, ctx: CompanyContext = Depends(requ
     before = await undo_core.snapshot(session, ctx.company_id)
     await ensure_sandbox_quota(session, ctx, StationRow)
     _validate_integration(body.integrationProvider, body.integrationRole, ctx.entitlement)
-    await _check_connector_quota(session, ctx, body.integrationProvider, ctx.entitlement)
     _validate_branch_mode(body.branchMode)
     row = StationRow(**body.model_dump(), companyId=ctx.company_id)
     session.add(row)
     await session.flush()
+    # The station count is the price — report it (best-effort; never blocks).
+    await entitlements.report_station_count(session, ctx.company_id)
     station = _to_station(row)
     if station.adapterType:
         await plugin_registry.register(str(row.id), station.adapterType, station.adapterConfig)
@@ -208,9 +201,6 @@ async def update_station(station_id: str, body: StationUpdate,
     _validate_integration(patch.get("integrationProvider", row.integrationProvider),
                           patch.get("integrationRole", row.integrationRole),
                           ctx.entitlement if changing_provider else None)
-    if changing_provider:
-        await _check_connector_quota(session, ctx, patch["integrationProvider"],
-                                     ctx.entitlement)
     _validate_branch_mode(patch.get("branchMode"))
     became_choice = patch.get("branchMode") == "choice" and row.branchMode != "choice"
     for k, v in patch.items():
@@ -272,6 +262,7 @@ async def delete_station(station_id: str, ctx: CompanyContext = Depends(require_
     name = row.name
     await session.delete(row)
     await session.flush()
+    await entitlements.report_station_count(session, ctx.company_id)
     await plugin_registry.unregister(station_id)
     await undo_core.record(session, ctx, f"Delete {name}",
                            before, await undo_core.snapshot(session, ctx.company_id))

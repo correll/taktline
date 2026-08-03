@@ -20,7 +20,7 @@ export interface PlatformStatus {
   arrCents: number
   payingCompanies: number
   compedCompanies: number
-  trialingCompanies: number
+  freeCompanies: number
   atRiskCompanies: number
 }
 
@@ -51,7 +51,6 @@ export interface PlatformCompany {
   planState: 'ok' | 'read_only' | 'locked' | null
   mrrCents: number
   renewsAt: string | null
-  trialEndsAt: string | null
 }
 
 export interface AuditEntry {

@@ -67,10 +67,6 @@ ALLOWED = {
                              "links itself (an ERP node is not a step and would "
                              "inflate the denominator)",
     },
-    "core/lifecycle.py": {
-        "_facts": "counts rows for an email — 'you have drawn 3 routes' is about "
-                  "what they built, not about the shape of the graph",
-    },
     "routers/orders.py": {"_resolve_process": "picks a process, not a degree"},
     "routers/stations.py": {"_strip_split_semantics": "clears weights on flip to choice"},
 }

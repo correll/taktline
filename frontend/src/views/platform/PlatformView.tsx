@@ -155,7 +155,7 @@ function StatusSection({ status }: { status: PlatformStatus }) {
     ['ARR',                money(status.arrCents)],
     ['Paying',             status.payingCompanies],
     ['Comped',             status.compedCompanies],
-    ['On trial',           status.trialingCompanies],
+    ['Free lines',         status.freeCompanies],
     ['Past due or paused', status.atRiskCompanies],
     ['Live connections',   status.wsConnections],
     ['Signed-in sessions', status.authSessionsActive],
@@ -302,7 +302,7 @@ function CompaniesSection({ companies, onChanged }: {
     // Plan is the first thing anyone looks at now.
     { label: 'Plan',            value: (c: PlatformCompany) => c.plan ?? '' },
     { label: 'MRR',             value: (c: PlatformCompany) => c.mrrCents, descFirst: true },
-    { label: 'Renews',          value: (c: PlatformCompany) => c.renewsAt ?? c.trialEndsAt ?? null },
+    { label: 'Renews',          value: (c: PlatformCompany) => c.renewsAt ?? null },
     { label: 'Active users',    value: (c) => c.activeUsers, descFirst: true },
     { label: 'Stations',        value: (c) => c.stations, descFirst: true },
     { label: 'Lots on floor',   value: (c) => c.cards, descFirst: true },
@@ -331,8 +331,8 @@ function CompaniesSection({ companies, onChanged }: {
                 <td style={tdStyle}><PlanCell company={c} /></td>
                 <td style={tdStyle}>{c.mrrCents ? money(c.mrrCents) : '—'}</td>
                 <td style={tdStyle}>
-                  {(c.renewsAt ?? c.trialEndsAt)
-                    ? formatDistanceToNow(new Date(withZ((c.renewsAt ?? c.trialEndsAt)!)),
+                  {c.renewsAt
+                    ? formatDistanceToNow(new Date(withZ(c.renewsAt)),
                                           { addSuffix: true })
                     : '—'}
                 </td>

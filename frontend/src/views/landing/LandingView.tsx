@@ -165,11 +165,11 @@ function Hero() {
             Try a live line — no signup
           </SandboxButton>
           <SignupLink where="hero" style={{ fontSize: 16, padding: '12px 24px' }}>
-            Start free for two weeks
+            Start free
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
-          Two weeks free · no card · your data exports any time
+          Free up to 3 stations · no card · no expiry
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textSecondary }}>
           Runs in the browser on <strong style={{ color: color.textPrimary }}>iPhone, iPad and
@@ -380,7 +380,7 @@ function InlineCta({ line, where }: { line: string; where: string }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3, flexWrap: 'wrap' }}>
         <SandboxButton where={where}>Try a live line — no signup</SandboxButton>
         <SignupLink where={where} style={{ border: 'none', padding: '8px 4px' }}>
-          or start your two weeks
+          or start free
         </SignupLink>
       </div>
     </div>
@@ -600,11 +600,11 @@ function Integrations() {
 
 /** The price list, on the page.
  *
- *  Replaces the old "free forever — and here is how we stay in business" card.
- *  That promise is no longer true and keeping it would have been the expensive
- *  kind of wrong: a claim people plan around, walked back later. The honest
- *  version of the same argument is that the price is low enough not to need a
- *  business case, and that your line is waiting if you come back.
+ *  One number, a floor, and a ceiling — see pricing.md for the argument. The
+ *  ceiling is the best line on the page ("you will never pay more than $399"),
+ *  and linear pricing exists so nobody models 10 stations instead of their
+ *  actual 14 to duck a band; everything the product computes rests on the
+ *  graph being a faithful map of the floor.
  *
  *  Prices are duplicated here rather than fetched: this section renders for
  *  signed-out visitors and for crawlers, and a pricing table that arrives after
@@ -613,32 +613,27 @@ function Integrations() {
  */
 const TIERS = [
   {
-    name: 'Basic', price: '$29', per: '/month',
-    line: 'Up to 50 stations. Every operator, every tablet, no seat count.',
+    name: 'Free', price: '$0', per: 'up to 3 stations',
+    line: 'A real line, not a demo. No card, no expiry — and never deleted.',
     points: ['The live board and floor plan', 'Cycle time, line cycle time and OEE',
-             'The line doctor', 'Unlimited operators'],
+             'The line doctor', 'Unlimited operators',
+             'Come back in six months and it is still here'],
   },
   {
-    name: 'Professional', price: '$58', per: '/month', featured: true,
-    line: 'Everything in Basic, plus one ERP or shop-system connector.',
-    points: ['Odoo, NetSuite, Shopify, QuickBooks, ShipStation and more',
-             'Scan-to-advance and label printing', 'Reporting API for Power BI or Grafana',
-             '$116/month for up to 100 stations'],
-  },
-  {
-    name: 'Plant', price: '$290', per: '/month',
-    line: 'A whole plant — up to 250 stations and three connectors.',
-    points: ['Everything in Professional', 'Three connectors included',
-             'Extra connectors $150/month each',
-             'More than one plant? Talk to us.'],
+    name: 'Taktline', price: '$2', per: 'per station /month', featured: true,
+    line: 'Unlimited stations. Never less than $29, never more than $399 — however big you get.',
+    points: ['Every ERP and shop connector included: Odoo, NetSuite, Shopify, QuickBooks, ShipStation and more',
+             'Unlimited operators — we price the line, not the people',
+             'Scan-to-advance, label printing, reporting API',
+             '50 stations = $100 · 100 = $200 · 200+ = $399, capped'],
   },
 ]
 
 const ADD_ONS = [
   ['On-premise', '+$199/month',
-   'On your own hardware, on any tier. Your database, your network, your backups.'],
-  ['Extra connector', '+$150/month each',
-   'Beyond what your plan includes. A partner counts once however many docks you draw.'],
+   'On your own hardware, at any size. Your database, your network, your backups.'],
+  ['New connector build', '$750 once',
+   'An ERP or store we have not written yet. Once built it enters the catalogue — free for everyone, including you.'],
   ['Taktline Box', '$2,900 once',
    'A pre-configured fanless PC that plugs into your network and runs the server. Includes the first year.'],
 ]
@@ -654,9 +649,10 @@ function Pricing() {
           margin: `${size.sp4} auto 0`, maxWidth: 620, textAlign: 'center',
           fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary,
         }}>
-          Priced per line, not per person. Every operator and every tablet is included
-          on every tier — a worker who can see the system improves it, and a worker who
-          is only measured by it learns to manage the measurement. Two weeks free, no card.
+          Priced per line, not per person. Every operator and every tablet is included,
+          always — a worker who can see the system improves it, and a worker who is only
+          measured by it learns to manage the measurement. $2 a station, and you will
+          never pay more than $399 a month.
         </p>
 
         <div style={{
@@ -736,9 +732,10 @@ function Pricing() {
           margin: `${size.sp5} auto 0`, maxWidth: 700, textAlign: 'center',
           fontSize: 13.5, lineHeight: 1.7, color: color.textDim,
         }}>
-          Change plan whenever you like — it is pro-rated to the day, so a downgrade two
-          days in costs you two days. Everything exports at any time in a format you can
-          read, and if you ever stop, your line is here waiting if you change your mind.
+          The price follows your floor by itself: draw a station, pay $2 more next month;
+          remove one, pay $2 less. Nothing to renegotiate, no band to fall out of.
+          Everything exports at any time in a format you can read, and if you ever stop,
+          your line is here waiting if you change your mind.
         </p>
       </div>
     </section>
@@ -968,10 +965,11 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         ready-made connectors; anything else goes through one small order API, a CSV
         import, or Zapier and Make.</> },
   { q: 'What does it cost?',
-    a: <>Two weeks free with no card, then <strong>$29 a month</strong> for up to 50 stations, or
-        <strong> $58</strong> with ERP integrations. Every operator and every tablet is included on
-        every tier — we price the line, not the people, because a worker who can see the
-        system improves it. Running it on your own hardware adds $199 a month.</> },
+    a: <>Free for up to 3 stations, with no card and no expiry. Beyond that,
+        <strong> $2 per station a month</strong> — never less than $29, never more than
+        $399, and every ERP connector is included. Every operator and every tablet is
+        included too — we price the line, not the people, because a worker who can see
+        the system improves it. Running it on your own hardware adds $199 a month.</> },
   { q: 'What happens if I stop paying?',
     a: <>Your line is waiting for you if you come back. Payment stops, the board goes
         read-only for a week so you can still see and export everything, and then it
@@ -1033,11 +1031,11 @@ function FinalCta() {
             Try a live line — no signup
           </SandboxButton>
           <SignupLink where="footer" style={{ fontSize: 16, padding: '13px 26px' }}>
-            Start free for two weeks
+            Start free
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textDim }}>
-          No card needed to start · $29/month after two weeks · cancel any time
+          Free up to 3 stations · $2 a station beyond, capped at $399 · cancel any time
         </div>
       </div>
     </section>

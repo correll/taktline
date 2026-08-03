@@ -35,17 +35,13 @@ export function PlanBanner() {
 
   if (plan.locked) {
     tone = color.statusFault
-    text = plan.plan === 'trial'
-      ? 'Your trial has ended. Your line is exactly as you left it — choose a plan to carry on.'
-      : 'This account is paused because a payment did not go through. Your data is safe.'
+    text = 'This account is paused because a payment did not go through. Your data is safe.'
   } else if (plan.readOnly) {
     text = 'Read-only until a payment goes through. You can still see and export everything.'
-  } else if (plan.isTrial && plan.trialDaysLeft !== null && plan.trialDaysLeft <= 5) {
-    text = plan.trialDaysLeft === 0
-      ? 'Your trial ends today.'
-      : `${plan.trialDaysLeft} day${plan.trialDaysLeft === 1 ? '' : 's'} left on your trial.`
   } else if (plan.atStationLimit) {
-    text = `You are at your plan's limit of ${plan.stationLimit} stations.`
+    text = plan.isFree
+      ? `The free tier covers ${plan.stationLimit} stations — the next one is $2/month each.`
+      : `You are at your plan's limit of ${plan.stationLimit} stations.`
   }
 
   // A locked account cannot dismiss its way out — there is nothing else to see.
@@ -64,7 +60,7 @@ export function PlanBanner() {
         <Link to="/settings?tab=billing" style={{
           color: color.blueBright, fontWeight: 600, textDecoration: 'none',
         }}>
-          {plan.locked || plan.readOnly ? 'Fix billing' : 'See plans'}
+          {plan.locked || plan.readOnly ? 'Fix billing' : 'See pricing'}
         </Link>
       ) : (
         <span style={{ color: color.textDim, fontSize: 12 }}>
@@ -100,9 +96,8 @@ export function PlanRefusalDialog() {
 
   const heading =
     refusal.code === 'plan_limit' && refusal.resource === 'integrations'
-      ? 'Integrations are part of Professional'
-      : refusal.code === 'plan_limit' ? 'You have reached your plan’s limit'
-      : refusal.code === 'over_limit_for_plan' ? 'That plan is smaller than your line'
+      ? 'Integrations come with the paid plan'
+      : refusal.code === 'plan_limit' ? 'The free tier stops here'
       : refusal.code === 'read_only' ? 'This account is read-only'
       : 'This account is paused'
 
@@ -148,7 +143,7 @@ export function PlanRefusalDialog() {
               background: color.bluePrimary, color: '#fff', textDecoration: 'none',
               borderRadius: size.radius, padding: '8px 18px', fontSize: 13, fontWeight: 600,
             }}>
-              See plans
+              See pricing
             </Link>
           )}
           <button onClick={close} style={{

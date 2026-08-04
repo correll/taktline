@@ -100,6 +100,22 @@ services:
       # SMTP_* trio and the host/user are filled in for you.
       - key: SENDGRID_API_KEY
         sync: false
+      # ── Billing (Stripe) — the launch switch ─────────────────────────────
+      # All four empty = billing is dormant: nothing is metered, nothing can
+      # be purchased, no webhook is accepted, and the app runs exactly as it
+      # did before the paywall existed. Setting STRIPE_SECRET_KEY is the act
+      # of going live. Fill the price ids from `setup_stripe.py` run with the
+      # LIVE key (test and live mode have different ids), and the webhook
+      # secret from the endpoint you register at Dashboard → Webhooks.
+      # The runbook is DEPLOY.md → "Going live with billing".
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_TAKTLINE
+        sync: false
+      - key: STRIPE_PRICE_ONPREM
+        sync: false
 
 # ── Staging ───────────────────────────────────────────────────────────────────
 # Uncomment both blocks to get a second, identical deployment tracking a
@@ -146,8 +162,12 @@ services:
 #        value: https://taktline-staging.onrender.com
 #      - key: PLATFORM_OWNER_EMAILS
 #        sync: false
-#      # Stripe TEST keys. Never the live ones.
+#      # Stripe TEST/sandbox keys and TEST-mode price ids. Never the live ones.
 #      - key: STRIPE_SECRET_KEY
 #        sync: false
 #      - key: STRIPE_WEBHOOK_SECRET
+#        sync: false
+#      - key: STRIPE_PRICE_TAKTLINE
+#        sync: false
+#      - key: STRIPE_PRICE_ONPREM
 #        sync: false

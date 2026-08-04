@@ -302,6 +302,63 @@ expect the boards to blink amber for a few seconds.
 
 ---
 
+## Going live with billing
+
+Billing is **dormant until `STRIPE_SECRET_KEY` is set** — with the four
+Stripe variables empty, nothing is metered, nothing can be purchased, no
+webhook is accepted, and the deploy behaves exactly as the site did before
+the paywall existed. That makes the code deploy and the commercial launch two
+separate events, in that order, and the second one is reversible: unset the
+key and billing is dormant again.
+
+What happens to accounts that already exist: every company present when the
+billing migration runs is grandfathered onto the paid plan as **comped** —
+full capability, station count uncapped, integrations on, no charge, visible
+as "comped" on the platform dashboard so it never counts as MRR. Companies
+created after that start on the free tier (3 stations). Nobody who signed up
+before the paywall meets it retroactively.
+
+The launch sequence, in order:
+
+1. **Activate the live Stripe account** — business details, bank account.
+   Everything below happens in live mode; the sandbox ids in `.env` are for
+   development and will not work in production.
+2. **Create the prices**: `STRIPE_SECRET_KEY=sk_live_… python setup_stripe.py`
+   in `backend/`. Idempotent; prints the two `STRIPE_PRICE_*` values. It
+   refuses, loudly, if a price already exists with different numbers.
+3. **Dashboard configuration** (each of these is a checkbox, not code):
+   - *Tax*: origin address + the Indiana registration
+     (dashboard.stripe.com/tax). No registration, no collection.
+   - *Payment methods*: enable ACH (`us_bank_account`); card and Link are on
+     by default. The code deliberately does not pin the list.
+   - *Billing → Revenue recovery*: Smart Retries + failed-payment emails, and
+     set the after-retries end-state so it agrees with the app's 7-day
+     read-only window rather than racing it.
+   - The customer-portal configuration needs nothing: the app creates its own
+     (plan-switching off) the first time anyone opens the portal.
+4. **Register the webhook**: endpoint `https://taktline.com/billing/webhook`,
+   with exactly the events listed in `billing_stripe.HANDLED`. Copy the
+   signing secret.
+5. **Set the four variables** in Render (`STRIPE_SECRET_KEY`,
+   `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TAKTLINE`, `STRIPE_PRICE_ONPREM`)
+   and let the service restart. Billing is now live.
+6. **Spend $29 on yourself.** Create a company, add a station, subscribe with
+   a real card, watch the webhook flip the row to `active`, open the portal,
+   cancel, and confirm the refund-and-pause path. Ten minutes, and it is the
+   only test that exercises Stripe's half of the contract. (A dry run of the
+   same loop against the sandbox keys on staging or a dev machine first —
+   `stripe listen --forward-to localhost:8000/billing/webhook` — costs
+   nothing.)
+
+Keep the window between deploying the branch and setting the key short: while
+dormant, the pricing page already advertises the metered plan but Settings →
+Billing says the deployment is not connected to a payment provider, and
+companies signing up meanwhile land on the free tier able to build past 3
+stations (they keep what they built; they just cannot add more once the gate
+is live).
+
+---
+
 ## Running it elsewhere
 
 The image is a plain container, and `DATABASE_URL` accepts any managed Postgres:

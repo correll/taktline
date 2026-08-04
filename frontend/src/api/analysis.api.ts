@@ -30,8 +30,30 @@ export interface LineReport {
   counts: { critical: number; warning: number; insight: number }
 }
 
+/** One line's clock at a shared station: how long until the station this
+ *  line feeds runs out of material. `runoutSec` 0 = starving now; null = no
+ *  measured rate downstream, so there is no clock — those sort FIFO. */
+export interface LineRunout {
+  processId: string
+  processName: string
+  nextStationId: string
+  nextStationName: string
+  bufferUnits: number
+  lineCycleSec: number | null
+  runoutSec: number | null
+}
+
+export interface RunoutInfo {
+  stationId: string
+  lines: Record<string, LineRunout>
+}
+
 export const analysisApi = {
   /** What is wrong with this line. Computed entirely on our own server — no
    *  production data is sent anywhere. */
   report: (): Promise<LineReport> => client.get('/analysis/'),
+
+  /** The runout rule for one station's lot picker. */
+  runout: (stationId: string): Promise<RunoutInfo> =>
+    client.get(`/analysis/runout/${stationId}`),
 }

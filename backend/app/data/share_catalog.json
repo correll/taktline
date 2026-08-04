@@ -433,6 +433,11 @@
       "text": "FIFO — first in, first out: work the oldest lot first. When lots overtake each other, some wait unpredictably long (your quoted lead time becomes a lie) and the time window for tracing a defect’s cause gets scrambled. Deviate only by a deliberate priority rule."
     },
     {
+      "id": "sequencing-shared-machine-runout",
+      "category": "Sequencing",
+      "text": "At a machine several lines share, FIFO is fair to lots — not to lines. Run the line that starves first: each line’s clock is its downstream buffer divided by the rate it is actually consumed. Taktline’s lot picker at a shared station sorts by exactly this, and says why."
+    },
+    {
       "id": "pareto-80-20-rule-holds",
       "category": "Pareto",
       "text": "The 80/20 rule holds on the shop floor: a few defect types cause most rework, a few products cause most changeovers. Count first, then fix the tallest bar."

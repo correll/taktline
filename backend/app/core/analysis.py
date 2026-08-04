@@ -95,6 +95,9 @@ class Snapshot:
     metrics: dict                   # stationId → StationMetrics
     # units on the floor per process — Little's law is per value stream
     wip_process: dict = field(default_factory=dict)
+    # stationId → processId → units: the per-line buffer at each station,
+    # which is what the runout rule (core/runout.py) divides by the rate
+    wip_station_process: dict = field(default_factory=dict)
     pixels_per_unit: float = 0.0
     unit: str = "m"
 

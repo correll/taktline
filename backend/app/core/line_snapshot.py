@@ -37,6 +37,7 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
 
     wip: dict = {}
     wip_process: dict = {}
+    wip_station_process: dict = {}
     for c in cards:
         for sid, b in (c.bins or {}).items():
             n = int(b.get("count", 0) or 0)
@@ -44,6 +45,8 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             if c.processId:
                 pid = str(c.processId)
                 wip_process[pid] = wip_process.get(pid, 0) + n
+                per = wip_station_process.setdefault(sid, {})
+                per[pid] = per.get(pid, 0) + n
 
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=LOOKBACK_DAYS)
@@ -109,6 +112,7 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             for t in templates],
         wip=wip,
         wip_process=wip_process,
+        wip_station_process=wip_station_process,
         metrics=metrics,
         pixels_per_unit=float(map_row.pixelsPerUnit) if map_row else 0.0,
         unit=(map_row.unit if map_row else "m"),

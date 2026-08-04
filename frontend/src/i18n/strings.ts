@@ -94,6 +94,29 @@ export const STRINGS: Record<string, Record<Lang, string>> = {
     my: '{n} ယူနစ် — ', ht: '{n} inite nan',
   },
 
+  // ── The runout rule (the lot picker's sort, said out loud) ───────────────
+  'runout.starvingNow': {
+    en: 'Feeds {station} — starving now',
+    es: 'Alimenta {station} — sin material ahora',
+    'fr-CA': 'Alimente {station} — à sec maintenant',
+    my: '{station} ကို ပေးပို့သည် — ယခု ပစ္စည်းပြတ်နေသည်',
+    ht: 'Bay {station} — li fin vid kounye a',
+  },
+  'runout.starvesIn': {
+    en: 'Feeds {station} — starves in {t}',
+    es: 'Alimenta {station} — se queda sin material en {t}',
+    'fr-CA': 'Alimente {station} — à sec dans {t}',
+    my: '{station} ကို ပေးပို့သည် — {t} အတွင်း ပစ္စည်းပြတ်မည်',
+    ht: 'Bay {station} — l ap fin vid nan {t}',
+  },
+  'runout.buffer': {
+    en: 'Feeds {station} — {t} of buffer, no rush',
+    es: 'Alimenta {station} — {t} de reserva, sin prisa',
+    'fr-CA': 'Alimente {station} — {t} de réserve, pas d’urgence',
+    my: '{station} ကို ပေးပို့သည် — {t} စာ လက်ကျန်ရှိသည်၊ မလောပါ',
+    ht: 'Bay {station} — {t} rezèv, pa gen prese',
+  },
+
   // ── The language picker itself ───────────────────────────────────────────
   'lang.label': {
     en: 'Language', es: 'Idioma', 'fr-CA': 'Langue',

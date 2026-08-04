@@ -1,3 +1,4 @@
+import { analysisApi, type LineRunout } from '../../api/analysis.api'
 import { useT } from '../../i18n'
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -575,11 +576,31 @@ function LotPicker({
     return lots.filter((c) => !templates[c.lotTemplateId])
   }, [isMergeStation, lots, templates])
 
+  // The runout rule: at a station several lines share, sort by which line
+  // starves first rather than FIFO. Best-effort — the picker falls back to
+  // FIFO for any lot without a clock, and entirely when the fetch fails.
+  const [runout, setRunout] = useState<Record<string, LineRunout>>({})
+  useEffect(() => {
+    let live = true
+    analysisApi.runout(stationId)
+      .then((r) => { if (live) setRunout(r.lines) })
+      .catch(() => { if (live) setRunout({}) })
+    return () => { live = false }
+  }, [stationId, lots.length])
+
   const selectableLots = useMemo(() => {
-    if (!isMergeStation) return lots
-    const excluded = new Set([...precursorLots, ...unclassifiedLots].map((c) => c._id))
-    return lots.filter((c) => !excluded.has(c._id))
-  }, [isMergeStation, lots, precursorLots, unclassifiedLots])
+    const base = (() => {
+      if (!isMergeStation) return lots
+      const excluded = new Set([...precursorLots, ...unclassifiedLots].map((c) => c._id))
+      return lots.filter((c) => !excluded.has(c._id))
+    })()
+    // Smallest clock first; lots with no clock keep FIFO among themselves
+    // (sort is stable, and the tie-break is the lot's age).
+    const clock = (c: Card) => runout[c.processId]?.runoutSec ?? Infinity
+    return [...base].sort((a, b) =>
+      clock(a) - clock(b)
+      || new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
+  }, [isMergeStation, lots, precursorLots, unclassifiedLots, runout])
 
   // Lots still at the stations that feed this one — the material a worker may
   // need to go fetch. Tapping one switches the operator view to that station.
@@ -651,6 +672,7 @@ function LotPicker({
               }}
             >
               <LotCard card={c} template={tmpl} stationId={stationId} />
+              <RunoutReason line={runout[c.processId]} />
             </div>
           )
         })}
@@ -898,6 +920,35 @@ function LotPicker({
       })()}
     </div>
   )
+}
+
+/** Why this lot is where it is in the queue — the runout rule, said out
+ *  loud. No clock (unmeasured downstream) → no line: a reason built on data
+ *  we do not have would be a horoscope. */
+function RunoutReason({ line }: { line?: LineRunout }) {
+  const t = useT()
+  if (!line || line.runoutSec === null) return null
+  const starving = line.runoutSec <= 0
+  const urgent = line.runoutSec < 2 * 3600
+  const tone = starving ? color.statusFault : urgent ? color.statusWarning : color.textDim
+  const text = starving
+    ? t('runout.starvingNow', { station: line.nextStationName })
+    : urgent
+      ? t('runout.starvesIn', { station: line.nextStationName, t: fmtDur(line.runoutSec) })
+      : t('runout.buffer', { station: line.nextStationName, t: fmtDur(line.runoutSec) })
+  return (
+    <div style={{ margin: '3px 2px 0', fontSize: 10.5, color: tone }}>
+      {text}
+    </div>
+  )
+}
+
+/** Compact approximate duration — the clock is an estimate, so false
+ *  precision ("starves in 2:37:12") would overstate what we know. */
+function fmtDur(sec: number): string {
+  if (sec < 3600) return `~${Math.max(1, Math.round(sec / 60))} min`
+  if (sec < 48 * 3600) return `~${Math.round(sec / 3600)} h`
+  return `~${Math.round(sec / 86400)} d`
 }
 
 // ─── Phase 3: Working + timer ─────────────────────────────────────────────────

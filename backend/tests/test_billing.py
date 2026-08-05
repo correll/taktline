@@ -566,6 +566,11 @@ def test_the_portal_cannot_switch_plans(monkeypatch):
     features = created[0]["features"]
     assert features["subscription_update"] == {"enabled": False}
     assert features["subscription_cancel"]["enabled"] is True
+    # Immediate with proration, pinned: the unused time becomes a credit the
+    # subscription.deleted webhook refunds. at_period_end here would quietly
+    # bring back "cancelled but still running until the 5th".
+    assert features["subscription_cancel"]["mode"] == "immediately"
+    assert features["subscription_cancel"]["proration_behavior"] == "create_prorations"
     assert sessions[0]["configuration"] == "bpc_ours"
 
     # The second open reuses it (cached), and a fresh process finds it again

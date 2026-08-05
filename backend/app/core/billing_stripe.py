@@ -173,7 +173,11 @@ def checkout_session(*, customer_id: str, stations: int, on_premise: bool,
 #: Bump when the feature set in `_portal_configuration_id` changes: a new
 #: configuration is then created and used, rather than editing one that live
 #: portal sessions may still be holding.
-_PORTAL_CONFIG_MARKER = "taktline-portal-v1"
+#: v2: cancellation switched from at_period_end to immediate-with-proration.
+#: The version is in the marker because a configuration already created on the
+#: account (live has one) would otherwise be found and reused with the old
+#: features forever — bumping the marker supersedes it without migrating it.
+_PORTAL_CONFIG_MARKER = "taktline-portal-v2"
 
 #: Configuration id per API key, so the lookup happens once per process rather
 #: than once per portal open. Keyed by the key because test and live mode are
@@ -210,11 +214,15 @@ def _portal_configuration_id(s) -> str:
             "customer_update": {"enabled": True,
                                 "allowed_updates": ["email", "name", "address",
                                                     "phone"]},
-            # At period end, not immediately: they paid for the month, they
-            # keep the month. The `customer.subscription.deleted` webhook then
-            # starts the grace clock and refunds any credit balance.
+            # Immediately, with the unused time returned — a cancellation that
+            # keeps running to the period boundary reads as a subscription
+            # that refused to die. The proration lands as a credit balance,
+            # and the `customer.subscription.deleted` webhook refunds that
+            # balance to the card — the same refund path every other credit
+            # already takes.
             "subscription_cancel": {
-                "enabled": True, "mode": "at_period_end",
+                "enabled": True, "mode": "immediately",
+                "proration_behavior": "create_prorations",
                 "cancellation_reason": {
                     "enabled": True,
                     "options": ["too_expensive", "missing_features",

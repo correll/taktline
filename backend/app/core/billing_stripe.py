@@ -38,6 +38,7 @@ not deliver is not a thing this product does.
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from fastapi import HTTPException
@@ -54,6 +55,31 @@ def _stripe():
 
     stripe.api_key = settings.stripe_secret_key
     return stripe
+
+
+def _plain(obj):
+    """A Stripe API object as plain dicts and lists.
+
+    StripeObject stopped being a dict subclass in stripe v15, so `.get()` and
+    every other dict idiom raises AttributeError — but only on real API
+    objects, never in tests, whose doubles are plain dicts. Converting once at
+    each retrieval keeps the rest of this module and the webhook handlers
+    dict-shaped on every stripe version. (The first live webhook crashed on
+    exactly this: `obj.get("customer")` on a v15 event object.)
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _plain(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_plain(v) for v in obj]
+    for name in ("_to_dict_recursive", "to_dict_recursive", "to_dict"):
+        fn = getattr(obj, name, None)
+        if callable(fn):
+            # Recurse through the result: to_dict can be shallow, leaving
+            # StripeObjects nested inside.
+            return _plain(fn())
+    raise TypeError(f"cannot convert {type(obj).__name__} to plain data")
 
 
 def station_price() -> str:
@@ -172,6 +198,7 @@ def _portal_configuration_id(s) -> str:
     """
     for cfg in s.billing_portal.Configuration.list(
             active=True, limit=100).auto_paging_iter():
+        cfg = _plain(cfg)
         if (cfg.get("metadata") or {}).get("taktline") == _PORTAL_CONFIG_MARKER:
             return cfg["id"]
     created = s.billing_portal.Configuration.create(
@@ -230,24 +257,24 @@ def update_station_quantity(subscription_id: str, quantity: int):
     has the number, since this is called on every station create/delete.
     """
     s = _stripe()
-    current = s.Subscription.retrieve(subscription_id, expand=["items"])
+    current = _plain(s.Subscription.retrieve(subscription_id, expand=["items"]))
     price_id = station_price()
     for item in current["items"]["data"]:
         if item["price"]["id"] == price_id:
             if int(item.get("quantity", 0) or 0) == quantity:
                 return current
-            return s.Subscription.modify(
+            return _plain(s.Subscription.modify(
                 subscription_id,
                 items=[{"id": item["id"], "quantity": quantity}],
                 proration_behavior="none",
-            )
+            ))
     # No station item at all would mean the subscription predates this model;
     # add the line rather than silently reporting nothing.
-    return s.Subscription.modify(
+    return _plain(s.Subscription.modify(
         subscription_id,
         items=[{"price": price_id, "quantity": quantity}],
         proration_behavior="none",
-    )
+    ))
 
 
 def set_on_premise(subscription_id: str, on_premise: bool):
@@ -310,13 +337,14 @@ def refund_credit_balance(customer_id: str) -> None:
 
 
 def _refund_credit_balance(s, customer_id: str) -> None:
-    customer = s.Customer.retrieve(customer_id)
+    customer = _plain(s.Customer.retrieve(customer_id))
     balance = customer.get("balance", 0)
     if balance >= 0:                       # 0 or a debt they owe us
         return
     owed = -balance
     charges = s.Charge.list(customer=customer_id, limit=10)
     for charge in charges.auto_paging_iter():
+        charge = _plain(charge)
         if charge.get("refunded") or not charge.get("paid"):
             continue
         amount = min(owed, charge["amount"] - charge.get("amount_refunded", 0))
@@ -361,15 +389,18 @@ def verify(payload: bytes, signature: str):
     if not settings.stripe_webhook_secret:
         raise HTTPException(503, "STRIPE_WEBHOOK_SECRET is not set")
     try:
-        return s.Webhook.construct_event(payload, signature,
-                                         settings.stripe_webhook_secret)
+        s.Webhook.construct_event(payload, signature,
+                                  settings.stripe_webhook_secret)
     except Exception as exc:                       # signature or parse failure
         raise HTTPException(400, f"Invalid webhook signature: {exc}") from None
+    # construct_event's return type changed shape across stripe versions; the
+    # verified raw payload is the same data and is plain dicts on every one.
+    return json.loads(payload)
 
 
 def fetch_subscription(subscription_id: str):
     """The authoritative object. Never trust the copy inside the event."""
-    return _stripe().Subscription.retrieve(subscription_id)
+    return _plain(_stripe().Subscription.retrieve(subscription_id))
 
 
 def shape_of_subscription(obj) -> tuple[Optional[int], bool]:

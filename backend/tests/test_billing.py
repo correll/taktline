@@ -353,6 +353,67 @@ def test_a_redelivered_webhook_does_the_work_once(stripe, actor, monkeypatch):
     assert _read_plan(a.company).planCode == "taktline"
 
 
+def test_verify_returns_plain_dicts(stripe):
+    """The handlers speak dict — `.get()` everywhere — and stripe v15's event
+    objects no longer do. The first live event crashed on obj.get("customer")
+    while every test passed, because the test doubles are plain dicts. verify()
+    therefore returns the parsed raw payload: the same verified bytes, plain
+    dicts on every stripe version."""
+    import hashlib
+    import hmac
+    import time
+
+    payload = json.dumps({"object": "event",   # v15 construct_event checks it
+                          **_event("customer.subscription.updated",
+                                   {"id": "sub_v", "customer": "cus_v"},
+                                   "evt_verify")}).encode()
+    t = int(time.time())
+    sig = hmac.new(b"whsec_fake", b"%d." % t + payload, hashlib.sha256).hexdigest()
+
+    event = billing_stripe.verify(payload, f"t={t},v1={sig}")
+
+    assert type(event) is dict
+    obj = event["data"]["object"]
+    assert type(obj) is dict
+    assert obj.get("customer") == "cus_v"
+
+
+def test_an_errored_delivery_can_be_redelivered(stripe, actor, monkeypatch):
+    """A handler crash must not consume the event id. The endpoint acks errors
+    (a 500 would eventually get the endpoint disabled), so the claim has to be
+    released instead: without that, the crash marks the event handled forever
+    and even a dashboard Resend after the fix does nothing — which is exactly
+    what stranded the first live purchase."""
+    a = actor()
+    bootstrap_admin(a, "Retry co")
+    # Unique ids matter here: the shared schema keeps every test's rows, and
+    # _company_for's subscription-id branch happily matches another company's
+    # row wearing the same fake sub id. This test found that out twice.
+    _set_plan(a.company, stripeCustomerId="cus_reclaim")
+    stripe.subscription("sub_reclaim", stations=4)
+
+    ev = _event("customer.subscription.updated",
+                {"id": "sub_reclaim", "customer": "cus_reclaim"}, "evt_reclaim")
+
+    fetched = billing_stripe.fetch_subscription        # the fixture's fake
+    armed = {"boom": True}
+
+    def flaky(sid):
+        if armed.pop("boom", False):
+            raise RuntimeError("stripe hiccup")
+        return fetched(sid)
+    monkeypatch.setattr(billing_stripe, "fetch_subscription", flaky)
+
+    first = _webhook(a, ev, monkeypatch)
+    assert first.status_code == 200 and first.json().get("error") is True
+
+    second = _webhook(a, ev, monkeypatch)
+    assert second.status_code == 200
+    assert second.json().get("duplicate") is None
+    assert second.json().get("error") is None
+    assert _read_plan(a.company).planCode == "taktline"
+
+
 def test_the_webhook_reads_stripe_rather_than_trusting_the_payload(stripe, actor,
                                                                    monkeypatch):
     """Stripe does not guarantee delivery order. Acting on the object embedded

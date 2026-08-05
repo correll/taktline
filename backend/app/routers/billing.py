@@ -283,6 +283,18 @@ async def stripe_webhook(request: Request,
         .returning(BillingEvent.id)
     )).scalar()
     if claimed is None:
+        # The claim only sticks once processing succeeded. A delivery that
+        # errored may be retried — otherwise a crash marks the event handled
+        # forever, and even a dashboard "Resend" after the fix does nothing.
+        claimed = (await session.execute(
+            BillingEvent.__table__.update()
+            .where(BillingEvent.stripeEventId == event["id"],
+                   BillingEvent.processedAt.is_(None),
+                   BillingEvent.error.isnot(None))
+            .values(error=None)
+            .returning(BillingEvent.id)
+        )).scalar()
+    if claimed is None:
         return {"received": True, "duplicate": True}
 
     if event["type"] not in billing_stripe.HANDLED:

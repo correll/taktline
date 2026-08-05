@@ -14,6 +14,15 @@ os.environ["COOKIE_SECURE"] = "0"
 os.environ["CORS_ORIGINS"] = "http://localhost:3000,https://app.example.com"
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://localhost:5432/taktline_test")
 
+# The developer's .env may carry REAL Stripe credentials (it did, the day
+# billing went live). The suite must start from "billing disabled" — both
+# because tests assert that default and because a test slipping past a mock
+# must find no key to spend with. Tests that want billing use the `stripe`
+# fixture, which sets fakes explicitly.
+for _var in ("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
+             "STRIPE_PRICE_TAKTLINE", "STRIPE_PRICE_ONPREM"):
+    os.environ[_var] = ""
+
 import asyncio
 
 import pytest

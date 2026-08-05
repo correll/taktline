@@ -26,6 +26,15 @@ function constant(name: string): number {
 const landing = readFileSync(resolve(__dirname, 'LandingView.tsx'), 'utf-8')
 const indexHtml = readFileSync(resolve(__dirname, '../../../index.html'), 'utf-8')
 
+// Every other surface that quotes the offer. The ghost check below ran only
+// against the landing page for a while, and "Two weeks free" survived on
+// exactly the pages it did not read.
+const otherSurfaces: Array<[string, string]> = [
+  ['ShareView', resolve(__dirname, '../share/ShareView.tsx')],
+  ['ManualView', resolve(__dirname, 'ManualView.tsx')],
+  ['network.py', resolve(__dirname, '../../../../backend/app/core/network.py')],
+].map(([name, path]) => [name as string, readFileSync(path as string, 'utf-8')])
+
 describe('the advertised price is the charged price', () => {
   it('reads real numbers out of plans.py', () => {
     // Guard the guard: a parser that silently returned 0 would make every
@@ -76,6 +85,9 @@ describe('the advertised price is the charged price', () => {
                          'Two weeks free', 'two weeks free', 'after two weeks']) {
       expect(landing, `the landing page still quotes ${ghost}`).not.toContain(ghost)
       expect(indexHtml, `index.html still quotes ${ghost}`).not.toContain(ghost)
+      for (const [name, text] of otherSurfaces) {
+        expect(text, `${name} still quotes ${ghost}`).not.toContain(ghost)
+      }
     }
   })
 

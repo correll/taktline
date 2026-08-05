@@ -14,6 +14,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 
 export interface UserPreferences {
   theme?: 'day' | 'night'
+  language?: string    // BCP 47, from i18n/languages.ts
 }
 
 export interface User {
@@ -34,6 +35,14 @@ export interface CompanyMembership {
   timezone: string
   impersonated?: boolean               // platform staff acting via a support grant
   impersonationExpiresAt?: string | null
+  // Billing state, carried on /auth/me so the app knows from its first render
+  // which tenants are on trial, near a ceiling, or locked. UX only — the
+  // server refuses independently, and this can be a stale offline snapshot.
+  plan: string
+  planLabel: string
+  planState: 'ok' | 'read_only' | 'locked'
+  stationLimit: number | null
+  integrations: boolean
 }
 
 export interface MeResponse {
@@ -49,7 +58,9 @@ export interface MessageResponse {
 export const authApi = {
   signup: (email: string, password: string, name?: string,
            opts?: { adoptSandbox?: boolean; companyName?: string
-                    acceptedTermsVersion?: string }): Promise<MessageResponse> =>
+                    acceptedTermsVersion?: string
+                    supplierInvite?: string
+                    language?: string }): Promise<MessageResponse> =>
     client.post('/auth/signup', { email, password, name, ...opts }),
   verifyEmail: (token: string): Promise<MessageResponse> =>
     client.post('/auth/verify-email', { token }),

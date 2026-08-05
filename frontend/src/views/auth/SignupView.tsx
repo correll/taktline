@@ -4,13 +4,17 @@ import { track } from '../../analytics'
 import { TermsGate } from '../../legal/TermsGate'
 import { TERMS_VERSION } from '../../legal/terms'
 import { authApi } from '../../api/auth.api'
-import { AuthCard, AuthFooter, Field, FormError, FormInfo, PrimaryButton, linkStyle } from './authUi'
+import { networkApi } from '../../api/network.api'
+import { browserLanguage, isLang, LANGUAGE_CODES } from '../../i18n/languages'
+import { useI18nStore } from '../../i18n'
+import { AuthCard, AuthFooter, Field, FormError, FormInfo, LanguageSelect, PrimaryButton, linkStyle } from './authUi'
 import { useAuthStore } from '../../store/auth.store'
 import { useStationsStore } from '../../store'
 import { color, size } from '../../theme/tokens'
 
 export default function SignupView() {
   const [name, setName] = useState('')
+  const [language, setLanguage] = useState<string>(browserLanguage())
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -44,7 +48,12 @@ export default function SignupView() {
         ...(keep ? { adoptSandbox: true, companyName: companyName.trim() || undefined } : {}),
         // Recorded against the exact version this screen displayed.
         acceptedTermsVersion: TERMS_VERSION,
+        // Only matters on the adopt-sandbox path; the other route to a company
+        // is CreateCompanyView, which takes it from the same stash.
+        supplierInvite: networkApi.takeInvite(),
+        language: isLang(language) ? language : undefined,
       })
+      if (isLang(language)) useI18nStore.getState().syncFromUser(language)
       track('signup_completed', { adopted_sandbox: keep })
       // The sandbox account is gone once its line has been handed over, so the
       // cookie in this browser is dead — don't leave a stale session on screen.
@@ -86,6 +95,7 @@ export default function SignupView() {
                onChange={(e) => setEmail(e.target.value)} required />
         <Field label="Password (min 10 characters)" type="password" value={password} autoComplete="new-password"
                onChange={(e) => setPassword(e.target.value)} required />
+        <LanguageSelect value={language} onChange={setLanguage} codes={[...LANGUAGE_CODES]} />
         {hasSandbox && (
           <div style={{
             margin: `${size.sp4} 0`, padding: size.sp4,

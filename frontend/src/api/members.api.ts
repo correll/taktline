@@ -25,6 +25,7 @@ export interface InvitePreview {
   email?: string | null
   role?: Role | null
   reason?: string | null
+  supportedLanguages?: string[]
 }
 
 export const membersApi = {
@@ -46,6 +47,7 @@ export const membersApi = {
 export const invitesApi = {
   preview: (token: string): Promise<InvitePreview> => client.get(`/invitations/${token}`),
   accept: (token: string): Promise<unknown> => client.post(`/invitations/${token}/accept`),
-  acceptSignup: (token: string, password: string, name?: string): Promise<unknown> =>
-    client.post(`/invitations/${token}/accept-signup`, { password, name }),
+  acceptSignup: (token: string, password: string, name?: string,
+                 language?: string): Promise<unknown> =>
+    client.post(`/invitations/${token}/accept-signup`, { password, name, language }),
 }

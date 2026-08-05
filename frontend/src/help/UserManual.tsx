@@ -685,6 +685,34 @@ function ScienceChapter() {
         fairly — and checks the queue, utilization and downstream starvation agree before it
         points.
       </P>
+
+      <H2 id="runout">The runout rule</H2>
+      <P>
+        A station several lines share — the saw every product crosses, the paint booth, the
+        monument — keeps getting one question: <B>what should I run next?</B> FIFO is the wrong
+        default there, because FIFO is fair to <i>lots</i>, and nobody cares about fairness to
+        lots. The station exists to keep the lines it feeds running, so the honest question is
+        which line starves first. Each line gets a clock:
+        <B> runout&nbsp;=&nbsp;units buffered at the next station&nbsp;÷&nbsp;the rate they are
+        actually consumed</B> — the next station's measured line cycle time, waste included,
+        because a buffer is eaten at the rate work really leaves, not the rate it theoretically
+        could. Run the lot for the line with the smallest clock. The rule is dynamic and
+        self-correcting: a line that slows down stops pulling attention, a line about to starve
+        rises to the top, and no line waits forever.
+      </P>
+      <P>
+        Taktline's Operator view applies this for you: at a station with several lines flowing
+        through, the lot picker sorts by runout and says why — <i>"Feeds Weld — starves in
+        ~40 min"</i>, <i>"Feeds Pack — 2 d of buffer, no rush"</i>. Three honesty rules shape
+        what it shows. A <B>storage</B> branch never starves — a warehouse is meant to fill, so
+        lines feeding only a shelf get no clock. An <B>unmeasured</B> next station gives no clock
+        either — null is not zero, and a recommendation built on data nobody recorded would be a
+        horoscope — so those lots simply stay FIFO. And on a <B>single line</B> the rule changes
+        nothing: with one consumer downstream, FIFO and runout agree, which is exactly as it
+        should be. Where changeovers are expensive and the mix is stable, consider a fixed
+        repeating sequence (a product wheel) instead — predictability lets the stations around
+        the shared machine synchronize to it.
+      </P>
     </>
   )
 }

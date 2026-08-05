@@ -19,6 +19,7 @@ export interface ProductionOrder {
   mergeStationId: string | null
   quantity: number
   quantityDone: number
+  trackingUrl?: string | null
   status: string
   note: string
   createdAt: string

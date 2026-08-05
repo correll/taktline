@@ -58,8 +58,14 @@ ALLOWED = {
         "create_route": "CRUD write path",
     },
     "routers/map_io.py": {"export_map": "serialises the rows as rows"},
-    "routers/analysis.py": {
-        "_snapshot": "hands rows to core.analysis, which filters boundary links itself",
+    "core/line_snapshot.py": {
+        "build": "hands rows to core.analysis, which filters boundary links itself",
+    },
+    "core/tracking.py": {
+        "_ordered_stations": "topologically orders one process's stations for a "
+                             "customer-facing progress bar; filters boundary "
+                             "links itself (an ERP node is not a step and would "
+                             "inflate the denominator)",
     },
     "routers/orders.py": {"_resolve_process": "picks a process, not a degree"},
     "routers/stations.py": {"_strip_split_semantics": "clears weights on flip to choice"},

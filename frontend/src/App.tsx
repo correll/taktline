@@ -1,7 +1,9 @@
 import { LineDoctor } from './help/LineDoctor'
 import { UndoBar } from './components/UndoBar'
+import { PlanBanner, PlanRefusalDialog } from './components/PlanNotices'
 import React, { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { networkApi } from './api/network.api'
 import { connectWS, disconnectWS } from './api/ws'
 import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore, useMapSettingsStore } from './store'
 import { useAuthStore } from './store/auth.store'
@@ -14,6 +16,7 @@ import { TourManager } from './help/TourManager'
 import { UserManual } from './help/UserManual'
 import { GettingStarted } from './help/GettingStarted'
 import { TipOfTheDay } from './help/TipOfTheDay'
+import { WhatsNew } from './help/WhatsNew'
 import { TaktlineLogo } from './components/TaktlineLogo'
 import { ThemeToggle } from './components/ThemeToggle'
 import { color, font, size, shadow } from './theme/tokens'
@@ -33,6 +36,13 @@ const ClientErrorsView = lazyView(() => import('./views/platform/ClientErrorsVie
 
 const LoginView          = lazyView(() => import('./views/auth/LoginView'))
 const SignupView         = lazyView(() => import('./views/auth/SignupView'))
+
+// An invitation link lands on /signup, but a curious supplier may click through
+// to the landing page or the manual before signing up. Reading it once, here,
+// means the credit survives that wander — and stashing it rather than passing it
+// down the tree means it also survives email verification, which happens on a
+// different page load than the one that created the company.
+networkApi.captureInvite(window.location.search)
 const VerifyEmailView    = lazyView(() => import('./views/auth/VerifyEmailView'))
 const ForgotPasswordView = lazyView(() => import('./views/auth/ForgotPasswordView'))
 const ResetPasswordView  = lazyView(() => import('./views/auth/ResetPasswordView'))
@@ -43,6 +53,7 @@ const TermsView  = lazyView(() => import('./views/landing/TermsView'))
 const PrivacyView = lazyView(() => import('./views/landing/PrivacyView'))
 const ManualView         = lazyView(() => import('./views/landing/ManualView'))
 const ShareView          = lazyView(() => import('./views/share/ShareView'))
+const TrackView          = lazyView(() => import('./views/tracking/TrackView'))
 
 /** Publish the *visual* viewport height as --tk-vvh.
  *
@@ -75,6 +86,9 @@ export default function App() {
             {/* Public share permalink. The OG tags for this URL are written
                 server-side (routers/share.py) — a crawler never gets here. */}
             <Route path="/i/:itemId"       element={<ShareView />} />
+            {/* A shop's own customer following their order. Public, and
+                server-rendered for link previews — routers/tracking.py. */}
+            <Route path="/o/:order/:token" element={<TrackView />} />
               <Route path="/terms"    element={<TermsView />} />
             <Route path="/privacy"         element={<PrivacyView />} />
             <Route path="/login"           element={<LoginView />} />
@@ -134,6 +148,9 @@ function Shell() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Topbar connection={connection} />
       <OutageBanner />
+      <WhatsNew />
+      <PlanBanner />
+      <PlanRefusalDialog />
       <LineDoctor />
       <UndoBar />
       <OrientationNavigator />

@@ -1,4 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import { analysisApi, type LineRunout } from '../../api/analysis.api'
+import { useT } from '../../i18n'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Heart, ScanLine } from 'lucide-react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
 import { sessionsApi, type WorkSession } from '../../api/sessions.api'
@@ -129,6 +132,27 @@ export default function OperatorView() {
       setPhase('working')
     }).catch(() => {})
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep link: /operator?station=…&card=… — where the QR on a lot card lands an
+  // operator who scanned it. It runs after `cards` has loaded, because the whole
+  // point is arriving with that lot already picked; with an empty store
+  // `selectLocation` would drop the preference and show a bare list.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const allStations = useStationsStore((st) => st.stations)
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    if (deepLinked.current || phase !== 'pick-station') return
+    const station = searchParams.get('station')
+    if (!station || !allStations[station]) return
+    if (!Object.keys(cards).length) return
+    deepLinked.current = true
+    const wanted = searchParams.get('card')
+    void selectLocation(station, wanted ? (cards[wanted] ?? null) : null)
+    // Drop the parameters once used, so a refresh or a back-navigation does not
+    // silently re-open somebody else's lot.
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, allStations, searchParams, phase])
 
   const selectLocation = useCallback(async (id: string, preferred?: Card | null) => {
     setStationId(id)
@@ -470,6 +494,7 @@ function LotPicker({
   onStart:        () => void
   onGoToStation:  (id: string, preferred?: Card | null) => void
 }) {
+  const t = useT()
   const stations       = useStationsStore((s) => s.stations)
   const cards          = useCardsStore((s) => s.cards)
   const templates      = useProcessesStore((s) => s.lotTemplates)
@@ -551,11 +576,31 @@ function LotPicker({
     return lots.filter((c) => !templates[c.lotTemplateId])
   }, [isMergeStation, lots, templates])
 
+  // The runout rule: at a station several lines share, sort by which line
+  // starves first rather than FIFO. Best-effort — the picker falls back to
+  // FIFO for any lot without a clock, and entirely when the fetch fails.
+  const [runout, setRunout] = useState<Record<string, LineRunout>>({})
+  useEffect(() => {
+    let live = true
+    analysisApi.runout(stationId)
+      .then((r) => { if (live) setRunout(r.lines) })
+      .catch(() => { if (live) setRunout({}) })
+    return () => { live = false }
+  }, [stationId, lots.length])
+
   const selectableLots = useMemo(() => {
-    if (!isMergeStation) return lots
-    const excluded = new Set([...precursorLots, ...unclassifiedLots].map((c) => c._id))
-    return lots.filter((c) => !excluded.has(c._id))
-  }, [isMergeStation, lots, precursorLots, unclassifiedLots])
+    const base = (() => {
+      if (!isMergeStation) return lots
+      const excluded = new Set([...precursorLots, ...unclassifiedLots].map((c) => c._id))
+      return lots.filter((c) => !excluded.has(c._id))
+    })()
+    // Smallest clock first; lots with no clock keep FIFO among themselves
+    // (sort is stable, and the tie-break is the lot's age).
+    const clock = (c: Card) => runout[c.processId]?.runoutSec ?? Infinity
+    return [...base].sort((a, b) =>
+      clock(a) - clock(b)
+      || new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
+  }, [isMergeStation, lots, precursorLots, unclassifiedLots, runout])
 
   // Lots still at the stations that feed this one — the material a worker may
   // need to go fetch. Tapping one switches the operator view to that station.
@@ -582,9 +627,7 @@ function LotPicker({
       <div>
         <div style={{ fontSize: 20, fontWeight: 700, color: color.textPrimary }}>{station?.name}</div>
         <div style={{ fontSize: 11, color: color.textDim, marginTop: 2 }}>
-          {isMergeStation
-            ? 'Select precursor lots and press MERGE to build the assembly, then work on it'
-            : 'Select a lot to work on, then press START'}
+          {isMergeStation ? t('op.selectPrecursors') : t('op.selectLot')}
         </div>
       </div>
 
@@ -629,6 +672,7 @@ function LotPicker({
               }}
             >
               <LotCard card={c} template={tmpl} stationId={stationId} />
+              <RunoutReason line={runout[c.processId]} />
             </div>
           )
         })}
@@ -730,7 +774,7 @@ function LotPicker({
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
-                    <div style={{ fontSize: 9, color: color.textDim }}>units</div>
+                    <div style={{ fontSize: 9, color: color.textDim }}>{t('op.units')}</div>
                   </div>
                 </div>
               )
@@ -811,7 +855,7 @@ function LotPicker({
                   )}
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
-                    <div style={{ fontSize: 9, color: color.textDim }}>units</div>
+                    <div style={{ fontSize: 9, color: color.textDim }}>{t('op.units')}</div>
                   </div>
                   <span style={{ color: color.textDim, fontSize: 14, flexShrink: 0 }}>→</span>
                 </div>
@@ -870,12 +914,41 @@ function LotPicker({
               marginTop:    size.sp2,
             }}
           >
-            {isDone ? 'MOVE' : starting ? 'STARTING…' : 'START'}
+            {isDone ? t('op.move') : starting ? t('op.starting') : t('op.start')}
           </button>
         )
       })()}
     </div>
   )
+}
+
+/** Why this lot is where it is in the queue — the runout rule, said out
+ *  loud. No clock (unmeasured downstream) → no line: a reason built on data
+ *  we do not have would be a horoscope. */
+function RunoutReason({ line }: { line?: LineRunout }) {
+  const t = useT()
+  if (!line || line.runoutSec === null) return null
+  const starving = line.runoutSec <= 0
+  const urgent = line.runoutSec < 2 * 3600
+  const tone = starving ? color.statusFault : urgent ? color.statusWarning : color.textDim
+  const text = starving
+    ? t('runout.starvingNow', { station: line.nextStationName })
+    : urgent
+      ? t('runout.starvesIn', { station: line.nextStationName, t: fmtDur(line.runoutSec) })
+      : t('runout.buffer', { station: line.nextStationName, t: fmtDur(line.runoutSec) })
+  return (
+    <div style={{ margin: '3px 2px 0', fontSize: 10.5, color: tone }}>
+      {text}
+    </div>
+  )
+}
+
+/** Compact approximate duration — the clock is an estimate, so false
+ *  precision ("starves in 2:37:12") would overstate what we know. */
+function fmtDur(sec: number): string {
+  if (sec < 3600) return `~${Math.max(1, Math.round(sec / 60))} min`
+  if (sec < 48 * 3600) return `~${Math.round(sec / 3600)} h`
+  return `~${Math.round(sec / 86400)} d`
 }
 
 // ─── Phase 3: Working + timer ─────────────────────────────────────────────────
@@ -894,6 +967,7 @@ function WorkingPanel({
   onElapsed:     (n: number) => void
   onStop:        () => void
 }) {
+  const t = useT()
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
   const [stopping, setStopping] = useState(false)
@@ -990,7 +1064,7 @@ function WorkingPanel({
         cursor: stopping ? 'not-allowed' : 'pointer',
         opacity: stopping ? 0.7 : 1, boxShadow: shadow.md, transition: 'all 0.15s ease',
       }}>
-        {stopping ? 'FINISHING…' : 'DONE'}
+        {stopping ? t('op.finishing') : t('op.done')}
       </button>
 
       <div style={{ fontSize: 11, color: color.textDim }}>
@@ -1013,6 +1087,7 @@ function DonePanel({
   onContinue:  () => Promise<void>
   onBack:      () => void
 }) {
+  const t = useT()
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
   const routes    = useProcessesStore((s) => s.routes)
@@ -1200,7 +1275,7 @@ function DonePanel({
       {picksDestination ? (
         <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: size.sp3 }}>
           <div style={{ fontSize: 11, color: color.textDim, textAlign: 'center' }}>
-            This lot moves whole — deal the units across the routes.
+            {t('op.wholelot')}
           </div>
           {branches.map((st) => (
             <div
@@ -1263,7 +1338,9 @@ function DonePanel({
               transition: 'all 0.15s ease',
             }}
           >
-            {moving ? 'MOVING…' : `MOVE ${allocTotal} UNIT${allocTotal !== 1 ? 'S' : ''}`}
+            {moving ? t('op.moving')
+                    : t(allocTotal === 1 ? 'op.moveUnits.one' : 'op.moveUnits.many',
+                        { n: allocTotal })}
           </button>
         </div>
       ) : nextStation && (
@@ -1281,7 +1358,7 @@ function DonePanel({
             transition: 'all 0.15s ease',
           }}
         >
-          {moving ? 'MOVING…' : `MOVE → ${destinationLabel}`}
+          {moving ? t('op.moving') : t('op.moveTo', { dest: destinationLabel })}
         </button>
       )}
 
@@ -1300,7 +1377,7 @@ function DonePanel({
           transition:   'all 0.15s ease',
         }}
       >
-        {continuing ? 'STARTING…' : 'CONTINUE WORKING'}
+        {continuing ? t('op.starting') : t('op.continueWorking')}
       </button>
 
       <button onClick={onBack} style={{

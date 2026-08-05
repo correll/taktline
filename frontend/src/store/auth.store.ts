@@ -4,6 +4,8 @@ import { immer } from 'zustand/middleware/immer'
 import { authApi, type CompanyMembership, type MeResponse, type User } from '../api/auth.api'
 import { ACTIVE_COMPANY_KEY, isNetworkError } from '../api/client'
 import { clearAllCaches, loadMe, saveMe } from './offlineCache'
+import { isLang } from '../i18n/languages'
+import { useI18nStore } from '../i18n'
 import { useThemeStore } from './theme.store'
 
 type Status = 'loading' | 'authed' | 'anon'
@@ -57,6 +59,9 @@ export const useAuthStore = create<AuthState>()(
         // The account's stored theme follows the user across devices.
         const theme = me.user.preferences?.theme
         if (theme === 'day' || theme === 'night') useThemeStore.getState().syncFromUser(theme)
+        // …and so does the language.
+        const lang = me.user.preferences?.language
+        if (isLang(lang)) useI18nStore.getState().syncFromUser(lang)
         saveMe(me)
       },
 

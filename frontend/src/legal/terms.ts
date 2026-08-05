@@ -12,8 +12,12 @@
  *  in the EU/UK. Have counsel review before relying on it.
  */
 
-export const TERMS_VERSION = '2026-07-30.1'
-export const TERMS_EFFECTIVE = '30 July 2026'
+export const TERMS_VERSION = '2026-08-02.1'
+export const TERMS_EFFECTIVE = '2 August 2026'
+
+/** The contracting entity. One constant so the footer, the terms and any
+ *  invoice cannot drift apart. */
+export const LEGAL_ENTITY = 'Taktline LLC'
 
 export interface TermsSection {
   heading: string
@@ -26,8 +30,9 @@ export const TERMS: TermsSection[] = [
     heading: '1. What this agreement is',
     paragraphs: [
       'This is the agreement between you (“you”, and any organisation you sign up on behalf of) ' +
-      'and the provider of Taktline (“we”, “us”). It covers your use of the Taktline software, ' +
-      'website and hosted service (together, “the Service”).',
+      'and Taktline LLC, an Indiana limited liability company (“Taktline”, “we”, “us”). It ' +
+      'covers your use of the Taktline software, website and hosted service (together, ' +
+      '“the Service”).',
       'By ticking the box and creating an account you accept every part of it. If you are ' +
       'accepting on behalf of a company, you confirm you are authorised to bind that company. ' +
       'If you do not accept, do not use the Service.',

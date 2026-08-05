@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { invitesApi, type InvitePreview } from '../../api/members.api'
+import { browserLanguage, isLang } from '../../i18n/languages'
 import { useAuthStore } from '../../store/auth.store'
-import { AuthCard, AuthFooter, Field, FormError, PrimaryButton, linkStyle } from './authUi'
+import { AuthCard, AuthFooter, Field, FormError, LanguageSelect, PrimaryButton, linkStyle } from './authUi'
 
 export default function AcceptInviteView() {
   const [params] = useSearchParams()
@@ -13,12 +14,20 @@ export default function AcceptInviteView() {
 
   const [preview, setPreview] = useState<InvitePreview | null>(null)
   const [password, setPassword] = useState('')
+  const [language, setLanguage] = useState<string>('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (!token) { setPreview({ valid: false, reason: 'missing' }); return }
-    invitesApi.preview(token).then(setPreview).catch(() => setPreview({ valid: false, reason: 'error' }))
+    invitesApi.preview(token).then((p) => {
+      setPreview(p)
+      // Default to the browser's language when the company offers it,
+      // otherwise the first language the company runs in.
+      const offered = p.supportedLanguages ?? []
+      const guess = browserLanguage()
+      setLanguage(offered.includes(guess) ? guess : offered[0] ?? 'en')
+    }).catch(() => setPreview({ valid: false, reason: 'error' }))
   }, [token])
 
   async function acceptExisting() {
@@ -36,7 +45,8 @@ export default function AcceptInviteView() {
     if (password.length < 10) { setError('Password must be at least 10 characters.'); return }
     setBusy(true)
     try {
-      await invitesApi.acceptSignup(token, password)
+      await invitesApi.acceptSignup(token, password, undefined,
+                                    isLang(language) ? language : undefined)
       await refresh()
       navigate('/', { replace: true })
     } catch (err) { setError(String(err)) } finally { setBusy(false) }
@@ -73,6 +83,10 @@ export default function AcceptInviteView() {
       <form onSubmit={acceptNew}>
         <Field label="Password (min 10 characters)" type="password" value={password} autoComplete="new-password"
                onChange={(e) => setPassword(e.target.value)} required />
+        {(preview.supportedLanguages?.length ?? 0) > 1 && (
+          <LanguageSelect value={language} onChange={setLanguage}
+                          codes={preview.supportedLanguages!} />
+        )}
         <FormError>{error}</FormError>
         <PrimaryButton type="submit" disabled={busy}>{busy ? 'Joining…' : 'Create account & join'}</PrimaryButton>
       </form>

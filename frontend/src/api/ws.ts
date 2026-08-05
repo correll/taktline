@@ -58,8 +58,13 @@ export function connectWS(): void {
   }
 
   socket.onclose = (evt) => {
-    // 4401/4403 = auth/authorization failure — don't hammer with reconnects.
-    if (evt.code === 4401 || evt.code === 4403) {
+    // 4401/4403 = auth/authorization failure, 4402 = the subscription is
+    // paused. None of them is a network problem, so none should retry — and
+    // 4402 in particular must not raise the outage banner, which would tell a
+    // locked customer their connection is broken while the plan banner right
+    // above it correctly says their account is paused. Two banners, two
+    // different stories, one of them false.
+    if (evt.code === 4401 || evt.code === 4402 || evt.code === 4403) {
       useMachinesStore.getState().setConnection('off')
       return
     }

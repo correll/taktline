@@ -25,10 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import settings
 from ..core.traffic import traffic
 from ..core.usage import month_bucket
+from ..core import entitlements, plans
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (
     AuthSession, Card, CardEvent, ClientError as ClientErrorRow, Company, Membership,
-    PlatformAudit, Station, SupportGrant, UsageCounter, User, WorkSession,
+    PlatformAudit, Station, Subscription, SupportGrant, UsageCounter, User, WorkSession,
 )
 from ..deps.auth import platform_role_of, require_platform_owner, require_platform_staff
 from ..models.common import utcnow
@@ -57,6 +58,34 @@ async def platform_status(user: User = Depends(require_platform_staff),
     now = utcnow()
     users_total = await count(select(func.count()).select_from(User))
     companies_total = await count(select(func.count()).select_from(Company))
+
+    # Revenue, derived the same way the gate derives entitlement, so the number
+    # on the dashboard and the service the customer receives cannot disagree.
+    # The metered price needs each company's station count — one grouped query.
+    sub_rows = (await session.execute(select(Subscription))).scalars().all()
+    station_counts = dict((await session.execute(
+        select(Station.companyId, func.count()).group_by(Station.companyId)
+    )).all())
+    mrr_cents = paying = free_lines = comped = at_risk = 0
+    for row in sub_rows:
+        ent = entitlements._derive(str(row.companyId), row)
+        on_paid_plan = (plans.get(row.planCode).code == plans.PAID
+                        and ent.state == entitlements.OK)
+        if on_paid_plan and row.stripeSubscriptionId:
+            mrr_cents += plans.monthly_cents_for(
+                station_counts.get(row.companyId, 0))
+            if row.onPremise:
+                mrr_cents += plans.ONPREM_CENTS
+            paying += 1
+        elif on_paid_plan:
+            # A paid plan with no Stripe subscription: staff granted it, or the
+            # billing migration grandfathered them. Real service, no revenue —
+            # and worth its own number rather than being hidden inside MRR.
+            comped += 1
+        elif plans.get(row.planCode).code == plans.FREE:
+            free_lines += 1
+        if ent.state in (entitlements.READ_ONLY, entitlements.LOCKED):
+            at_risk += 1
     stations_total = await count(select(func.count()).select_from(Station))
     cards_total = await count(select(func.count()).select_from(Card))
     # Signed-in users: unexpired sessions seen within the idle window.
@@ -88,6 +117,12 @@ async def platform_status(user: User = Depends(require_platform_staff),
         "companiesTotal": companies_total,
         "stationsTotal": stations_total,
         "cardsTotal": cards_total,
+        "mrrCents": mrr_cents,
+        "arrCents": mrr_cents * 12,
+        "payingCompanies": paying,
+        "compedCompanies": comped,
+        "freeCompanies": free_lines,
+        "atRiskCompanies": at_risk,
     }
 
 
@@ -199,6 +234,41 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
     from ..main import ws_manager
     live = {cid: len(conns) for cid, conns in ws_manager._by_company.items()}
 
+    # Billing. The effective state is derived rather than read from a column,
+    # so this shows what the customer is actually experiencing right now — not
+    # what a background job last wrote down.
+    subs = {r.companyId: r for r in (await session.execute(
+        select(Subscription))).scalars().all()}
+
+    def _collected(row, ent) -> bool:
+        return (ent.state == entitlements.OK
+                and plans.get(row.planCode).code == plans.PAID
+                and bool(row.stripeSubscriptionId))
+
+    def _collected_cents(cid, row, ent) -> int:
+        if not _collected(row, ent):
+            return 0
+        cents = plans.monthly_cents_for(stations.get(cid, 0))
+        return cents + (plans.ONPREM_CENTS if row.onPremise else 0)
+
+    def billing(cid):
+        row = subs.get(cid)
+        if row is None:
+            return {"plan": None, "planState": None, "mrrCents": 0,
+                    "renewsAt": None}
+        ent = entitlements._derive(str(cid), row)
+        return {
+            "plan": ent.plan.code,
+            "planState": ent.state,
+            # Only money actually being collected. A free line, a locked
+            # account and a **comped** one are all $0 of revenue — and comped
+            # is the one that catches you out, because it wears the paid plan
+            # code with no Stripe subscription behind it. Counting those once
+            # put $1,972 of imaginary MRR on this dashboard.
+            "mrrCents": _collected_cents(cid, row, ent),
+            "renewsAt": row.currentPeriodEnd,
+        }
+
     return [{
         "id": str(c.id),
         "name": c.name,
@@ -211,6 +281,7 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
         "apiRequestsMonth": usage_rows[c.id].apiRequests if c.id in usage_rows else 0,
         "wsMessagesMonth": usage_rows[c.id].wsMessages if c.id in usage_rows else 0,
         "lastActivityAt": last_event.get(c.id),
+        **billing(c.id),
     } for c in companies]
 
 
@@ -230,6 +301,10 @@ async def delete_platform_company(company_id: str, body: DeleteCompanyBody,
     member_count = (await session.execute(
         select(func.count()).select_from(Membership).where(Membership.companyId == company.id)
     )).scalar_one()
+    # Cancel at Stripe and remove the floor-plan files BEFORE the cascade takes
+    # the rows that point at them. Afterwards there is nothing left to find the
+    # live subscription with, and the customer keeps being billed.
+    await entitlements.release_company(session, company.id)
     await session.delete(company)   # all domain rows cascade via companyId FKs
     _audit(session, actor, "company_deleted", "company", company_id,
            name=company.name, members=member_count)

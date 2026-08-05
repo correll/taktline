@@ -232,6 +232,8 @@ class Station(Base):
     # the same question: a final test bench or a paint booth at the end of a
     # line is a leaf where real work happens, and inferring made it invisible
     # on the heatmap — exactly where a queue building up matters most.
+    #: Same as Card.supplierUrl, for a goods-in queue rather than one lot.
+    supplierUrl: Mapped[str | None] = mapped_column(String, nullable=True)
     isStorage: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                             server_default=text("false"), default=False)
     # What two or more outgoing routes MEAN at this station. 'split' (the
@@ -453,6 +455,11 @@ class Card(Base):
         UUID(as_uuid=True), ForeignKey("production_orders.id", ondelete="SET NULL"),
         nullable=True, index=True,
     )
+    #: A supplier's public tracking link for the job this lot is waiting on —
+    #: pasted in by whoever is waiting. Read by the *browser*, never by this
+    #: server: fetching a user-supplied URL server-side is an SSRF, and there is
+    #: nothing here the browser cannot do instead.
+    supplierUrl: Mapped[str | None] = mapped_column(String, nullable=True)
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
 
@@ -555,6 +562,23 @@ class GlobalSettings(Base):
     # switching it on has to be a deliberate, local decision.
     showCycleArc: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                               server_default=text("false"), default=False)
+    # Which languages this company runs in (core/languages.py). Operators
+    # invited into the company choose from this set. Defaults to every
+    # language the product speaks — inclusive until the admin narrows it.
+    supportedLanguages: Mapped[list] = mapped_column(
+        JSONB, nullable=False,
+        default=lambda: ["en", "es", "fr-CA", "my", "ht"],
+        server_default=text("""'["en", "es", "fr-CA", "my", "ht"]'::jsonb"""))
+    # Let a customer follow their own order on a public link (core/tracking.py).
+    # Off by default: publishing anything about production is the shop's
+    # decision, not one we make for them.
+    orderTracking: Mapped[bool] = mapped_column(Boolean, nullable=False,
+                                                server_default=text("false"), default=False)
+    # Whether that page names the steps. Separate, because a shop's process is
+    # its own business and plenty will happily say "60% done" while not wanting
+    # to tell a customer they subcontract the plating.
+    orderTrackingSteps: Mapped[bool] = mapped_column(Boolean, nullable=False,
+                                                     server_default=text("true"), default=True)
 
 
 # ─── ERP / production orders ────────────────────────────────────────────────────
@@ -716,4 +740,161 @@ class ShareCard(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
     )
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    createdAt: Mapped[datetime] = _created()
+
+
+class Subscription(Base):
+    """What a company is entitled to, and what Stripe thinks of them.
+
+    One row per company, created wherever a company is (there are four such
+    places — see `core/entitlements.ensure_subscription`).
+
+    **The effective state is derived, not stored.** This row holds the facts —
+    which plan, what Stripe last told us, when the trial ends, when the grace
+    period ends — and `core/entitlements.resolve()` turns them into an answer at
+    read time. A stored `status` column would mean a company sits in whatever
+    state a missed background job left them in: usually "active", which is free
+    service, and occasionally "locked", which is an outage we caused.
+
+    `stripeStatus` is Stripe's word, kept verbatim and never interpreted here.
+    """
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        CheckConstraint("\"planCode\" <> ''", name="ck_subscription_plan_code"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    planCode: Mapped[str] = mapped_column(String, nullable=False, default="trial")
+    onPremise: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Managed connectors bought beyond what the plan includes, billed as a
+    #: quantity line on the Stripe subscription.
+    #:
+    #: `server_default` is not decoration. Render deploys with overlap — the new
+    #: container runs migrations and passes its health check while the previous
+    #: one is still serving — so for a few seconds instances that predate this
+    #: column are still inserting subscriptions. Without a database-side default
+    #: every one of those is a NotNullViolation. Declaring it here (rather than
+    #: only in the migration) is also what stops the next `--autogenerate` from
+    #: helpfully dropping it again.
+    connectorAddons: Mapped[int] = mapped_column(Integer, nullable=False,
+                                                 server_default=text("0"), default=0)
+
+    # Stripe's own subscription status, verbatim: trialing / active / past_due /
+    # incomplete / canceled / unpaid. Null until they buy something.
+    stripeStatus: Mapped[str | None] = mapped_column(String, nullable=True)
+    stripeCustomerId: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    stripeSubscriptionId: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+
+    trialEndsAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    currentPeriodEnd: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when a payment fails; the account is read-only until it passes, then
+    # locked. Cleared on a successful invoice.
+    graceEndsAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    createdAt: Mapped[datetime] = _created()
+    updatedAt: Mapped[datetime] = _updated()
+
+
+class TrialGrant(Base):
+    """One free trial per person, ever.
+
+    Deliberately keyed on the **email**, with no FK to `users`, because that is
+    the only identifier that survives the thing it has to outlive: a trial
+    company is deleted on day 15, `User` rows do not cascade from `Company`, and
+    the verified user can then create another company. Without this row that
+    loop has no end — a free product with extra steps.
+    """
+    __tablename__ = "trial_grants"
+
+    id: Mapped[uuid.UUID] = _pk()
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    grantedAt: Mapped[datetime] = _created()
+
+
+class BillingEvent(Base):
+    """Every Stripe webhook we have processed, by Stripe's own event id.
+
+    **FK-free on purpose**, like `platform_audit`. If this cascaded with the
+    company, deleting a company would destroy the record that its events were
+    handled — and Stripe retries for three days, so a retry landing after the
+    deletion would be processed from scratch against a company that no longer
+    exists. It also has to survive the customer for tax and dispute evidence.
+
+    The unique constraint is the idempotency: a redelivered event inserts
+    nothing and does nothing. Ordering is handled separately, by re-fetching the
+    authoritative object from Stripe rather than trusting the payload.
+    """
+    __tablename__ = "billing_events"
+
+    id: Mapped[uuid.UUID] = _pk()
+    stripeEventId: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    companyId: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    receivedAt: Mapped[datetime] = _created()
+    processedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LifecycleEmail(Base):
+    """One row per (company, email kind) — the drip's exactly-once ledger.
+
+    The unique constraint *is* the mechanism: a send is claimed with
+    `INSERT ... ON CONFLICT DO NOTHING RETURNING`, so a second worker, a
+    restart, or a redeploy mid-sweep cannot send the same email twice. Checking
+    "have we sent it?" and then sending is a race with a customer-visible
+    failure mode, and the interval here is days, so it would be a rare and
+    baffling one.
+    """
+    __tablename__ = "lifecycle_emails"
+    __table_args__ = (
+        UniqueConstraint("companyId", "kind", name="uq_lifecycle_company_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = _company_fk()
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    sentTo: Mapped[str] = mapped_column(String, nullable=False, default="")
+    sentAt: Mapped[datetime] = _created()
+
+
+class SupplierInvite(Base):
+    """A company asking one of its suppliers to publish order status.
+
+    The viral act, and the reason it works: an invitation from a *customer*
+    carries commercial weight no referral link has. "One of the shops I sell to
+    asked me to" is a reason a supplier will act on; "a friend recommends this
+    software" is not.
+
+    `acceptedCompanyId` is attribution, not access. Accepting an invitation
+    creates an ordinary independent company — the inviter gets no rights over
+    it, and sees only what the supplier chooses to send them (a tracking link,
+    like any customer). Anything else would make signing up an act of
+    submission to a customer, which is not a thing a supplier would do twice.
+    """
+    __tablename__ = "supplier_invites"
+    __table_args__ = (
+        UniqueConstraint("companyId", "email", name="uq_supplier_invite_email"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = _company_fk()
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    #: What they supply, in the inviter's words. Goes into the email, because
+    #: "you make our brackets" lands and "you are a supplier" does not.
+    supplies: Mapped[str] = mapped_column(String, nullable=False, default="")
+    invitedByUserId: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    #: The company that came into being from this invitation, if one did.
+    #: No FK cascade to the inviter: a supplier's account must outlive the
+    #: customer that suggested it.
+    acceptedCompanyId: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True,
+    )
+    acceptedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     createdAt: Mapped[datetime] = _created()

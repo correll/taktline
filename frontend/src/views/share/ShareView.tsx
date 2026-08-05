@@ -63,14 +63,19 @@ export default function ShareView() {
       }}>
         {concept ? (
           <>
-            <Eyebrow>Flow science · {concept.title}</Eyebrow>
+            <Eyebrow>
+              {concept.chapter === 'science' ? 'Flow science' : 'The improvement toolkit'}
+              {' · '}{concept.title}
+            </Eyebrow>
             <h1 style={h1}>{concept.claim}</h1>
-            <div style={{
-              margin: `${size.sp6} 0`, padding: size.sp5, background: color.bgPanel,
-              border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
-            }}>
-              <ConceptAnimation kind={concept.animation} />
-            </div>
+            {concept.animation && (
+              <div style={{
+                margin: `${size.sp6} 0`, padding: size.sp5, background: color.bgPanel,
+                border: `1px solid ${color.border}`, borderRadius: size.radiusLg,
+              }}>
+                <ConceptAnimation kind={concept.animation} />
+              </div>
+            )}
             {concept.formula && (
               <div style={{
                 display: 'inline-block', padding: '10px 18px', marginBottom: size.sp5,
@@ -81,10 +86,15 @@ export default function ShareView() {
                 {concept.formula}
               </div>
             )}
-            <p style={body}>{concept.body}</p>
+            <p style={{ ...body, marginTop: concept.animation ? 0 : size.sp5 }}>
+              {concept.body}
+            </p>
             <Related
-              title="The rest of the flow science"
-              items={CONCEPTS.filter((c) => c.id !== concept.id)
+              title={concept.chapter === 'science'
+                ? 'The rest of the flow science'
+                : 'More from the improvement toolkit'}
+              items={CONCEPTS.filter((c) => c.id !== concept.id
+                                         && c.chapter === concept.chapter)
                              .slice(0, 4)
                              .map((c) => ({ id: c.id, text: c.claim }))}
             />
@@ -211,7 +221,7 @@ function Cta({ to, linkLabel, pitch }: { to: string; linkLabel: string; pitch: s
             Start free
           </Link>
           <span style={{ fontSize: 12.5, color: color.textDim }}>
-            Free to get started · no credit card
+            Two weeks free · every operator included on every plan
           </span>
         </div>
       </div>

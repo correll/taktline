@@ -16,6 +16,12 @@ export interface PlatformStatus {
   companiesTotal: number
   stationsTotal: number
   cardsTotal: number
+  mrrCents: number
+  arrCents: number
+  payingCompanies: number
+  compedCompanies: number
+  freeCompanies: number
+  atRiskCompanies: number
 }
 
 export interface PlatformUser {
@@ -41,6 +47,10 @@ export interface PlatformCompany {
   apiRequestsMonth: number
   wsMessagesMonth: number
   lastActivityAt: string | null
+  plan: string | null
+  planState: 'ok' | 'read_only' | 'locked' | null
+  mrrCents: number
+  renewsAt: string | null
 }
 
 export interface AuditEntry {

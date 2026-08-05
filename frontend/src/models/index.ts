@@ -31,6 +31,8 @@ export interface Station {
    *  accumulating. A property of the station, not a shape in the graph: a
    *  final test bench is a leaf that very much does work. */
   isStorage: boolean
+  /** A supplier tracking link for the whole queue that lands here. */
+  supplierUrl?: string | null
   /** What two or more outgoing routes mean here. 'split' (and null, the
    *  default): a disassembly — one lot fans out to every branch at once.
    *  'choice': either/or routing — each lot moves 1:1 down the one branch the
@@ -112,6 +114,13 @@ export interface Card {
   flagged: boolean
   description: string
   status: 'idle' | 'working' | 'done'
+  orderId?: ID | null
+  /** Read-only link for the customer who ordered this lot. Always present; the
+   *  page only answers while the company has customer order tracking on. */
+  trackingUrl?: string | null
+  /** A *supplier's* tracking link — the mirror of `trackingUrl`. Validated
+   *  server-side before it is stored, and fetched from the browser only. */
+  supplierUrl?: string | null
   createdAt: string
   updatedAt: string
 }

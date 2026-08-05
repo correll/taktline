@@ -113,6 +113,41 @@ class Settings(BaseSettings):
     default_admin_email: str = "admin@taktline.dev"
     default_admin_password: str = "change-me-admin-0000"
 
+    # ── Deployment mode ───────────────────────────────────────────────────────
+    # "cloud" is taktline.com: accounts are metered and billed. "onprem" is a
+    # customer's own box — it must never run the sandbox janitor, or their
+    # server would delete their own visitors' lines. Entitlement on-prem comes
+    # from a signed licence file, not from a subscription row (see
+    # core/licence.py).
+    deployment: str = "cloud"
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.deployment != "onprem"
+
+    # ── Billing (Stripe) ──────────────────────────────────────────────────────
+    # Absent key = billing disabled: entitlement still resolves (so the gate and
+    # the quotas work, and the suite runs without a Stripe account) but nothing
+    # can be purchased and no webhook is accepted. This is also what a
+    # self-hosted deployment runs in.
+    stripe_secret_key: Optional[str] = None
+    stripe_webhook_secret: Optional[str] = None
+    # Price ids — see core/plans.py. `taktline` is the single tiered
+    # per-station price; `onprem` the flat add-on. Test and live mode have
+    # different ids, which is why these are environment and not checked-in
+    # constants.
+    stripe_price_taktline: Optional[str] = None
+    stripe_price_onprem: Optional[str] = None
+
+    @property
+    def billing_enabled(self) -> bool:
+        return bool(self.stripe_secret_key) and self.is_cloud
+
+    # Public key that verifies an on-premise licence file. Baked into the image;
+    # the private half never leaves the release machine.
+    licence_public_key: Optional[str] = None
+    licence_file: str = "taktline-licence.json"
+
 
 @lru_cache
 def get_settings() -> Settings:

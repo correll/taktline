@@ -12,6 +12,8 @@ from ..models.common import utcnow
 from ..plugins.registry import plugin_registry
 from ..core.integrations import ROLES, default_role, is_provider, role_allowed
 from ..core import undo as undo_core
+from ..core import entitlements
+from ..core.entitlements import works_read_only
 
 router = APIRouter(prefix="/stations", tags=["stations"])
 
@@ -29,6 +31,7 @@ def _to_station(r: StationRow) -> Station:
         integrationProvider=r.integrationProvider,
         integrationRole=r.integrationRole,
         isStorage=bool(r.isStorage),
+        supplierUrl=r.supplierUrl,
         branchMode=r.branchMode,
         createdAt=r.createdAt,
         updatedAt=r.updatedAt,
@@ -69,12 +72,20 @@ async def _strip_split_semantics(session: AsyncSession, company_id, station_uuid
             r.updatedAt = utcnow()
 
 
-def _validate_integration(provider, role) -> None:
+def _validate_integration(provider, role, ent=None) -> None:
     """A bound location must name a partner Taktline ships a connector for, and
     a role it can actually play. Rejecting here rather than at the DB keeps the
-    error a 400 with a readable message."""
+    error a 400 with a readable message.
+
+    This is also the plan gate for *new* bindings — the one funnel both create
+    and update pass through. It does nothing for an integration that already
+    exists on an account that has since downgraded; that is caught at the
+    API-key branch in `deps/auth.require_scope`, which is the only check a
+    running connector goes through."""
     if provider is None and role is None:
         return
+    if ent is not None:
+        entitlements.ensure_integrations(ent)
     if provider is not None and not is_provider(provider):
         raise HTTPException(400, f"Unknown integration provider '{provider}'")
     if role is not None and role not in ROLES:
@@ -108,11 +119,13 @@ async def create_station(body: StationCreate, ctx: CompanyContext = Depends(requ
                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     before = await undo_core.snapshot(session, ctx.company_id)
     await ensure_sandbox_quota(session, ctx, StationRow)
-    _validate_integration(body.integrationProvider, body.integrationRole)
+    _validate_integration(body.integrationProvider, body.integrationRole, ctx.entitlement)
     _validate_branch_mode(body.branchMode)
     row = StationRow(**body.model_dump(), companyId=ctx.company_id)
     session.add(row)
     await session.flush()
+    # The station count is the price — report it (best-effort; never blocks).
+    await entitlements.report_station_count(session, ctx.company_id)
     station = _to_station(row)
     if station.adapterType:
         await plugin_registry.register(str(row.id), station.adapterType, station.adapterConfig)
@@ -146,6 +159,7 @@ async def list_favorites(ctx: CompanyContext = Depends(get_active_company),
 
 
 @router.put("/{station_id}/favorite", status_code=204)
+@works_read_only   # A per-user UI preference, not company data.
 async def add_favorite(station_id: str, ctx: CompanyContext = Depends(get_active_company),
                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     user = _require_user(ctx)
@@ -178,12 +192,28 @@ async def update_station(station_id: str, body: StationUpdate,
     before = await undo_core.snapshot(session, ctx.company_id)
     row = await _get_owned(session, station_id, ctx)
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    # Only charge the plan gate when this request is actually *setting* a
+    # provider. A downgraded account still has to be able to rename a station
+    # that happens to carry an old binding — and, more to the point, has to be
+    # able to clear it in order to downgrade cleanly.
+    changing_provider = ("integrationProvider" in patch
+                         and patch["integrationProvider"] != row.integrationProvider)
     _validate_integration(patch.get("integrationProvider", row.integrationProvider),
-                          patch.get("integrationRole", row.integrationRole))
+                          patch.get("integrationRole", row.integrationRole),
+                          ctx.entitlement if changing_provider else None)
     _validate_branch_mode(patch.get("branchMode"))
     became_choice = patch.get("branchMode") == "choice" and row.branchMode != "choice"
     for k, v in patch.items():
         setattr(row, k, v)
+    # A supplier link has to be *clearable*, and the `is not None` filter above
+    # cannot tell a null from an omission — so unlinking a supplier would
+    # silently do nothing. `model_fields_set` knows which keys the client
+    # actually sent. Scoped to this one field on purpose: for every other
+    # nullable column here, null already means "leave it alone", and changing
+    # that wholesale would make a partial update erase what it did not mention.
+    if "supplierUrl" in body.model_fields_set:
+        row.supplierUrl = body.supplierUrl
+
     row.updatedAt = utcnow()
     if became_choice:
         await _strip_split_semantics(session, ctx.company_id, row.id)
@@ -232,6 +262,7 @@ async def delete_station(station_id: str, ctx: CompanyContext = Depends(require_
     name = row.name
     await session.delete(row)
     await session.flush()
+    await entitlements.report_station_count(session, ctx.company_id)
     await plugin_registry.unregister(station_id)
     await undo_core.record(session, ctx, f"Delete {name}",
                            before, await undo_core.snapshot(session, ctx.company_id))

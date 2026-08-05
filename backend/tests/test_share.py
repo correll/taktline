@@ -27,7 +27,10 @@ from tests.helpers import Actor, add_member, bootstrap_admin
 def test_catalogue_has_both_kinds():
     items = share_core.catalog()
     assert sum(1 for i in items.values() if i.kind == "tip") >= 90
-    assert sum(1 for i in items.values() if i.kind == "concept") == 8
+    # Flow science plus the improvement toolkit — the exact count moves as the
+    # manual grows, so this checks the shape rather than pinning a number the
+    # frontend already asserts per chapter.
+    assert sum(1 for i in items.values() if i.kind == "concept") >= 20
 
 
 def test_every_catalogue_item_renders_a_valid_card():

@@ -2,6 +2,7 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
+import { LANGUAGES } from '../../i18n/languages'
 
 export function AuthCard({ title, subtitle, children }: {
   title: string; subtitle?: React.ReactNode; children?: React.ReactNode
@@ -50,6 +51,33 @@ export function Field({ label, ...props }: FieldProps) {
           color: color.textPrimary, fontSize: 14, fontFamily: font.sans, outline: 'none',
         }}
       />
+    </label>
+  )
+}
+
+export const LANGUAGE_FIELD_LABEL = 'Language · Idioma · Langue · ဘာသာစကား · Lang'
+
+export function LanguageSelect({ label = LANGUAGE_FIELD_LABEL, value, onChange, codes }: {
+  label?: string; value: string; onChange: (v: string) => void; codes: string[]
+}) {
+  return (
+    <label style={{ display: 'block', marginBottom: size.sp4 }}>
+      <span style={{ display: 'block', fontSize: 12, color: color.textSecondary, marginBottom: size.sp1 }}>{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: `${size.sp2} ${size.sp3}`,
+          background: color.bgCard, border: `1px solid ${color.border}`, borderRadius: size.radius,
+          color: color.textPrimary, fontSize: 14, fontFamily: font.sans, outline: 'none',
+        }}
+      >
+        {codes.map((code) => (
+          <option key={code} value={code}>
+            {(LANGUAGES as Record<string, string>)[code] ?? code}
+          </option>
+        ))}
+      </select>
     </label>
   )
 }

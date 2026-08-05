@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core import analysis as engine
+from ..core import line_snapshot, runout as runout_engine
 from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import (
     Card as CardRow, LotTemplate as LotTemplateRow, MapSettings as MapSettingsRow,
@@ -52,91 +53,27 @@ class ReportOut(BaseModel):
     counts: dict
 
 
+class LineRunoutOut(BaseModel):
+    processId: str
+    processName: str
+    nextStationId: str
+    nextStationName: str
+    bufferUnits: int
+    lineCycleSec: Optional[float] = None
+    #: Seconds until the fed line starves. 0 = starving now. None = no
+    #: measured rate downstream, so there is no clock — sort those FIFO.
+    runoutSec: Optional[float] = None
+
+
+class RunoutOut(BaseModel):
+    stationId: str
+    lines: dict[str, LineRunoutOut]
+
+
 async def _snapshot(session: AsyncSession, company_id) -> engine.Snapshot:
-    async def rows(model):
-        return (await session.execute(
-            select(model).where(model.companyId == company_id))).scalars().all()
-
-    stations = await rows(StationRow)
-    routes = await rows(RouteRow)
-    processes = await rows(ProcessRow)
-    templates = await rows(LotTemplateRow)
-    cards = await rows(CardRow)
-
-    wip: dict = {}
-    wip_process: dict = {}
-    for c in cards:
-        for sid, b in (c.bins or {}).items():
-            n = int(b.get("count", 0) or 0)
-            wip[sid] = wip.get(sid, 0) + n
-            if c.processId:
-                pid = str(c.processId)
-                wip_process[pid] = wip_process.get(pid, 0) + n
-
-    now = datetime.now(timezone.utc)
-    since = now - timedelta(days=LOOKBACK_DAYS)
-    schedule, tzname = await _work_schedule(session, company_id)
-    measured = await _station_metrics(session, company_id, schedule, tzname, since, now)
-
-    # Per-session seconds per piece, and per-operator means. The aggregate
-    # cannot answer "is this repeatable" or "do two people do it differently" —
-    # both need the individual sessions, and both are findings worth having.
-    work = (await session.execute(
-        select(SessionRow).where(
-            SessionRow.companyId == company_id,
-            SessionRow.endedAt.isnot(None),
-            SessionRow.startedAt >= since))).scalars().all()
-    samples: dict = {}
-    per_operator: dict = {}
-    for w in work:
-        if not w.durationSec or not w.quantity or w.quantity < 1:
-            continue
-        sid = str(w.stationId)
-        each = w.durationSec / w.quantity
-        samples.setdefault(sid, []).append(each)
-        per_operator.setdefault(sid, {}).setdefault(w.operatorId or "—", []).append(each)
-
-    metrics = {}
-    for sid, m in measured.items():
-        ops = {op: sum(v) / len(v) for op, v in per_operator.get(sid, {}).items() if v}
-        metrics[sid] = engine.StationMetrics(
-            sessions=m.get("sessionCount", 0) or 0,
-            units=m.get("totalUnits", 0) or 0,
-            working_sec=m.get("totalWorkingSec", 0.0) or 0.0,
-            cycle_sec=m.get("cycleTimeSec"),
-            line_cycle_sec=m.get("lineCycleTimeSec"),
-            oee=m.get("oee"),
-            samples=samples.get(sid, []),
-            operators=ops,
-        )
-
-    map_row = (await session.execute(
-        select(MapSettingsRow).where(MapSettingsRow.companyId == company_id))).scalars().first()
-
-    return engine.Snapshot(
-        stations=[engine.StationIn(
-            id=str(s.id), name=s.name, is_storage=bool(s.isStorage),
-            provider=s.integrationProvider, branch_mode=s.branchMode,
-            x=float((s.position or {}).get("x", 0) or 0),
-            y=float((s.position or {}).get("y", 0) or 0),
-        ) for s in stations],
-        routes=[engine.RouteIn(load=str(r.load), unload=str(r.unload),
-                               quantity=int(r.quantity or 1), process=str(r.processId))
-                for r in routes],
-        processes=[engine.ProcessIn(id=str(p.id), name=p.name,
-                                    desired_takt_sec=getattr(p, "desiredTaktSec", None))
-                   for p in processes],
-        templates=[engine.TemplateIn(
-            id=str(t.id), name=t.name,
-            process=str(t.processId) if t.processId else None,
-            start_station=str(t.startStationId) if t.startStationId else None)
-            for t in templates],
-        wip=wip,
-        wip_process=wip_process,
-        metrics=metrics,
-        pixels_per_unit=float(map_row.pixelsPerUnit) if map_row else 0.0,
-        unit=(map_row.unit if map_row else "m"),
-    )
+    """Kept as a thin alias: `core.line_snapshot.build` is the one builder,
+    shared with the trial drip's day-3 report."""
+    return await line_snapshot.build(session, company_id)
 
 
 @router.get("/", response_model=ReportOut)
@@ -161,3 +98,25 @@ async def line_report(ctx: CompanyContext = Depends(get_active_company),
             "insight": sum(1 for f in report.findings if f.severity == engine.INSIGHT),
         },
     )
+
+@router.get("/runout/{station_id}", response_model=RunoutOut)
+async def station_runout(station_id: str,
+                         ctx: CompanyContext = Depends(get_active_company),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """The runout rule, for the operator's lot picker at a shared station:
+    per line flowing through here, how long until the station it feeds
+    starves. Readable by any member — the operator holding the tablet is the
+    person the answer is for."""
+    from fastapi import HTTPException
+
+    snap = await _snapshot(session, ctx.company_id)
+    if not any(st.id == station_id for st in snap.stations):
+        raise HTTPException(404, "Station not found")
+    lines = runout_engine.station_runout(snap, station_id)
+    return RunoutOut(stationId=station_id, lines={
+        pid: LineRunoutOut(
+            processId=r.process_id, processName=r.process_name,
+            nextStationId=r.next_station_id, nextStationName=r.next_station_name,
+            bufferUnits=r.buffer_units, lineCycleSec=r.line_cycle_sec,
+            runoutSec=r.runout_sec,
+        ) for pid, r in lines.items()})

@@ -9,8 +9,9 @@ import GlobalTab       from './GlobalTab'
 import { useAuthStore } from '../../store/auth.store'
 import MembersTab      from './MembersTab'
 import IntegrationsTab from './IntegrationsTab'
+import BillingTab from './BillingTab'
 
-type Tab = 'stations' | 'processes' | 'templates' | 'map' | 'members' | 'integrations' | 'global'
+type Tab = 'stations' | 'processes' | 'templates' | 'map' | 'members' | 'integrations' | 'global' | 'billing'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'stations',     label: 'Stations'    },
@@ -20,11 +21,22 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'members',      label: 'Members'      },
   { id: 'integrations', label: 'Integrations' },
   { id: 'global',       label: 'Global'       },
+  { id: 'billing',      label: 'Billing'      },
 ]
 
 // Capabilities a sandbox account doesn't have (server-enforced too). The tabs
 // stay visible but greyed — clicking one leads to registration.
-const SANDBOX_LOCKED: Tab[] = ['map', 'members', 'integrations']
+const SANDBOX_LOCKED: Tab[] = ['map', 'members', 'integrations', 'billing']
+
+/** Billing is a page of prose and cards rather than a table, so it needs the
+ *  scroll container the table tabs provide for themselves. */
+function BillingScroll() {
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: size.sp6 }}>
+      <BillingTab />
+    </div>
+  )
+}
 
 export default function SettingsView() {
   const [searchParams] = useSearchParams()
@@ -88,6 +100,7 @@ export default function SettingsView() {
         {tab === 'members'      && <MembersTab     />}
         {tab === 'integrations' && <IntegrationsTab />}
         {tab === 'global'       && <GlobalTab      />}
+        {tab === 'billing'      && <BillingScroll  />}
       </div>
     </div>
   )

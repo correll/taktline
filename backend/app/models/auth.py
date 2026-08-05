@@ -19,6 +19,9 @@ class SignupBody(BaseModel):
     email: EmailStr
     password: str
     name: Optional[str] = None
+    #: BCP 47 code from core/languages.py. A new account may pick any language
+    #: the product speaks; invited operators are constrained by their company.
+    language: Optional[str] = None
     # Carry the line built in the sandbox over to the new account. Authorised by
     # the sandbox session cookie the browser already holds — no code to copy.
     adoptSandbox: bool = False
@@ -27,6 +30,9 @@ class SignupBody(BaseModel):
     # the person accepted. Recorded on the user so "they agreed" can later be
     # answered with "to this text, on this date".
     acceptedTermsVersion: Optional[str] = None
+    #: Carried from a supplier invitation email so the customer who sent it gets
+    #: credited when their supplier actually joins. See `routers/network.py`.
+    supplierInvite: Optional[str] = None
 
     _pw = field_validator("password")(_validate_password)
 
@@ -70,6 +76,15 @@ class PreferencesPatch(BaseModel):
     """Partial update of the user's cross-device preferences. Only known keys
     are accepted so the blob can't grow arbitrarily."""
     theme: Optional[str] = None
+    language: Optional[str] = None
+
+    @field_validator("language")
+    @classmethod
+    def _language_valid(cls, v: Optional[str]) -> Optional[str]:
+        from ..core import languages
+        if v is not None and not languages.valid(v):
+            raise ValueError(f"unknown language '{v}'")
+        return v
 
     @field_validator("theme")
     @classmethod
@@ -90,6 +105,14 @@ class CompanyMembership(BaseModel):
     timezone: str = "UTC"
     impersonated: bool = False
     impersonationExpiresAt: Optional[datetime] = None
+    #: Billing state, so the app knows on its first request which tenants are
+    #: on trial, over their limit, or locked. Without it the company switcher
+    #: cannot mark a locked tenant and a 402 has no company to route to.
+    plan: str = "trial"
+    planLabel: str = "Trial"
+    planState: str = "ok"          # ok | read_only | locked
+    stationLimit: Optional[int] = None
+    integrations: bool = False
 
 
 class MeResponse(BaseModel):

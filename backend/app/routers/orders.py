@@ -21,6 +21,9 @@ from ..models.common import utcnow
 from ..models.order import CancelByRef, OrderCreate, OrderPublic, OutboxEvent
 from .cards import _record_event
 from .merge import _incoming_routes, _leaf_sources, _gen_lot_code
+from ..core import tracking
+from ..core.config import settings
+from ..core.entitlements import works_read_only
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -32,6 +35,8 @@ def _to_order(o: OrderRow) -> OrderPublic:
         mergeStationId=str(o.mergeStationId) if o.mergeStationId else None,
         quantity=o.quantity, quantityDone=o.quantityDone, status=o.status, note=o.note,
         attributes=o.attributes or {}, createdAt=o.createdAt, updatedAt=o.updatedAt,
+        trackingUrl=(f"{settings.frontend_base_url.rstrip('/')}"
+                     f"/o/{o.id}/{tracking.token_for(o.id)}"),
     )
 
 
@@ -311,6 +316,10 @@ async def list_outbox(status: Optional[str] = "pending", source: Optional[str] =
 
 
 @router.post("/outbox/{event_id}/ack", status_code=204)
+@works_read_only   # The connector has ALREADY delivered this to the ERP.
+                   # Refusing the ack keeps the row pending, so everything is
+                   # re-delivered on restore — duplicate ERP orders caused by a
+                   # billing state.
 async def ack_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders_access),
                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     row = await session.get(OutboxRow, require_uuid(event_id, "Event not found"))
@@ -322,6 +331,7 @@ async def ack_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders
 
 
 @router.post("/outbox/{event_id}/fail", status_code=200)
+@works_read_only   # Same reasoning as ack: this records what already happened.
 async def fail_outbox(event_id: str, ctx: CompanyContext = Depends(require_orders_access),
                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """Record a failed delivery attempt. The event stays ``pending`` (and is

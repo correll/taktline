@@ -7,6 +7,8 @@ import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
 import { ContactForm } from './ContactForm'
 import { featuredTips } from '../../help/leanTips'
+import { LANGUAGES, LANGUAGE_CODES } from '../../i18n/languages'
+import { LEGAL_ENTITY } from '../../legal/terms'
 import { useAuthStore } from '../../store/auth.store'
 import { useThemeStore } from '../../store/theme.store'
 import { color, font, size, shadow } from '../../theme/tokens'
@@ -78,12 +80,14 @@ export default function LandingView() {
         <TheBoard />
         <Steps />
         <OnEveryDevice />
+        <FloorLanguages />
         <TheDoctor />
         <Features />
         <Integrations />
         <Founder />
         <WhyTrustUs />
         <FromTheBook />
+        <Pricing />
         <Questions />
         <FinalCta />
       </main>
@@ -105,6 +109,10 @@ function TopNav() {
       <div className="landing-nav" style={{ ...rowStyle, width: '100%', maxWidth: 1120, margin: '0 auto' }}>
         <TaktlineLogo height={22} color={color.textPrimary} />
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: size.sp2 }}>
+          <a href="#pricing" className="nav-secondary"
+             style={{ color: color.textSecondary, textDecoration: 'none', fontSize: 14, padding: '8px 10px' }}>
+            Pricing
+          </a>
           <Link to="/manual" className="nav-secondary"
                 style={{ color: color.textSecondary, textDecoration: 'none', fontSize: 14, padding: '8px 10px' }}>
             Manual
@@ -159,11 +167,11 @@ function Hero() {
             Try a live line — no signup
           </SandboxButton>
           <SignupLink where="hero" style={{ fontSize: 16, padding: '12px 24px' }}>
-            Create a free account
+            Start free
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
-          Free to get started · no credit card · your data exports any time
+          Free up to 3 stations · no card · no expiry
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textSecondary }}>
           Runs in the browser on <strong style={{ color: color.textPrimary }}>iPhone, iPad and
@@ -203,6 +211,14 @@ function Hero() {
 // ─── The thesis ───────────────────────────────────────────────────────────────
 // The one sentence the whole product rests on, given room to land before the
 // page starts explaining how it works.
+//
+// Two beats, and the order is the argument: measure, then optimise, then
+// automate. Automation goes last because it is the destination — and because
+// putting it first is the expensive mistake this product exists to prevent.
+// Automating an unmeasured process buys you a robot doing the wrong thing
+// faster; the shop that maps its flow first knows what the robot should
+// actually do before it signs the order. The same claim is one of the lean tips
+// ("Lean first, then automate"), which is where it came from.
 
 function Thesis() {
   return (
@@ -214,7 +230,8 @@ function Thesis() {
           lineHeight: 1.35, letterSpacing: '-0.01em', fontWeight: 500,
           color: color.textPrimary, textWrap: 'balance',
         }}>
-          You can’t optimize a process nobody has measured.
+          You can’t optimize a process nobody has measured — and you can’t
+          automate one nobody has optimized.
         </p>
       </div>
     </section>
@@ -365,7 +382,7 @@ function InlineCta({ line, where }: { line: string; where: string }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3, flexWrap: 'wrap' }}>
         <SandboxButton where={where}>Try a live line — no signup</SandboxButton>
         <SignupLink where={where} style={{ border: 'none', padding: '8px 4px' }}>
-          or create a free account
+          or start free
         </SignupLink>
       </div>
     </div>
@@ -553,6 +570,49 @@ function Features() {
   )
 }
 
+// ─── Languages ────────────────────────────────────────────────────────────────
+
+/** The names come from the i18n catalogue itself, so this section can never
+ *  advertise a language the picker does not offer — i18n.test.ts already pins
+ *  that catalogue to the backend's allowlist. */
+function FloorLanguages() {
+  return (
+    <section style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 820, margin: '0 auto', textAlign: 'center' }}>
+        <div style={eyebrowStyle}>In their language</div>
+        <h2 style={h2Style}>The floor doesn’t work in English only</h2>
+        <p style={{
+          margin: `${size.sp4} auto 0`, maxWidth: 640, fontSize: 16,
+          lineHeight: 1.7, color: color.textSecondary,
+        }}>
+          The operator’s screen — start, done, move — speaks the language the person
+          holding the tablet thinks in. Everyone picks their own language when they
+          join and can change it any time; you choose which languages your company
+          runs in, so nobody is handed a screen their supervisor can’t read over
+          their shoulder.
+        </p>
+        <div style={{
+          margin: `${size.sp6} auto 0`, display: 'flex', gap: size.sp2,
+          flexWrap: 'wrap', justifyContent: 'center',
+        }}>
+          {LANGUAGE_CODES.map((code) => (
+            <span key={code} style={{
+              fontSize: 14, color: color.textPrimary, background: color.bgCard,
+              border: `1px solid ${color.border}`, borderRadius: size.radiusFull,
+              padding: '7px 16px',
+            }}>
+              {LANGUAGES[code]}
+            </span>
+          ))}
+        </div>
+        <p style={{ margin: `${size.sp4} auto 0`, fontSize: 13, color: color.textDim }}>
+          A worker who can read the system improves it — in any of these.
+        </p>
+      </div>
+    </section>
+  )
+}
+
 // ─── Integrations ─────────────────────────────────────────────────────────────
 
 function Integrations() {
@@ -580,6 +640,152 @@ function Integrations() {
 }
 
 // ─── Final CTA + footer ───────────────────────────────────────────────────────
+
+// ─── How we make money ───────────────────────────────────────────────────────
+
+/** The price list, on the page.
+ *
+ *  One number, a floor, and a ceiling — see pricing.md for the argument. The
+ *  ceiling is the best line on the page ("you will never pay more than $399"),
+ *  and linear pricing exists so nobody models 10 stations instead of their
+ *  actual 14 to duck a band; everything the product computes rests on the
+ *  graph being a faithful map of the floor.
+ *
+ *  Prices are duplicated here rather than fetched: this section renders for
+ *  signed-out visitors and for crawlers, and a pricing table that arrives after
+ *  a round trip is a pricing table search engines never see. `test_billing.py`
+ *  pins the same numbers on the server.
+ */
+const TIERS = [
+  {
+    name: 'Free', price: '$0', per: 'up to 3 stations',
+    line: 'A real line, not a demo. No card, no expiry — and never deleted.',
+    points: ['The live board and floor plan', 'Cycle time, line cycle time and OEE',
+             'The line doctor', 'Unlimited operators',
+             'Come back in six months and it is still here'],
+  },
+  {
+    name: 'Taktline', price: '$2', per: 'per station /month', featured: true,
+    line: 'Unlimited stations. Never less than $29, never more than $399 — however big you get.',
+    points: ['Every ERP and shop connector included: Odoo, NetSuite, Shopify, QuickBooks, ShipStation and more',
+             'Unlimited operators — we price the line, not the people',
+             'Scan-to-advance, label printing, reporting API',
+             '50 stations = $100 · 100 = $200 · 200+ = $399, capped'],
+  },
+]
+
+const ADD_ONS = [
+  ['On-premise', '+$199/month',
+   'On your own hardware, at any size. Your database, your network, your backups.'],
+  ['New connector build', '$750 once',
+   'An ERP or store we have not written yet. Once built it enters the catalogue — free for everyone, including you.'],
+  ['Taktline Box', '$2,900 once',
+   'A pre-configured fanless PC that plugs into your network and runs the server. Includes the first year.'],
+]
+
+function Pricing() {
+  return (
+    <section id="pricing" style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
+      <div style={{ maxWidth: 1060, margin: '0 auto' }}>
+        <h2 style={{ ...h2Style, textAlign: 'center' }}>
+          One price for the whole floor
+        </h2>
+        <p style={{
+          margin: `${size.sp4} auto 0`, maxWidth: 620, textAlign: 'center',
+          fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary,
+        }}>
+          Priced per line, not per person. Every operator and every tablet is included,
+          always — a worker who can see the system improves it, and a worker who is only
+          measured by it learns to manage the measurement. $2 a station, and you will
+          never pay more than $399 a month.
+        </p>
+
+        <div style={{
+          margin: `${size.sp8} 0 0`, display: 'grid', gap: size.sp4,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        }}>
+          {TIERS.map((t) => (
+            <div key={t.name} style={{
+              border: `1px solid ${t.featured ? color.bluePrimary : color.border}`,
+              borderRadius: size.radiusLg, background: color.bgCard,
+              padding: size.sp6, display: 'flex', flexDirection: 'column',
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.featured ? color.blueBright : color.textDim,
+                            textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                {t.name}
+              </div>
+              <div style={{ margin: `${size.sp3} 0 0`, display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 38, fontWeight: 600, color: color.textPrimary }}>{t.price}</span>
+                <span style={{ fontSize: 15, color: color.textDim }}>{t.per}</span>
+              </div>
+              <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14, lineHeight: 1.6, color: color.textSecondary }}>
+                {t.line}
+              </p>
+              <ul style={{ margin: `${size.sp4} 0 0`, padding: 0, listStyle: 'none',
+                           display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+                {t.points.map((pt) => (
+                  <li key={pt} style={{ fontSize: 13.5, lineHeight: 1.5, color: color.textSecondary,
+                                        display: 'flex', gap: size.sp2 }}>
+                    <span aria-hidden="true" style={{ color: color.blueBright }}>·</span>
+                    {pt}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        <div style={{
+          margin: `${size.sp6} 0 0`, display: 'grid', gap: size.sp3,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        }}>
+          {ADD_ONS.map(([name, price, line]) => (
+            <div key={name} style={{
+              border: `1px dashed ${color.border}`, borderRadius: size.radiusMd,
+              padding: size.sp4,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: size.sp2,
+                            flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: color.textPrimary }}>
+                  {name}
+                </span>
+                <span style={{ fontSize: 13, color: color.blueBright }}>{price}</span>
+              </div>
+              <p style={{ margin: '4px 0 0', fontSize: 12.5, lineHeight: 1.55,
+                          color: color.textDim }}>
+                {line}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* Why the number is a fraction of the category, said out loud. A
+            cautious buyer reads "implausibly cheap" as "will they exist in
+            three years?", and the honest answer is a different cost structure
+            rather than a thinner product — which is also the same argument the
+            product makes about factories, applied to us. */}
+        <p style={{
+          margin: `${size.sp8} auto 0`, maxWidth: 640, textAlign: 'center',
+          fontSize: 15, lineHeight: 1.7, color: color.textSecondary,
+        }}>
+          We run lean ourselves: no sales team, no ad spend, no funnel. You found
+          this through the manual, the book, or somebody who uses it — so what you
+          pay for is the product, not the cost of being sold to.
+        </p>
+
+        <p style={{
+          margin: `${size.sp5} auto 0`, maxWidth: 700, textAlign: 'center',
+          fontSize: 13.5, lineHeight: 1.7, color: color.textDim,
+        }}>
+          The price follows your floor by itself: draw a station, pay $2 more next month;
+          remove one, pay $2 less. Nothing to renegotiate, no band to fall out of.
+          Everything exports at any time in a format you can read, and if you ever stop,
+          your line is here waiting if you change your mind.
+        </p>
+      </div>
+    </section>
+  )
+}
 
 // ─── Who is behind it ────────────────────────────────────────────────────────
 
@@ -654,7 +860,7 @@ function WhyTrustUs() {
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={eyebrowStyle}>The honest bit</div>
-          <h2 style={h2Style}>Taktline is new — and that costs you nothing</h2>
+          <h2 style={h2Style}>Taktline is new — so we made it cheap to find out</h2>
           <p style={{
             margin: `${size.sp4} auto 0`, maxWidth: 640, fontSize: 16,
             lineHeight: 1.7, color: color.textSecondary,
@@ -672,8 +878,8 @@ function WhyTrustUs() {
           gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
         }}>
           {[
-            ['Nothing to lose',
-             'Running your line is free, forever, for every operator — no seat count, no per-station charge, no credit card. There is no budget to defend and no procurement to survive.'],
+            ['Little to lose',
+             'Free for three stations with no card and no expiry, then $2 a station a month. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
             ['Nothing to install',
              'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
             ['Nothing to lock you in',
@@ -786,8 +992,10 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         there is nothing to print or install. The five-minute tutorial builds a line end
         to end so you can see the shape of it before touching your own.</> },
   { q: 'Is my data mine?',
-    a: <>Yes. Everything exports at any time, and Taktline is free to run on your own
-        server — so nothing is held hostage by a subscription.</> },
+    a: <>Yes, and you can prove it: the whole line — stations, routes, products, lot
+        history and every timing — exports at any time as JSON and as a spreadsheet, in
+        a shape you can read without us. On-premise goes further and keeps the database
+        itself on your hardware.</> },
   { q: 'What happens when the Wi-Fi drops?',
     a: <>Tablets keep showing the board from a local snapshot and reconnect on their
         own, with an amber banner naming how old the data is. Changes are never queued
@@ -802,9 +1010,17 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         ready-made connectors; anything else goes through one small order API, a CSV
         import, or Zapier and Make.</> },
   { q: 'What does it cost?',
-    a: <>Running your line is free, forever, for every operator — no seat count and no
-        per-station charge. We charge for premium support, hosted instances, hardware
-        integration and robotics work.</> },
+    a: <>Free for up to 3 stations, with no card and no expiry. Beyond that,
+        <strong> $2 per station a month</strong> — never less than $29, never more than
+        $399, and every ERP connector is included. Every operator and every tablet is
+        included too — we price the line, not the people, because a worker who can see
+        the system improves it. Running it on your own hardware adds $199 a month.</> },
+  { q: 'What happens if I stop paying?',
+    a: <>Your line is waiting for you if you come back. Payment stops, the board goes
+        read-only for a week so you can still see and export everything, and then it
+        rests — we do not delete it. Start paying again whenever you like and it is
+        exactly as you left it, down to the lot cards. And you can take it with you at
+        any time: everything exports in a format you can read.</> },
 ]
 
 function Questions() {
@@ -860,11 +1076,11 @@ function FinalCta() {
             Try a live line — no signup
           </SandboxButton>
           <SignupLink where="footer" style={{ fontSize: 16, padding: '13px 26px' }}>
-            Create a free account
+            Start free
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textDim }}>
-          No credit card needed — Taktline is free, and stays free
+          Free up to 3 stations · $2 a station beyond, capped at $399 · cancel any time
         </div>
       </div>
     </section>
@@ -877,14 +1093,14 @@ function Footer() {
       <div style={{ ...rowStyle, maxWidth: 1120, margin: '0 auto', flexWrap: 'wrap', gap: size.sp4 }}>
         <TaktlineLogo height={18} mark color={color.textSecondary} />
         <span style={{ fontSize: 12.5, color: color.textDim }}>
-          © {new Date().getFullYear()} Taktline — digital kanban for real factories
+          © {new Date().getFullYear()} {LEGAL_ENTITY} — digital kanban for real factories
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: size.sp5, fontSize: 13 }}>
           <Link to="/manual" style={{ color: color.textSecondary, textDecoration: 'none' }}>User manual</Link>
           <Link to="/terms" style={{ color: color.textSecondary, textDecoration: 'none' }}>Terms</Link>
           <Link to="/login" style={{ color: color.textSecondary, textDecoration: 'none' }}>Sign in</Link>
           <Link to="/signup" style={{ color: color.blueBright, textDecoration: 'none' }}
-                onClick={() => track('cta_click', { cta: 'signup', where: 'footer-nav' })}>Create account</Link>
+                onClick={() => track('cta_click', { cta: 'signup', where: 'footer-nav' })}>Start free</Link>
         </div>
       </div>
     </footer>

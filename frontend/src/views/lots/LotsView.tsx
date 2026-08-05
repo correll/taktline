@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCardsStore, useStationsStore, useProcessesStore } from '../../store'
+import OrdersPanel from './OrdersPanel'
 import { color, font, size } from '../../theme/tokens'
 import LotCard from '../../components/lots/LotCard'
 import CreateLotModal from '../../components/lots/CreateLotModal'
@@ -371,6 +372,8 @@ export default function LotsView() {
   const boardRef = useRef<HTMLDivElement>(null)
   useLotFlip(boardRef)
 
+  const [pane, setPane] = useState<'board' | 'orders'>('board')
+
   return (
     <div ref={boardRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Toolbar */}
@@ -382,15 +385,35 @@ export default function LotsView() {
         gap:          size.sp4,
         flexShrink:   0,
       }}>
-        <span style={{ fontSize: 12, fontFamily: font.mono, color: color.textSecondary, letterSpacing: '0.1em' }}>
-          LOTS
-        </span>
-        <span style={{ fontSize: 11, color: color.textDim }}>
-          {totalCards} lot{totalCards !== 1 ? 's' : ''} · {columns.length} station{columns.length !== 1 ? 's' : ''}
-        </span>
+        {/* Board / Orders. Orders used to live under Settings → Integrations,
+            which is where they arrive *from* and not where anyone looks for
+            them: an order is work on the floor, so it belongs beside the lots
+            it released. */}
+        {(['board', 'orders'] as const).map((id) => (
+          <button
+            key={id}
+            onClick={() => setPane(id)}
+            aria-current={pane === id ? 'page' : undefined}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              padding: `2px 0`, fontSize: 12, fontFamily: font.mono,
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              color: pane === id ? color.textPrimary : color.textDim,
+              borderBottom: `2px solid ${pane === id ? color.bluePrimary : 'transparent'}`,
+            }}
+          >
+            {id}
+          </button>
+        ))}
+        {pane === 'board' && (
+          <span style={{ fontSize: 11, color: color.textDim }}>
+            {totalCards} lot{totalCards !== 1 ? 's' : ''} · {columns.length} station{columns.length !== 1 ? 's' : ''}
+          </span>
+        )}
 
-        {/* Right-side controls */}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: size.sp2 }}>
+        {/* Right-side controls — board only; none of them mean anything on the
+            orders pane. */}
+        <div style={{ marginLeft: 'auto', display: pane === 'board' ? 'flex' : 'none', gap: size.sp2 }}>
           {(['FOLD', 'UNFOLD'] as const).map((label) => (
             <button
               key={label}
@@ -551,7 +574,7 @@ export default function LotsView() {
         </div>
       </div>
 
-      {columns.length === 0 ? (
+      {pane === 'orders' ? <OrdersPanel /> : columns.length === 0 ? (
         <div style={{
           flex: 1, display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center', gap: 12,

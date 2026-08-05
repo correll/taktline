@@ -16,6 +16,7 @@ from ..core.email import (
     send_password_reset_email,
     send_verification_email,
 )
+from ..core import entitlements, languages, plans
 from ..core.ratelimit import limiter
 from ..core.security import (dummy_verify, generate_token, hash_password, hash_token,
                              needs_rehash, verify_password)
@@ -28,6 +29,7 @@ from ..deps.auth import (
     platform_role_of,
     set_auth_cookies,
 )
+from .network import attribute_signup
 from ..models.auth import (
     CompanyMembership,
     ForgotPasswordBody,
@@ -60,10 +62,14 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
         .where(Membership.userId == user.id)
         .order_by(Company.name)
     )).all()
-    companies = [
-        CompanyMembership(id=str(c.id), name=c.name, slug=c.slug, role=m.role, timezone=c.timezone)
-        for (m, c) in rows
-    ]
+    companies = []
+    for (m, c) in rows:
+        ent = await entitlements.resolve(session, c.id, user=user)
+        companies.append(CompanyMembership(
+            id=str(c.id), name=c.name, slug=c.slug, role=m.role, timezone=c.timezone,
+            plan=ent.plan.code, planLabel=ent.plan.label, planState=ent.state,
+            stationLimit=ent.station_limit, integrations=ent.integrations,
+        ))
 
     # Platform staff: active impersonation grants appear as extra super_admin
     # "memberships" (flagged) so the switcher/WS/API headers all just work.
@@ -80,10 +86,14 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
         for (g, c) in grant_rows:
             if str(c.id) not in member_ids:
                 member_ids.add(str(c.id))
+                ent = await entitlements.resolve(session, c.id, user=user)
                 companies.append(CompanyMembership(
                     id=str(c.id), name=c.name, slug=c.slug, role="super_admin",
                     timezone=c.timezone, impersonated=True,
                     impersonationExpiresAt=g.expiresAt,
+                    plan=ent.plan.code, planLabel=ent.plan.label,
+                    planState=ent.state, stationLimit=ent.station_limit,
+                    integrations=ent.integrations,
                 ))
     return MeResponse(user=_to_user_public(user), companies=companies)
 
@@ -139,6 +149,11 @@ async def _adopt_sandbox(session: AsyncSession, request: Request, new_user: User
         if any(flag is False for flag in others):
             continue                       # a real member is present — never touch it
         session.add(Membership(companyId=m.companyId, userId=new_user.id, role="super_admin"))
+        # It stops being a sandbox the moment a real person owns it, so it
+        # stops being on the sandbox plan too. It becomes a free account —
+        # there is no clock to start, because the free tier has none.
+        sub = await entitlements.ensure_subscription(session, m.companyId)
+        sub.planCode = plans.FREE
         if company_name and company_name.strip():
             company = await session.get(Company, m.companyId)
             if company is not None:
@@ -160,15 +175,29 @@ async def signup(request: Request, body: SignupBody, session: AsyncSession = Dep
     existing = (await session.execute(select(User).where(User.email == email))).scalars().first()
     link = None
     adopted = False
+    if body.language is not None and not languages.valid(body.language):
+        raise HTTPException(422, f"Unknown language '{body.language}'")
     if existing is None:
         user = User(email=email, passwordHash=hash_password(body.password),
                     emailVerified=False, name=body.name,
+                    preferences={"language": body.language} if body.language else {},
                     termsVersion=body.acceptedTermsVersion,
                     termsAcceptedAt=utcnow() if body.acceptedTermsVersion else None)
         session.add(user)
         await session.flush()
         if body.adoptSandbox:
             adopted = await _adopt_sandbox(session, request, user, body.companyName)
+            if adopted:
+                # The other door a company comes through. Attributing only at
+                # POST /companies/ would miss every supplier who tried the
+                # sandbox first — which is the path the invitation email
+                # actually recommends.
+                membership = (await session.execute(
+                    select(Membership).where(Membership.userId == user.id)
+                )).scalars().first()
+                if membership is not None:
+                    await attribute_signup(session, membership.companyId,
+                                           body.supplierInvite)
         token = await _new_token(session, user.id, "email_verify", settings.email_verify_ttl)
         link = await send_verification_email(email, token)
     elif not existing.emailVerified:
@@ -349,6 +378,8 @@ async def create_sandbox(request: Request, response: Response,
     session.add(company)
     await session.flush()
     session.add(Membership(companyId=company.id, userId=user.id, role="super_admin"))
+    # Sandbox plan: quota'd, never billed, never locked, swept after 7 days.
+    await entitlements.ensure_subscription(session, company.id, plan_code=plans.SANDBOX)
     raw, csrf = await create_auth_session(session, user, request)
     set_auth_cookies(response, raw, csrf)
     return {"companyId": str(company.id), "csrfToken": csrf, "userId": str(user.id)}
@@ -381,6 +412,7 @@ async def dev_bootstrap(request: Request, response: Response, body: DevBootstrap
     session.add(company)
     await session.flush()
     session.add(Membership(companyId=company.id, userId=user.id, role="super_admin"))
+    await entitlements.ensure_subscription(session, company.id)
     raw, csrf = await create_auth_session(session, user, request)
     set_auth_cookies(response, raw, csrf)
     return {"companyId": str(company.id), "csrfToken": csrf, "userId": str(user.id), "email": email}

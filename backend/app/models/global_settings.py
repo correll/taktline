@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 
 from .common import PyObjectId
+from ..core import languages
 from ..core.schedule import default_work_hours
 
 
@@ -18,6 +19,10 @@ class GlobalSettings(BaseModel):
     workHours: List[List[int]] = Field(default_factory=default_work_hours)
     # Station-level pace feedback (against measured cycle time) in the Operator view. Never per-operator.
     showCycleArc: bool = False
+    orderTracking: bool = False
+    orderTrackingSteps: bool = True
+    supportedLanguages: List[str] = Field(
+        default_factory=lambda: list(languages.LANGUAGES))
 
     model_config = {"populate_by_name": True}
 
@@ -26,8 +31,16 @@ class GlobalSettingsUpdate(BaseModel):
     timezone:  Optional[str] = None
     workHours: Optional[List[List[int]]] = None
     showCycleArc: Optional[bool] = None
+    orderTracking: Optional[bool] = None
+    orderTrackingSteps: Optional[bool] = None
+    supportedLanguages: Optional[List[str]] = None
 
     @field_validator("workHours")
     @classmethod
     def _check(cls, v):
         return None if v is None else _valid_grid(v)
+
+    @field_validator("supportedLanguages")
+    @classmethod
+    def _langs(cls, v):
+        return None if v is None else languages.clean_supported(v)

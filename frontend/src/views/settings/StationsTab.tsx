@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
 import { useStationsStore, useProcessesStore, useMapSettingsStore } from '../../store'
+import { Link } from 'react-router-dom'
+import { usePlan } from '../../auth/usePlan'
 import { color, font, size } from '../../theme/tokens'
 import type { Station, AdapterType } from '../../models'
 import { Modal, FieldLabel, inputStyle, primaryBtn, secondaryBtn, dangerBtn, ErrorMsg, ListRow } from './shared'
@@ -46,6 +48,7 @@ function stationToForm(s: Station): FormState {
 }
 
 export default function StationsTab() {
+  const plan          = usePlan()
   const stations      = useStationsStore((s) => s.stations)
   const createStation = useStationsStore((s) => s.create)
   const updateStation = useStationsStore((s) => s.update)
@@ -135,7 +138,19 @@ export default function StationsTab() {
         flexShrink:   0,
       }}>
         <span style={{ flex: 1, fontSize: 11, color: color.textDim }}>
-          {list.length} station{list.length !== 1 ? 's' : ''}
+          {/* The count was already here; making it a ceiling is where somebody
+              notices a limit before they hit it rather than after. */}
+          {plan.stationLimit === null
+            ? `${list.length} station${list.length !== 1 ? 's' : ''}`
+            : `${list.length} of ${plan.stationLimit} stations`}
+          {(plan.atStationLimit || plan.nearStationLimit) && (
+            <Link to="/settings?tab=billing" style={{
+              marginLeft: 8,
+              color: plan.atStationLimit ? color.statusFault : color.statusWarning,
+            }}>
+              {plan.atStationLimit ? 'Plan limit reached — see plans' : 'See plans'}
+            </Link>
+          )}
         </span>
         <button data-tour="add-station" onClick={openCreate} style={primaryBtn()}>+ Add Station</button>
       </div>

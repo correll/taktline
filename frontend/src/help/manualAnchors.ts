@@ -55,6 +55,7 @@ export const MANUAL_ANCHORS: Record<string, ChapterId> = {
   'matched-sets': 'science',
   monument: 'science',
   constraints: 'science',
+  runout: 'science',
   // Integrations
   integrations: 'integrations',
 }
@@ -93,6 +94,7 @@ export const CATEGORY_ANCHORS: Record<string, string> = {
   People: 'people',
   Maintenance: 'maintenance',
   Flow: 'flow',
+  Sequencing: 'runout',
   Pareto: 'pareto',
   Taktline: 'concepts',
 }

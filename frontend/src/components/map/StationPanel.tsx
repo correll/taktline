@@ -9,6 +9,8 @@ import LotCard from '../lots/LotCard'
 import CreateLotModal from '../lots/CreateLotModal'
 import MoveLotModal from '../lots/MoveLotModal'
 import LotDetailModal from '../lots/LotDetailModal'
+import { SupplierLinkField } from '../lots/SupplierStatus'
+import { useRole } from '../../auth/useRole'
 import type { Card, MachineStatus } from '../../models'
 
 interface Props {
@@ -21,6 +23,8 @@ export default function StationPanel({ stationId, onClose }: Props) {
   const machineState= useMachinesStore((s) => s.states[stationId])
   const allCards    = useCardsStore((s) => s.cards)
   const templates   = useProcessesStore((s) => s.lotTemplates)
+  const updateStation = useStationsStore((s) => s.update)
+  const { canEdit }   = useRole()
 
   const [showCreate,  setShowCreate]  = useState(false)
   const [moveCard,    setMoveCard]    = useState<Card | null>(null)
@@ -102,6 +106,20 @@ export default function StationPanel({ stationId, onClose }: Props) {
         {isIntegrationStation(station) ? (
           <StationIntegrationPanel station={station} />
         ) : (<>
+
+        {/* On the station rather than the lot when the whole queue comes from
+            one supplier — a goods-in bay is the common case, and pasting the
+            link once beats pasting it onto every bin that lands there. */}
+        {(canEdit || station.supplierUrl) && (
+          <Section label="SUPPLIER">
+            <SupplierLinkField
+              value={station.supplierUrl}
+              disabled={!canEdit}
+              hint="the queue that lands here"
+              onChange={(next) => { void updateStation(stationId, { supplierUrl: next }) }}
+            />
+          </Section>
+        )}
 
         {/* Machine status */}
         <Section label="MACHINE">

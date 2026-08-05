@@ -13,6 +13,7 @@ from ..deps.auth import CompanyContext, get_active_company
 from ..models.session import WorkSession, SessionCreate, SessionEnd
 from ..models.common import utcnow
 from ..core.schedule import default_work_hours, open_seconds, shift_starts
+from ..core.entitlements import works_read_only
 
 
 async def _work_schedule(session, company_id):
@@ -129,6 +130,9 @@ async def get_open_sessions(ctx: CompanyContext = Depends(get_active_company),
 
 
 @router.post("/{session_id}/end", response_model=WorkSession)
+@works_read_only   # An operator must be able to close a session they already
+                   # opened. Refusing leaves `endedAt IS NULL` rows that corrupt
+                   # the cycle-time and OEE numbers we are still showing them.
 async def end_session(session_id: str, body: SessionEnd,
                       ctx: CompanyContext = Depends(get_active_company),
                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):

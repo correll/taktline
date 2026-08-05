@@ -57,7 +57,16 @@ def test_sandbox_row_quota_is_enforced(monkeypatch):
     assert a.req("POST", "/stations/", {**STATION_BODY, "name": "A"}).status_code == 201
     assert a.req("POST", "/stations/", {**STATION_BODY, "name": "B"}).status_code == 201
     r = a.req("POST", "/stations/", {**STATION_BODY, "name": "C"})
-    assert r.status_code == 403 and "Sandbox limit" in r.text
+    assert r.status_code == 403
+    # Assert the machine-readable refusal, not its prose: the client renders an
+    # upgrade path from `code`/`limit`/`used`, and pinning the sentence here
+    # would make every wording improvement look like a regression.
+    body = r.json()["detail"]
+    assert body["code"] == "plan_limit"
+    assert body["resource"] == "stations"
+    assert (body["limit"], body["used"]) == (2, 2)
+    assert body["plan"] == "sandbox"
+    assert "Sandbox" in body["message"]
 
 
 def test_expired_sandbox_accounts_are_swept():

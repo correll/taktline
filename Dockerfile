@@ -60,6 +60,16 @@ EXPOSE 8000
 #
 # One worker on purpose — see the scaling note in DEPLOY.md: the WebSocket
 # connection registry, the rate limiter and the usage meter are per-process.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app \
+# Migrations are NOT run here. They run once, before the new instance starts,
+# via `preDeployCommand` in render.yaml — see "Deploying without downtime" in
+# DEPLOY.md. Running them at container start means every restart races: a
+# crash-loop re-runs them, and a failed migration takes the container down
+# rather than aborting the deploy while the old one keeps serving.
+#
+# Set RUN_MIGRATIONS=1 to migrate at start anyway. That is the right thing for
+# `docker run` on a single box (DEPLOY.md "Running it elsewhere"), where there
+# is no pre-deploy hook and no second instance to race with.
+CMD ["sh", "-c", "if [ \"$RUN_MIGRATIONS\" = \"1\" ]; then alembic upgrade head; fi && \
+     exec uvicorn app.main:app \
      --host 0.0.0.0 --port ${PORT:-8000} --workers 1 \
      --proxy-headers --forwarded-allow-ips='*'"]

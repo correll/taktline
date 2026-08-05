@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import timedelta
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,11 +14,13 @@ from sqlalchemy import select
 from .core.ws_events import set_broadcast as set_card_event_broadcast
 from .core.config import settings
 from .core.csrf import CSRFMiddleware
+from .core.public_cors import PublicReadCORSMiddleware
 from .core.ratelimit import limiter
 from .core.security import hash_token
 from .core.security_headers import SecurityHeadersMiddleware
 from .db.connection import close_db, connect_db, parse_uuid, SessionLocal
-from .db.tables import AuthSession, Membership, Station as StationRow
+from .deps.auth import SANDBOX_IDLE_TTL
+from .db.tables import AuthSession, Membership, Station as StationRow, User
 from .models.common import utcnow
 from .models.machine_state import MachineState
 from .plugins.registry import plugin_registry
@@ -25,9 +28,9 @@ from .routers import (
     analysis, undo,
     admin, api_keys, auth, cards, companies, global_settings, invitations, lot_templates,
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
-    client_errors, map_io, share, stations, stats,
+    billing, client_errors, map_io, network, share, stations, stats, tracking,
 )
-from .core import sandbox_gc, usage
+from .core import entitlements, sandbox_gc, usage
 from .core.traffic import traffic
 from .db.tables import SupportGrant
 
@@ -123,6 +126,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last, so it wraps the one above: the strict allowlist answers preflights
+# itself and 400s a stranger before any route runs, which would make one
+# Taktline instance unable to read another's public order status. See the module
+# docstring for why `*` with no credentials is the safe pairing here.
+app.add_middleware(PublicReadCORSMiddleware)
 
 app.include_router(auth.router)
 app.include_router(companies.router)
@@ -150,10 +158,18 @@ app.include_router(admin.router)
 app.include_router(platform.router)
 app.include_router(client_errors.router)
 app.include_router(map_io.router)
+# Billing. Reachable from a LOCKED account on purpose — a paywall whose
+# payment page sits behind the paywall is a lock with the key inside.
+app.include_router(billing.router)
 # Public share pages. Must be registered before the SPA catch-all below, or
 # /i/<id> falls through to index.html and every social preview shows the
 # generic landing card instead of the item.
 app.include_router(share.router)
+# Public order tracking. Before the SPA catch-all for the same reason as
+# /i/<slug>: these links get pasted into email and chat, which fetch the
+# URL for a preview before any browser runs.
+app.include_router(tracking.router)
+app.include_router(network.router)
 
 
 # ── Traffic counter (feeds the platform dashboard) ────────────────────────────
@@ -200,6 +216,23 @@ def _origin_allowed(origin: str, websocket: WebSocket) -> bool:
     return bool(host) and origin in (f"https://{host}", f"http://{host}")
 
 
+async def _reject(websocket: WebSocket, code: int) -> None:
+    """Close with a code the browser can actually read.
+
+    A `close()` before `accept()` never delivers its code — the handshake is
+    refused at the HTTP layer and the client sees 1006 (abnormal closure),
+    which is indistinguishable from the server having fallen over. So the
+    client kept retrying and showing "connection lost" for what were really
+    authorisation and billing decisions. Accepting first costs one round trip
+    and makes the reason legible.
+    """
+    try:
+        await websocket.accept()
+    except Exception:                      # already closed by the peer
+        return
+    await websocket.close(code=code)
+
+
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket):
     """Authenticated, company-scoped event stream.
@@ -213,21 +246,32 @@ async def ws_events(websocket: WebSocket):
     # (no Origin header) are permitted.
     origin = websocket.headers.get("origin")
     if origin is not None and not _origin_allowed(origin, websocket):
-        await websocket.close(code=4403)
+        await _reject(websocket, 4403)
         return
 
     raw = websocket.cookies.get(settings.session_cookie_name)
     company_uuid = parse_uuid(websocket.query_params.get("companyId"))
     if not raw or company_uuid is None:
-        await websocket.close(code=4401)
+        await _reject(websocket, 4401)
         return
 
     async with SessionLocal() as session:
         sess_row = (await session.execute(
             select(AuthSession).where(AuthSession.tokenHash == hash_token(raw))
         )).scalars().first()
-        if sess_row is None or sess_row.expiresAt <= utcnow():
-            await websocket.close(code=4401)
+        if sess_row is None:
+            await _reject(websocket, 4401)
+            return
+        # Absolute expiry AND the idle window. `get_current_user` checks both
+        # (deps/auth.py:104-107); this path only ever checked the first, so a
+        # session HTTP had already stopped accepting could still open a socket
+        # and keep watching the board.
+        ws_user = await session.get(User, sess_row.userId)
+        idle_ttl = (SANDBOX_IDLE_TTL if (ws_user is not None and ws_user.isSandbox)
+                    else settings.session_idle_ttl)
+        if (ws_user is None or sess_row.expiresAt <= utcnow()
+                or sess_row.lastSeenAt + timedelta(seconds=idle_ttl) <= utcnow()):
+            await _reject(websocket, 4401)
             return
         membership = (await session.execute(
             select(Membership).where(
@@ -246,8 +290,16 @@ async def ws_events(websocket: WebSocket):
                 )
             )).scalars().first()
             if grant is None:
-                await websocket.close(code=4403)
+                await _reject(websocket, 4403)
                 return
+
+        # A locked account loses the live board too. Read-only keeps it: the
+        # socket carries nothing but updates, and watching your own floor is
+        # exactly what the grace period is for.
+        ent = await entitlements.resolve(session, company_uuid, user=ws_user)
+        if ent.blocked:
+            await _reject(websocket, 4402)
+            return
 
     await ws_manager.connect(websocket, company_uuid)
     try:

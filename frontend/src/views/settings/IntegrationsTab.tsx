@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { apiKeysApi, ordersApi, templatesApi, type ApiKey, type ProductionOrder, type OutboxEvent, type TemplateRef, type ScopeInfo, type ImportResult } from '../../api/integrations.api'
+import { apiKeysApi, templatesApi, type ApiKey, type TemplateRef, type ScopeInfo } from '../../api/integrations.api'
 import { color, font, size } from '../../theme/tokens'
 import IntegrationLocations from './IntegrationLocations'
+import SuppliersPanel from './SuppliersPanel'
 
 const cell: React.CSSProperties = { padding: `${size.sp2} ${size.sp3}`, fontSize: 13, color: color.textPrimary, textAlign: 'left' }
 const head: React.CSSProperties = { ...cell, color: color.textSecondary, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }
@@ -21,23 +22,17 @@ function Section({ title, children, right }: { title: string; children: React.Re
 
 export default function IntegrationsTab() {
   const [keys, setKeys] = useState<ApiKey[]>([])
-  const [orders, setOrders] = useState<ProductionOrder[]>([])
-  const [events, setEvents] = useState<OutboxEvent[]>([])
   const [templates, setTemplates] = useState<TemplateRef[]>([])
   const [scopeCatalog, setScopeCatalog] = useState<ScopeInfo[]>([])
   const [name, setName] = useState('')
   const [scopes, setScopes] = useState<string[]>(['orders'])
   const [created, setCreated] = useState<string | null>(null)   // full secret, shown once
   const [copied, setCopied] = useState(false)
-  const [importResult, setImportResult] = useState<ImportResult | null>(null)
-  const [importing, setImporting] = useState(false)
   const [err, setErr] = useState('')
 
   async function load() {
     try {
       setKeys(await apiKeysApi.list())
-      setOrders(await ordersApi.list())
-      setEvents(await ordersApi.outbox(''))   // all statuses
       setTemplates(await templatesApi.list())
       setScopeCatalog(await apiKeysApi.scopes())
     } catch (e) { setErr(String(e)) }
@@ -58,23 +53,11 @@ export default function IntegrationsTab() {
     } catch (e) { setErr(String(e)) }
   }
 
-  async function onImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    setErr(''); setImporting(true); setImportResult(null)
-    try {
-      setImportResult(await ordersApi.importCsv(file))
-      await load()
-    } catch (e) { setErr(String(e)) } finally { setImporting(false) }
-  }
   async function revoke(id: string) {
     setErr('')
     try { await apiKeysApi.revoke(id); await load() } catch (e) { setErr(String(e)) }
   }
 
-  const pending = events.filter((e) => e.status === 'pending').length
-  const failed = events.filter((e) => e.status === 'failed').length
 
   const btn = (bg: string): React.CSSProperties => ({
     background: 'transparent', border: `1px solid ${color.border}`, color: bg, borderRadius: size.radius,
@@ -132,94 +115,6 @@ export default function IntegrationsTab() {
         )}
       </Section>
 
-      {/* CSV import */}
-      <Section title="Import orders (CSV)">
-        <p style={{ color: color.textSecondary, fontSize: 13, marginTop: 0, marginBottom: size.sp3 }}>
-          The no-API on-ramp — release a batch from a spreadsheet. Columns:
-          <span style={mono}> product</span> (template name or id),
-          <span style={mono}> quantity</span>, optional
-          <span style={mono}> source</span>,<span style={mono}> externalRef</span>,<span style={mono}> note</span>.
-        </p>
-        <label style={{ display: 'inline-block', padding: `${size.sp2} ${size.sp4}`, background: color.bgCard,
-                        border: `1px solid ${color.border}`, borderRadius: size.radius, color: color.textPrimary,
-                        fontSize: 13, cursor: importing ? 'default' : 'pointer', opacity: importing ? 0.6 : 1 }}>
-          {importing ? 'Importing…' : 'Choose CSV file'}
-          <input type="file" accept=".csv,text/csv" onChange={onImport} disabled={importing} style={{ display: 'none' }} />
-        </label>
-        {importResult && (
-          <div style={{ marginTop: size.sp3, fontSize: 13 }}>
-            <div style={{ color: color.textPrimary }}>
-              <b>{importResult.summary.released}</b> released,{' '}
-              <span style={{ color: color.textSecondary }}>{importResult.summary.duplicate} duplicate</span>,{' '}
-              <span style={{ color: importResult.summary.errors ? color.statusFault : color.textDim }}>
-                {importResult.summary.errors} error{importResult.summary.errors === 1 ? '' : 's'}
-              </span>{' '}of {importResult.summary.total}.
-            </div>
-            {importResult.rows.filter((r) => r.status === 'error').slice(0, 8).map((r) => (
-              <div key={r.row} style={{ ...mono, color: color.statusFault, fontSize: 12, marginTop: 2 }}>
-                row {r.row}{r.externalRef ? ` (${r.externalRef})` : ''}: {r.error}
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
-
-      {/* Recent orders */}
-      <Section title="Recent orders" right={<span style={{ fontSize: 11, color: color.textDim, fontFamily: font.mono }}>{orders.length} total</span>}>
-        {orders.length === 0 ? <div style={{ color: color.textDim, fontSize: 13 }}>No production orders yet.</div> : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr style={{ borderBottom: `1px solid ${color.border}` }}>
-              <th style={head}>Source</th><th style={head}>Ext. ref</th><th style={head}>Qty</th><th style={head}>Done</th><th style={head}>Status</th>
-            </tr></thead>
-            <tbody>{orders.slice(0, 12).map((o) => (
-              <tr key={o.id} style={{ borderBottom: `1px solid ${color.border}` }}>
-                <td style={cell}>{o.source}</td>
-                <td style={{ ...cell, ...mono, color: color.textSecondary }}>{o.externalRef ?? '—'}</td>
-                <td style={cell}>{o.quantity}</td>
-                <td style={cell}>{o.quantityDone}</td>
-                <td style={{ ...cell }}><StatusPill s={o.status} /></td>
-              </tr>
-            ))}</tbody>
-          </table>
-        )}
-      </Section>
-
-      {/* Outbox */}
-      <Section title="Completion outbox" right={
-        <span style={{ fontSize: 11, fontFamily: font.mono }}>
-          {failed > 0 && <span style={{ color: color.statusFault, marginRight: size.sp2 }}>{failed} failed</span>}
-          <span style={{ color: pending ? color.statusWarning : color.textDim }}>{pending} pending</span>
-        </span>
-      }>
-        {failed > 0 && (
-          <div style={{ color: color.statusFault, fontSize: 12, marginBottom: size.sp3 }}>
-            {failed === 1 ? 'One event' : `${failed} events`} could not be delivered after
-            repeated attempts and stopped retrying. Check that the connector is running and
-            that the order still exists in the ERP.
-          </div>
-        )}
-        {events.length === 0 ? <div style={{ color: color.textDim, fontSize: 13 }}>No events yet — they appear when finished lots reach a warehouse.</div> : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr style={{ borderBottom: `1px solid ${color.border}` }}>
-              <th style={head}>Event</th><th style={head}>Source</th><th style={head}>Ext. ref</th>
-              <th style={head}>Status</th><th style={head}>When</th>
-            </tr></thead>
-            <tbody>{events.slice(-12).reverse().map((e) => (
-              <tr key={e.id} style={{ borderBottom: `1px solid ${color.border}` }}>
-                <td style={{ ...cell, ...mono }}>{e.eventType}</td>
-                <td style={{ ...cell, ...mono, color: color.textDim }}>{String((e.payload as any).source ?? '—')}</td>
-                <td style={{ ...cell, ...mono, color: color.textSecondary }}>{String((e.payload as any).externalRef ?? '—')}</td>
-                <td style={cell}>
-                  <StatusPill s={e.status} />
-                  {e.attempts > 1 && <span style={{ ...mono, color: color.textDim, fontSize: 11, marginLeft: 6 }}>×{e.attempts}</span>}
-                </td>
-                <td style={{ ...cell, color: color.textDim, fontSize: 12 }}>{new Date(e.createdAt).toLocaleString()}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        )}
-      </Section>
-
       {/* Product ids — for building a connector's PRODUCT_MAPPING */}
       <Section title="Product ids" right={
         templates.length > 0 ? (
@@ -257,6 +152,14 @@ export default function IntegrationsTab() {
       {/* Where work enters and leaves — the boundary made explicit. */}
       <Section title="Integration stations">
         <IntegrationLocations />
+      </Section>
+
+      {/* The other end of the same idea: an integration station is where work
+          crosses the boundary of *this* business, a supplier link is where it
+          crosses into somebody else's. Sibling sections, not nested — suppliers
+          are not integration stations. */}
+      <Section title="Your suppliers">
+        <SuppliersPanel />
       </Section>
 
       {/* Contract reference */}

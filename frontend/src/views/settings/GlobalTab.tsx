@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { LANGUAGES, LANGUAGE_CODES } from '../../i18n/languages'
 import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 import { COMMON_TIMEZONES, defaultWorkHours, FULL_HOUR } from '../../api/globalSettings.api'
 import { color, font, size } from '../../theme/tokens'
@@ -15,6 +16,9 @@ export default function GlobalTab() {
   const [timezone, setTimezone] = useState(settings.timezone)
   const [grid,     setGrid]     = useState<number[][]>(() => validGrid(settings.workHours))
   const [taktArc,  setCycleArc]  = useState(settings.showCycleArc)
+  const [tracking, setTracking]  = useState(settings.orderTracking)
+  const [trackSteps, setTrackSteps] = useState(settings.orderTrackingSteps)
+  const [langs, setLangs] = useState<string[]>(settings.supportedLanguages ?? LANGUAGE_CODES)
   const [saved,    setSaved]    = useState(false)
   const [error,    setError]    = useState<string | null>(null)
 
@@ -22,11 +26,16 @@ export default function GlobalTab() {
   useEffect(() => { setTimezone(settings.timezone) }, [settings.timezone])
   useEffect(() => { setGrid(validGrid(settings.workHours)) }, [settings.workHours])
   useEffect(() => { setCycleArc(settings.showCycleArc) }, [settings.showCycleArc])
+  useEffect(() => { setTracking(settings.orderTracking) }, [settings.orderTracking])
+  useEffect(() => { setTrackSteps(settings.orderTrackingSteps) }, [settings.orderTrackingSteps])
+  useEffect(() => { setLangs(settings.supportedLanguages ?? LANGUAGE_CODES) }, [settings.supportedLanguages])
 
   const handleSave = async () => {
     setError(null); setSaved(false)
     try {
-      await update({ timezone, workHours: grid, showCycleArc: taktArc })
+      await update({ timezone, workHours: grid, showCycleArc: taktArc,
+                     orderTracking: tracking, orderTrackingSteps: trackSteps,
+                     supportedLanguages: langs })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
     } catch (e) { setError(String(e)) }
   }
@@ -77,6 +86,73 @@ export default function GlobalTab() {
               no measured cycle time show no arc.
             </span>
           </label>
+        </div>
+
+        {/* Customer order tracking — opt-in, because it publishes something. */}
+        <div>
+          <FieldLabel>CUSTOMER ORDER TRACKING</FieldLabel>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: size.sp3,
+                          marginTop: 6, cursor: 'pointer', maxWidth: 620 }}>
+            <input
+              type="checkbox" checked={tracking} disabled={loading}
+              onChange={(e) => setTracking(e.target.checked)}
+              style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.55 }}>
+              Give every production order a <b style={{ color: color.textSecondary }}>read-only
+              link</b> you can send to the customer who placed it. They see that order&rsquo;s
+              progress — nothing else, no login, and no way to reach anything of yours.
+              <br />
+              <b style={{ color: color.textSecondary }}>Off by default.</b> The link is
+              unguessable and switching this off stops every one of them immediately; switching
+              it back on restores the same links, so a customer&rsquo;s bookmark keeps working.
+              Copy a link from the order list in Settings &rarr; Integrations.
+            </span>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: size.sp3,
+                          marginTop: size.sp3, marginLeft: size.sp6,
+                          cursor: tracking ? 'pointer' : 'not-allowed',
+                          opacity: tracking ? 1 : 0.5, maxWidth: 580 }}>
+            <input
+              type="checkbox" checked={trackSteps} disabled={loading || !tracking}
+              onChange={(e) => setTrackSteps(e.target.checked)}
+              style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }}
+            />
+            <span style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.55 }}>
+              Name the steps on that page (&ldquo;Saw, Weld, Paint, Pack — here now&rdquo;).
+              Turn it off to show only a percentage: your process is your business, and plenty
+              of shops will happily say &ldquo;60% done&rdquo; without telling a customer which
+              operations they run and which they subcontract.
+            </span>
+          </label>
+        </div>
+
+        {/* Languages */}
+        <div>
+          <FieldLabel>LANGUAGES</FieldLabel>
+          <p style={{ fontSize: 11.5, color: color.textDim, margin: '4px 0 10px', lineHeight: 1.5, maxWidth: 620 }}>
+            The languages this company runs in. <b style={{ color: color.textSecondary }}>Operators
+            you invite choose their language from this set</b> — offer only what your lot cards,
+            station names and instructions actually make sense in. Everyone can change their own
+            language later in their account.
+          </p>
+          <div style={{ display: 'flex', gap: size.sp4, flexWrap: 'wrap' }}>
+            {LANGUAGE_CODES.map((code) => (
+              <label key={code} style={{ display: 'flex', alignItems: 'center', gap: size.sp2,
+                                         fontSize: 13, color: color.textPrimary, cursor: 'pointer' }}>
+                <input
+                  type="checkbox" disabled={loading}
+                  checked={langs.includes(code)}
+                  onChange={(e) => setLangs(e.target.checked
+                    ? [...langs, code]
+                    : langs.length > 1 ? langs.filter((l) => l !== code) : langs)}
+                  style={{ width: 15, height: 15 }}
+                />
+                {LANGUAGES[code]}
+              </label>
+            ))}
+          </div>
         </div>
 
         {/* Work hours */}

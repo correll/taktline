@@ -44,18 +44,21 @@ ONPREM_LOOKUP = "taktline_onprem"
 
 
 def _tiers_match(price, want: list[dict]) -> bool:
-    got = price.get("tiers") or []
+    # Attribute access, not .get(): StripeObject stopped being a dict subclass
+    # in stripe v15, and this branch only runs when the lookup key already
+    # exists — an account state the sandbox bootstrap never had.
+    got = getattr(price, "tiers", None) or []
     if len(got) != len(want):
         return False
     for g, w in zip(got, want):
-        up_to = g.get("up_to")                       # None = the inf tier
+        up_to = getattr(g, "up_to", None)            # None = the inf tier
         if (w["up_to"] == "inf") != (up_to is None):
             return False
         if w["up_to"] != "inf" and up_to != w["up_to"]:
             return False
-        if g.get("flat_amount") != w.get("flat_amount"):
+        if getattr(g, "flat_amount", None) != w.get("flat_amount"):
             return False
-        if g.get("unit_amount") != w.get("unit_amount"):
+        if getattr(g, "unit_amount", None) != w.get("unit_amount"):
             return False
     return True
 

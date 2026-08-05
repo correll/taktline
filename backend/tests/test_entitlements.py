@@ -24,7 +24,7 @@ import pytest
 from app.core import entitlements, plans
 from app.core.config import settings
 from app.models.common import utcnow
-from tests.helpers import Actor, bootstrap_admin
+from tests.helpers import Actor, bootstrap_admin, flat_routes
 
 STATION = {"description": "", "adapterType": None, "adapterConfig": {}, "color": None,
            "icon": None, "position": {"x": 1, "y": 1, "width": 60, "height": 60}}
@@ -438,7 +438,7 @@ def test_every_write_endpoint_passes_the_gate_or_declares_why_not():
     from app.main import app
 
     missing = []
-    for r in app.routes:
+    for r in flat_routes(app):
         methods = (getattr(r, "methods", None) or set()) - {"HEAD", "OPTIONS"}
         if not methods or not methods - {"GET"}:
             continue
@@ -463,7 +463,7 @@ def test_the_sweep_actually_looked_at_something():
     from app.main import app
 
     checked = 0
-    for r in app.routes:
+    for r in flat_routes(app):
         methods = (getattr(r, "methods", None) or set()) - {"HEAD", "OPTIONS"}
         path = getattr(r, "path", "")
         if methods and methods - {"GET"} and not any(path.startswith(p) for p in UNGATED):

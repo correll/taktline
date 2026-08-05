@@ -21,7 +21,7 @@ IS the code, and the test simply insists everything else refuses.
 
 import pytest
 
-from tests.helpers import Actor, add_member, bootstrap_admin
+from tests.helpers import Actor, add_member, bootstrap_admin, flat_routes
 from tests.test_tenancy_sweep import BODIES, STATION, _victim_line
 
 # What each auth dependency means, in the order the role ladder runs.
@@ -45,7 +45,7 @@ def _routes():
             yield from walk(s)
 
     out = []
-    for r in app.routes:
+    for r in flat_routes(app):
         methods = getattr(r, "methods", None)
         if not methods or not hasattr(r, "dependant"):
             continue

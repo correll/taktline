@@ -9,6 +9,24 @@ CSRF_COOKIE = "taktline_csrf"
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 
 
+def flat_routes(app):
+    """`app.routes`, flattened, in registration order.
+
+    FastAPI ≥ 0.141 stores each `include_router` as a lazy `_IncludedRouter`
+    whose routes only materialize at request time, so iterating `app.routes`
+    directly sees none of the API — every sweep built on it silently covers
+    nothing. `iter_route_contexts` flattens them; the yielded contexts carry
+    `.path`, `.methods` and delegate `.dependant` (include-level dependencies
+    merged in), which is everything the sweeps read. On older FastAPI the
+    routes are already flat and are returned as-is.
+    """
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:
+        return list(app.routes)
+    return list(iter_route_contexts(app.routes))
+
+
 class Actor:
     """An independent API client with its own cookie jar; auto-attaches the CSRF
     header (from the readable cookie) and the active-company header."""

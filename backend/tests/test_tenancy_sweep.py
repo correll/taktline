@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from tests.helpers import Actor, bootstrap_admin
+from tests.helpers import Actor, bootstrap_admin, flat_routes
 
 STATION = {"description": "", "adapterType": None, "adapterConfig": {}, "color": None,
            "icon": None, "position": {"x": 1, "y": 1, "width": 60, "height": 60}}
@@ -62,7 +62,7 @@ BODIES = {
 def _endpoints():
     from app.main import app
     out = []
-    for r in app.routes:
+    for r in flat_routes(app):
         methods = getattr(r, "methods", None)
         if not methods or "{" not in r.path or r.path in SKIP_PATHS:
             continue

@@ -14,7 +14,7 @@ harness is 2 cables + 2 caps; a remanufactured pack consumes 6 modules +
 the spares shelf. Every assertion here is the physically correct outcome —
 these tests exist because each of them failed at least once."""
 
-from tests.helpers import bootstrap_admin
+from tests.helpers import bootstrap_admin, flat_routes
 
 
 class N:
@@ -494,8 +494,8 @@ def test_every_session_dependency_commits_before_the_response():
             walk(sub, seen)
 
     checked = 0
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
+    for route in flat_routes(app):
+        if not isinstance(getattr(route, "original_route", route), APIRoute):
             continue
         found = []
         walk(route.dependant, found)

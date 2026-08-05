@@ -19,7 +19,7 @@ from PIL import Image
 
 from app.core import share as share_core
 from app.models.common import utcnow
-from tests.helpers import Actor, add_member, bootstrap_admin
+from tests.helpers import Actor, add_member, bootstrap_admin, flat_routes
 
 
 # ─── The catalogue ───────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ def test_share_routes_win_over_the_spa_catch_all():
     landing card, and every preview would silently become wrong.
     """
     from app.main import app
-    paths = [getattr(r, "path", "") for r in app.routes]
+    paths = [getattr(r, "path", None) or "" for r in flat_routes(app)]
     assert "/i/{item_id}" in paths
     if "/{full_path:path}" in paths:
         assert paths.index("/i/{item_id}") < paths.index("/{full_path:path}")

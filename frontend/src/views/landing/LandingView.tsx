@@ -694,10 +694,10 @@ function Pricing() {
           margin: `${size.sp4} auto 0`, maxWidth: 620, textAlign: 'center',
           fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary,
         }}>
-          Priced per line, not per person. Every operator and every tablet is included,
-          always — a worker who can see the system improves it, and a worker who is only
-          measured by it learns to manage the measurement. $2 a station, and you will
-          never pay more than $399 a month.
+          Priced per line, not per person. Per-seat pricing pushes a shop to buy
+          screens for supervisors only, and a system the operators can&apos;t see stops
+          being a tool and becomes surveillance. Every operator and every tablet is
+          included, always. $2 a station, and you will never pay more than $399 a month.
         </p>
 
         <div style={{

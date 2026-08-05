@@ -585,6 +585,78 @@ def test_the_portal_cannot_switch_plans(monkeypatch):
     assert all(s["configuration"] == "bpc_ours" for s in sessions)
 
 
+def _refund_rig(balance, pending_items, charges):
+    """A fake SDK for _refund_credit_balance, recording what it does."""
+    did = {"refunds": [], "deleted": [], "balance_tx": []}
+
+    class Customer:
+        @staticmethod
+        def retrieve(cid):
+            return {"id": cid, "balance": balance}
+
+        @staticmethod
+        def create_balance_transaction(cid, **kw):
+            did["balance_tx"].append((cid, kw["amount"]))
+
+    class InvoiceItem:
+        @staticmethod
+        def list(**kw):
+            return {"data": pending_items}
+
+        @staticmethod
+        def delete(iid):
+            did["deleted"].append(iid)
+
+    class Charge:
+        @staticmethod
+        def list(**kw):
+            class Page:
+                @staticmethod
+                def auto_paging_iter():
+                    return iter(charges)
+            return Page
+
+    class Refund:
+        @staticmethod
+        def create(charge, amount):
+            did["refunds"].append((charge, amount))
+
+    sdk = type("FakeSDK", (), {})()
+    sdk.Customer, sdk.InvoiceItem, sdk.Charge, sdk.Refund = (
+        Customer, InvoiceItem, Charge, Refund)
+    return sdk, did
+
+
+def test_a_prorated_cancellation_refunds_the_pending_credit():
+    """An immediate cancellation parks the unused time as a PENDING negative
+    invoice item, not a balance credit — and with no future invoice it floats
+    forever. Found live: the first prorated cancellation refunded $0 while a
+    -$28.96 item sat pending. The refund path must sweep those."""
+    sdk, did = _refund_rig(
+        balance=0,
+        pending_items=[{"id": "ii_unused", "amount": -2896, "invoice": None}],
+        charges=[{"id": "ch_1", "amount": 2900, "amount_refunded": 0,
+                  "paid": True, "refunded": False}])
+
+    billing_stripe._refund_credit_balance(sdk, "cus_p")
+
+    assert did["deleted"] == ["ii_unused"]
+    assert did["refunds"] == [("ch_1", 2896)]
+    assert did["balance_tx"] == []          # balance was 0; nothing to zero
+
+
+def test_a_balance_credit_still_refunds_and_zeroes():
+    sdk, did = _refund_rig(
+        balance=-500, pending_items=[],
+        charges=[{"id": "ch_2", "amount": 2900, "amount_refunded": 0,
+                  "paid": True, "refunded": False}])
+
+    billing_stripe._refund_credit_balance(sdk, "cus_b")
+
+    assert did["refunds"] == [("ch_2", 500)]
+    assert did["balance_tx"] == [("cus_b", 500)]
+
+
 # ─── Webhook plumbing ────────────────────────────────────────────────────────
 
 def test_an_unknown_event_is_acknowledged_not_rejected(stripe, actor, monkeypatch):

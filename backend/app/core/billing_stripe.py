@@ -79,7 +79,9 @@ def _plain(obj):
             # Recurse through the result: to_dict can be shallow, leaving
             # StripeObjects nested inside.
             return _plain(fn())
-    raise TypeError(f"cannot convert {type(obj).__name__} to plain data")
+    # A scalar leaf of a type we did not anticipate (stripe v15 parses some
+    # numerics as Decimal). It is a value, not a container — pass it through.
+    return obj
 
 
 def station_price() -> str:
@@ -347,9 +349,24 @@ def refund_credit_balance(customer_id: str) -> None:
 def _refund_credit_balance(s, customer_id: str) -> None:
     customer = _plain(s.Customer.retrieve(customer_id))
     balance = customer.get("balance", 0)
-    if balance >= 0:                       # 0 or a debt they owe us
+    owed = -balance if balance < 0 else 0
+
+    # An immediate cancellation parks the unused-time proration as a PENDING
+    # negative invoice item, not a balance credit — and a cancelled
+    # subscription has no future invoice to apply it to, so it floats forever
+    # and the balance-only read above sees nothing (found live: the first
+    # prorated cancellation refunded $0 while a -$28.96 item sat pending).
+    # Delete each such item and refund its amount instead.
+    pending = _plain(s.InvoiceItem.list(customer=customer_id, pending=True,
+                                        limit=100))
+    for item in pending.get("data", []):
+        amount = item.get("amount", 0)
+        if amount < 0 and not item.get("invoice"):
+            s.InvoiceItem.delete(item["id"])
+            owed += -amount
+
+    if owed <= 0:                          # nothing credited anywhere
         return
-    owed = -balance
     charges = s.Charge.list(customer=customer_id, limit=10)
     for charge in charges.auto_paging_iter():
         charge = _plain(charge)
@@ -362,12 +379,13 @@ def _refund_credit_balance(s, customer_id: str) -> None:
         owed -= amount
         if owed <= 0:
             break
-    # Zero the balance whatever we managed to return, so it cannot be spent
-    # twice — once as a refund and once against a future invoice.
-    s.Customer.create_balance_transaction(
-        customer_id, amount=-balance, currency="usd",
-        description="Credit refunded on cancellation",
-    )
+    if balance < 0:
+        # Zero the balance whatever we managed to return, so it cannot be
+        # spent twice — once as a refund and once against a future invoice.
+        s.Customer.create_balance_transaction(
+            customer_id, amount=-balance, currency="usd",
+            description="Credit refunded on cancellation",
+        )
 
 
 # ─── Webhooks ────────────────────────────────────────────────────────────────

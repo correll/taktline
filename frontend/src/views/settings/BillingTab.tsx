@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { billingApi, money, monthlyCentsFor, type Pricing, type Subscription }
   from '../../api/billing.api'
+import { companiesApi } from '../../api/companies.api'
 import { useAuthStore } from '../../store/auth.store'
 import { color, font, size } from '../../theme/tokens'
 
@@ -152,6 +153,111 @@ export default function BillingTab() {
           border: `1px solid ${color.statusFault}55`, color: color.statusFault, fontSize: 13,
         }}>
           {error}
+        </div>
+      )}
+
+      <DangerZone companyId={activeCompanyId} />
+    </div>
+  )
+}
+
+// ─── Deleting the company ────────────────────────────────────────────────────
+
+/** Lives on the Billing tab on purpose: it is the one company page that stays
+ *  reachable when an account is paused, so deletion is never locked behind the
+ *  paywall it might be trying to escape. The server requires the exact name
+ *  and a super_admin; this mirrors both so the refusals are predictable. */
+function DangerZone({ companyId }: { companyId: string }) {
+  const companies = useAuthStore((s) => s.companies)
+  const refreshMe = useAuthStore((s) => s.refresh)
+  const me = companies.find((c) => c.id === companyId)
+  const [open, setOpen] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (!me || me.role !== 'super_admin') return null
+  const armed = typed.trim() === me.name
+
+  const doDelete = async () => {
+    setBusy(true); setError(null)
+    try {
+      await companiesApi.delete(companyId, typed.trim())
+      localStorage.removeItem('taktline.activeCompanyId')
+      await refreshMe()
+      window.location.href = '/'
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? String(e))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: size.sp8, padding: size.sp4, borderRadius: size.radiusMd,
+      border: `1px solid ${color.statusFault}55`,
+    }}>
+      <div style={{ fontSize: 12, fontFamily: font.mono, letterSpacing: '0.1em',
+                    color: color.statusFault, marginBottom: size.sp2 }}>
+        DANGER ZONE
+      </div>
+      {!open ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3 }}>
+          <span style={{ fontSize: 13, color: color.textSecondary }}>
+            Delete this company and everything in it.
+          </span>
+          <button onClick={() => setOpen(true)} style={{
+            background: 'transparent', border: `1px solid ${color.statusFault}88`,
+            color: color.statusFault, borderRadius: size.radius, padding: '6px 12px',
+            fontSize: 12.5, cursor: 'pointer',
+          }}>
+            Delete company…
+          </button>
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, color: color.textSecondary, lineHeight: 1.6 }}>
+          <p style={{ margin: 0 }}>
+            This deletes <b style={{ color: color.textPrimary }}>{me.name}</b>{' '}
+            permanently: every station, route, lot, work session, statistic,
+            production order and member — for everyone, not just you. There is
+            no undo and no restore. A paid subscription is cancelled and the
+            unused time refunded.
+          </p>
+          <p style={{ margin: `${size.sp3} 0 ${size.sp2}` }}>
+            Type the company&apos;s exact name to confirm:
+          </p>
+          <div style={{ display: 'flex', gap: size.sp2, alignItems: 'center' }}>
+            <input
+              value={typed} onChange={(e) => setTyped(e.target.value)}
+              placeholder={me.name} autoFocus
+              style={{
+                flex: '0 1 260px', padding: '7px 10px', fontSize: 13,
+                background: color.bgInput, color: color.textPrimary,
+                border: `1px solid ${armed ? color.statusFault : color.border}`,
+                borderRadius: size.radius,
+              }}
+            />
+            <button onClick={doDelete} disabled={!armed || busy} style={{
+              background: armed ? color.statusFault : 'transparent',
+              border: `1px solid ${color.statusFault}${armed ? '' : '55'}`,
+              color: armed ? '#fff' : color.textDisabled,
+              borderRadius: size.radius, padding: '7px 14px', fontSize: 12.5,
+              cursor: armed && !busy ? 'pointer' : 'default',
+            }}>
+              {busy ? 'Deleting…' : 'Delete forever'}
+            </button>
+            <button onClick={() => { setOpen(false); setTyped('') }} style={{
+              background: 'none', border: 'none', color: color.textDim,
+              fontSize: 12.5, cursor: 'pointer',
+            }}>
+              Cancel
+            </button>
+          </div>
+          {error && (
+            <div style={{ marginTop: size.sp2, color: color.statusFault, fontSize: 12.5 }}>
+              {String(error)}
+            </div>
+          )}
         </div>
       )}
     </div>

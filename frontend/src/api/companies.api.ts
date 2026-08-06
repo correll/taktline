@@ -14,4 +14,7 @@ export const companiesApi = {
     client.post('/companies/', { name, timezone, supplierInvite }),
   listMine: (): Promise<Company[]> => client.get('/companies/'),
   get: (id: string): Promise<Company> => client.get(`/companies/${id}`),
+  // The exact name confirms — the server refuses anything else.
+  delete: (id: string, confirmName: string): Promise<void> =>
+    client.delete(`/companies/${id}`, { data: { confirmName } }),
 }

@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,3 +56,35 @@ async def get_company(company_id: str, user: User = Depends(get_current_user),
     membership = await load_membership(session, user, cid)
     company = await session.get(Company, cid)
     return _to_company(company, role=membership.role)
+
+
+class CompanyDelete(BaseModel):
+    confirmName: str
+
+
+@router.delete("/{company_id}", status_code=204)
+async def delete_company(company_id: str, body: CompanyDelete,
+                         user: User = Depends(get_current_user),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """The owner deletes their company — everything in it, permanently.
+
+    Mirrors the staff endpoint (`/platform/companies/{id}`): the exact name
+    confirms, and Stripe is released *before* the cascade removes the rows
+    that could still find the live subscription — cascade first and the
+    customer keeps being billed for an account that no longer exists.
+
+    Membership is checked BEFORE the name is compared, deliberately: comparing
+    first would let anyone probe names against foreign company ids and turn
+    the confirmation into a cross-tenant name oracle. Deliberately ungated by
+    the plan state — deleting the account must work for a paused company,
+    or the pause holds the data hostage after all.
+    """
+    cid = require_uuid(company_id, "Company not found")
+    await load_membership(session, user, cid, min_role="super_admin")
+    company = await session.get(Company, cid)
+    if company is None:
+        raise HTTPException(404, "Company not found")
+    if body.confirmName.strip() != company.name:
+        raise HTTPException(400, "Type the company's exact name to confirm deletion")
+    await entitlements.release_company(session, cid)
+    await session.delete(company)   # every domain row cascades via companyId FKs

@@ -56,6 +56,7 @@ BODIES = {
     ("POST", "/companies/{company_id}/invitations"): {"email": "x@example.com", "role": "user"},
     ("PUT", "/platform/users/{user_id}/platform-role"): {"platformRole": "support"},
     ("DELETE", "/platform/companies/{company_id}"): {"confirmName": "Victim"},
+    ("DELETE", "/companies/{company_id}"): {"confirmName": "Victim"},
 }
 
 

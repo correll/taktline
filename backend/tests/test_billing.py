@@ -740,3 +740,23 @@ def test_metadata_is_the_fallback_when_prices_are_unrecognised(stripe):
            "items": {"data": [{"id": "si", "price": {"id": "price_from_last_year"}}]},
            "metadata": {"onPremise": "true"}}
     assert billing_stripe.shape_of_subscription(obj) == (None, True)
+
+
+def test_deleting_a_company_cancels_its_subscription(stripe, actor, monkeypatch):
+    """Self-serve deletion releases Stripe BEFORE the cascade — cascade first
+    and nothing can find the live subscription again, so the customer keeps
+    being billed for an account that no longer exists."""
+    a = actor()
+    bootstrap_admin(a, "Paying doomed co")
+    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+              stripeSubscriptionId="sub_del", stripeCustomerId="cus_del")
+
+    cancelled = []
+    monkeypatch.setattr(billing_stripe, "cancel",
+                        lambda sid, refund_credit_for=None:
+                        cancelled.append((sid, refund_credit_for)))
+
+    r = a.req("DELETE", f"/companies/{a.company}",
+              {"confirmName": "Paying doomed co"})
+    assert r.status_code == 204
+    assert cancelled == [("sub_del", "cus_del")]

@@ -213,3 +213,35 @@ def test_importing_a_line_says_goodbye_to_the_lots_on_the_old_one(actor):
     assert a.req("POST", "/map-io/import", json.loads(EXAMPLE.read_text())).status_code == 200
     assert a.req("GET", "/cards/").json() == [], \
         "import no longer clears the floor — good, but say so in the docs"
+
+
+def test_an_owner_deletes_their_own_company_and_only_theirs(actor):
+    """Self-serve company deletion: the exact name confirms, a lower tier is
+    refused, a wrong name changes nothing, and the company next door comes
+    through untouched."""
+    from tests.helpers import add_member
+
+    a = actor(); bootstrap_admin(a, "Doomed Co")
+    _line(a)
+    bystander = actor(); bootstrap_admin(bystander, "Bystander Co")
+    _line(bystander)
+    before_next_door = bystander.req("GET", "/stations/").json()
+
+    member = actor()
+    add_member(a, member, role="admin")
+    assert member.req("DELETE", f"/companies/{a.company}",
+                      {"confirmName": "Doomed Co"}).status_code == 403, \
+        "an admin-tier member could delete the whole company"
+
+    wrong = a.req("DELETE", f"/companies/{a.company}", {"confirmName": "doomed co"})
+    assert wrong.status_code == 400
+    assert a.req("GET", f"/companies/{a.company}").status_code == 200, \
+        "a refused confirmation still deleted the company"
+
+    assert a.req("DELETE", f"/companies/{a.company}",
+                 {"confirmName": "Doomed Co"}).status_code == 204
+    assert a.req("GET", f"/companies/{a.company}").status_code in (403, 404)
+    assert a.company not in [c["_id"] for c in a.req("GET", "/companies/").json()]
+
+    assert bystander.req("GET", "/stations/").json() == before_next_door, \
+        "deleting one company reached into another"

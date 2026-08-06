@@ -82,7 +82,8 @@ describe('the advertised price is the charged price', () => {
     // that no longer exists.
     for (const ghost of ['$58', '$116', '$290', 'up to 50 stations',
                          'up to 100 stations', 'up to 250 stations',
-                         'Two weeks free', 'two weeks free', 'after two weeks']) {
+                         'Two weeks free', 'two weeks free', 'after two weeks',
+                         'up to 3 stations', 'for three stations']) {
       expect(landing, `the landing page still quotes ${ghost}`).not.toContain(ghost)
       expect(indexHtml, `index.html still quotes ${ghost}`).not.toContain(ghost)
       for (const [name, text] of otherSurfaces) {

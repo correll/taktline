@@ -10,7 +10,7 @@ So each test here turns billing on explicitly, and one of them walks the app's
 own routing table to assert the gate covers every write endpoint — including
 whichever ones get written next month.
 
-The model under test (pricing.md): a free tier of 3 stations with no clock and
+The model under test (pricing.md): a free tier of FREE_STATIONS stations with no clock and
 no expiry, one metered paid plan, integrations on paid only, and non-payment
 ending in *paused*, never deleted.
 """
@@ -274,15 +274,15 @@ def test_support_can_reach_a_paused_account(billing, actor):
 
 # ─── Quotas ──────────────────────────────────────────────────────────────────
 
-def test_the_free_tier_caps_at_three_stations(billing, actor):
-    """The real cap on the real plan — no fake plan monkeypatched in. Three
-    stations draw; the fourth is the ask."""
+def test_the_free_tier_caps_at_the_free_station_count(billing, actor):
+    """The real cap on the real plan — no fake plan monkeypatched in. Every
+    station up to the cap draws; the next one is the ask."""
     a = actor()
     bootstrap_admin(a, "Ceiling co")
 
-    for name in ("A", "B", "C"):
-        assert _station(a, name).status_code == 201, name
-    r = _station(a, "D")
+    for i in range(plans.FREE_STATIONS):
+        assert _station(a, f"S{i}").status_code == 201, i
+    r = _station(a, "One more")
     assert r.status_code == 403
     body = r.json()["detail"]
     assert (body["code"], body["resource"], body["limit"], body["used"]) == \
@@ -305,7 +305,8 @@ def test_a_line_file_cannot_walk_around_the_free_cap(billing, actor):
     bootstrap_admin(a, "Import co")
 
     doc = {"kind": "taktline-map", "version": 1, "name": "Big",
-           "stations": [{"ref": f"s{i}", "name": f"S{i}"} for i in range(5)],
+           "stations": [{"ref": f"s{i}", "name": f"S{i}"}
+                        for i in range(plans.FREE_STATIONS + 2)],
            "processes": [], "templates": [], "routes": []}
     r = a.req("POST", "/map-io/import", doc)
     assert r.status_code == 403, r.text

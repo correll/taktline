@@ -94,7 +94,7 @@ def invite_body(*, customer: str, supplies: str, link: str) -> str:
         f"own factory, with the timings that come out of running it. Sharing "
         f"status is one link per job — you choose which, and you can stop at any "
         f"time.\n\n"
-        f"Free for up to 3 stations, no card:\n\n{link}\n\n"
+        f"Free for up to 7 stations, no card:\n\n{link}\n\n"
         f"To be clear about what {customer} gets: nothing, unless you send it. "
         f"Your account is your own — they cannot see your floor, your other "
         f"customers, or anything you have not shared.\n"

@@ -45,7 +45,7 @@ from dataclasses import dataclass
 
 #: The free tier's station cap. If people park pilots there indefinitely the
 #: answer is to raise it, never to lower it (pricing.md, open questions).
-FREE_STATIONS = 3
+FREE_STATIONS = 7
 
 PER_STATION_CENTS = 200      # $2 / station / month
 MIN_CENTS = 2_900            # the floor — bites below 15 stations

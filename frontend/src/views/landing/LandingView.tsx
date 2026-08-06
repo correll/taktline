@@ -171,7 +171,7 @@ function Hero() {
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp4, fontSize: 13, color: color.textDim }}>
-          Free up to 3 stations · no card · no expiry
+          Free up to 7 stations · no card · no expiry
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textSecondary }}>
           Runs in the browser on <strong style={{ color: color.textPrimary }}>iPhone, iPad and
@@ -658,7 +658,7 @@ function Integrations() {
  */
 const TIERS = [
   {
-    name: 'Free', price: '$0', per: 'up to 3 stations',
+    name: 'Free', price: '$0', per: 'up to 7 stations',
     line: 'A real line, not a demo. No card, no expiry — and never deleted.',
     points: ['The live board and floor plan', 'Cycle time, line cycle time and OEE',
              'The line doctor', 'Unlimited operators',
@@ -879,7 +879,7 @@ function WhyTrustUs() {
         }}>
           {[
             ['Little to lose',
-             'Free for three stations with no card and no expiry, then $2 a station a month. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
+             'Free for seven stations with no card and no expiry, then $2 a station a month. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
             ['Nothing to install',
              'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
             ['Nothing to lock you in',
@@ -1010,7 +1010,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         ready-made connectors; anything else goes through one small order API, a CSV
         import, or Zapier and Make.</> },
   { q: 'What does it cost?',
-    a: <>Free for up to 3 stations, with no card and no expiry. Beyond that,
+    a: <>Free for up to 7 stations, with no card and no expiry. Beyond that,
         <strong> $2 per station a month</strong> — never less than $29, never more than
         $399, and every ERP connector is included. Every operator and every tablet is
         included too — we price the line, not the people, because a worker who can see
@@ -1080,7 +1080,7 @@ function FinalCta() {
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textDim }}>
-          Free up to 3 stations · $2 a station beyond, capped at $399 · cancel any time
+          Free up to 7 stations · $2 a station beyond, capped at $399 · cancel any time
         </div>
       </div>
     </section>

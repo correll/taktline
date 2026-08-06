@@ -174,7 +174,7 @@ def test_the_pricing_endpoint_reports_the_numbers(stripe, actor):
     a = actor()
     bootstrap_admin(a, "Pricing co")
     body = a.req("GET", "/billing/plans").json()
-    assert body["freeStations"] == 3
+    assert body["freeStations"] == plans.FREE_STATIONS
     assert body["perStationCents"] == 200
     assert body["minimumCents"] == 2900 and body["capCents"] == 39900
     assert body["minStations"] == 15 and body["capStations"] == 200
@@ -197,7 +197,7 @@ def test_subscription_reports_state_usage_and_price(stripe, actor):
     a.req("POST", "/stations/", {**STATION, "name": "Cutting"})
     body = a.req("GET", f"/billing/{a.company}/subscription").json()
     assert body["plan"] == "free"
-    assert body["usage"] == {"stations": 1, "stationLimit": 3}
+    assert body["usage"] == {"stations": 1, "stationLimit": plans.FREE_STATIONS}
     assert body["monthlyCents"] == 0
     assert body["billingEnabled"] is True
 
@@ -502,7 +502,7 @@ def test_a_cancelled_big_line_pauses_after_grace_and_is_never_deleted(stripe, ac
     _set_plan(a.company, planCode="taktline", stripeStatus="active",
               stripeSubscriptionId="sub_15", stripeCustomerId="cus_15")
     stripe.subscription("sub_15", stations=1)
-    for i in range(4):                              # one more than free covers
+    for i in range(plans.FREE_STATIONS + 1):        # one more than free covers
         assert a.req("POST", "/stations/",
                      {**STATION, "name": f"S{i}"}).status_code == 201
     refunded = []

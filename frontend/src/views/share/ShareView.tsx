@@ -221,7 +221,7 @@ function Cta({ to, linkLabel, pitch }: { to: string; linkLabel: string; pitch: s
             Start free
           </Link>
           <span style={{ fontSize: 12.5, color: color.textDim }}>
-            Free for up to 3 stations · every operator included
+            Free for up to 7 stations · every operator included
           </span>
         </div>
       </div>

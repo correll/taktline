@@ -315,7 +315,7 @@ What happens to accounts that already exist: every company present when the
 billing migration runs is grandfathered onto the paid plan as **comped** —
 full capability, station count uncapped, integrations on, no charge, visible
 as "comped" on the platform dashboard so it never counts as MRR. Companies
-created after that start on the free tier (3 stations). Nobody who signed up
+created after that start on the free tier (7 stations). Nobody who signed up
 before the paywall meets it retroactively.
 
 The launch sequence, in order:

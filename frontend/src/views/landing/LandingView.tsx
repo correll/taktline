@@ -69,7 +69,70 @@ function SignupLink({ style, where, children }: {
 // Public landing page (anonymous visitors on "/"). Signed-in users never see
 // this — RootGate sends them straight into the app.
 
+/** On a phone, the landing page is not the product — the sign-in button is.
+ *  A worker opening taktline.com on an iPhone is almost never a prospect
+ *  reading marketing; they are trying to reach their line. So a narrow
+ *  viewport gets a native-feeling gate: one full-width Sign in, and a small
+ *  way out to the full site for the visitor who really is browsing.
+ *  Session-scoped, so choosing the desktop version sticks for the visit and
+ *  resets on the next one. */
+function MobileGate({ onDesktop }: { onDesktop: () => void }) {
+  return (
+    <div style={{
+      flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', gap: size.sp6, background: color.bgDeep,
+      padding: `calc(${size.sp6} + env(safe-area-inset-top, 0px)) ${size.sp5}
+                calc(${size.sp6} + env(safe-area-inset-bottom, 0px))`,
+      minHeight: '100dvh',
+    }}>
+      <TaktlineLogo height={34} color={color.textPrimary} />
+      <div style={{ fontSize: 14.5, color: color.textSecondary, textAlign: 'center',
+                    maxWidth: 300, lineHeight: 1.5 }}>
+        Your whole shop floor, at a glance.
+      </div>
+      <Link to="/login"
+            onClick={() => track('cta_click', { cta: 'login', where: 'mobile-gate' })}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: '100%', maxWidth: 420, padding: '18px 24px',
+              background: color.bluePrimary, color: '#fff',
+              borderRadius: size.radiusMd, textDecoration: 'none',
+              fontSize: 17, fontWeight: 600,
+            }}>
+        Sign in
+      </Link>
+      <button onClick={onDesktop} style={{
+        background: 'none', border: 'none', color: color.textDim,
+        fontSize: 13, cursor: 'pointer', textDecoration: 'underline',
+        padding: size.sp2,
+      }}>
+        Go to the desktop version
+      </button>
+    </div>
+  )
+}
+
+const DESKTOP_KEY = 'taktline.landing-desktop'
+
 export default function LandingView() {
+  const [wantDesktop, setWantDesktop] = useState(
+    () => sessionStorage.getItem(DESKTOP_KEY) === '1')
+  const [narrow, setNarrow] = useState(
+    () => window.matchMedia('(max-width: 640px)').matches)
+  React.useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)')
+    const on = () => setNarrow(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+
+  if (narrow && !wantDesktop) {
+    return <MobileGate onDesktop={() => {
+      sessionStorage.setItem(DESKTOP_KEY, '1')
+      setWantDesktop(true)
+    }} />
+  }
+
   return (
     <div style={{ flex: 1, overflowY: 'auto', background: color.bgDeep }}>
       <TopNav />

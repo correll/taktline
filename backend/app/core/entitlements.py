@@ -211,12 +211,16 @@ def _derive(cid: str, row) -> Entitlement:
         return Entitlement(**common, state=OK, reason=None,
                            settling=row.stripeStatus in _SETTLING)
 
-    # Payment failed. Stripe is retrying and sending its own reminders; we give
-    # them the grace window read-only, then lock.
+    # The subscription stopped — cancelled on purpose, or a payment failed and
+    # Stripe gave up retrying. The reason is carried apart because the messages
+    # must differ: "update your payment method" is an insult to someone who
+    # cancelled, and "you cancelled" alarms someone whose card silently expired.
+    # Either way: the grace window read-only, then the pause.
+    reason = "cancelled" if row.stripeStatus == "canceled" else "payment_failed"
     if row.graceEndsAt is not None and now < row.graceEndsAt:
-        return Entitlement(**common, state=READ_ONLY, reason="payment_failed")
+        return Entitlement(**common, state=READ_ONLY, reason=reason)
 
-    return Entitlement(**common, state=LOCKED, reason="payment_failed")
+    return Entitlement(**common, state=LOCKED, reason=reason)
 
 
 def grace_deadline():
@@ -356,8 +360,15 @@ def check_request(ent: Entitlement, request) -> None:
         if allows(endpoint, _READ_ONLY_OK):
             return
         raise HTTPException(402, {
-            "message": ("This account is read-only until its payment goes through. "
-                        "You can still see and export everything."),
+            "message": (
+                ("This subscription was cancelled, so the account is read-only "
+                 "for the grace week — after that it will be completely paused. "
+                 "You can still see and export everything, and nothing is ever "
+                 "deleted.")
+                if ent.reason == "cancelled" else
+                ("This account is read-only until its payment goes through — "
+                 "after the grace week it will be completely paused. "
+                 "You can still see and export everything.")),
             "code": "read_only",
             "plan": ent.plan.code,
             "reason": ent.reason,
@@ -366,6 +377,10 @@ def check_request(ent: Entitlement, request) -> None:
 
 
 def _locked_message(ent: Entitlement) -> str:
+    if ent.reason == "cancelled":
+        return ("This account is paused because its subscription was cancelled. "
+                "Your data is safe and nothing is deleted; subscribe again to "
+                "continue exactly where you left off.")
     return ("This account is paused because a payment did not go through. "
             "Your data is safe; update your payment method to continue.")
 

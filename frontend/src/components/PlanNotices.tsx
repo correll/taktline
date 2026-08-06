@@ -35,9 +35,12 @@ export function PlanBanner() {
 
   if (plan.locked) {
     tone = color.statusFault
-    text = 'This account is paused because a payment did not go through. Your data is safe.'
+    // The banner cannot see WHY (cancelled vs. failed payment — /auth/me only
+    // carries the state); the server's own refusal messages distinguish.
+    text = 'This account is paused. Your data is safe — subscribe to continue where you left off.'
   } else if (plan.readOnly) {
-    text = 'Read-only until a payment goes through. You can still see and export everything.'
+    text = 'This account is read-only — you can still see and export everything. '
+         + 'After the grace week it will be completely paused.'
   } else if (plan.atStationLimit) {
     text = plan.isFree
       ? `The free tier covers ${plan.stationLimit} stations — the next one is $2/month each.`

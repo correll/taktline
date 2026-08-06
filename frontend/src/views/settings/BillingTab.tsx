@@ -260,6 +260,8 @@ function Deadline({ sub }: { sub: Subscription }) {
   return (
     <div style={{ marginTop: size.sp2, fontSize: 13, color: color.textSecondary }}>
       {label} {date.toLocaleDateString()} · {days} day{days === 1 ? '' : 's'}
+      {sub.state === 'read_only' &&
+        ' — after that the account will be completely paused. Nothing is deleted.'}
     </div>
   )
 }

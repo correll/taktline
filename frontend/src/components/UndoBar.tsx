@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { undoApi, type UndoState } from '../api/undo.api'
 import { useCardsStore } from '../store/cards.store'
+import { useChromeStore } from '../store/chrome.store'
+import { useProcessesStore } from '../store/processes.store'
+import { useStationsStore } from '../store/stations.store'
 import { color, font, shadow, size } from '../theme/tokens'
 
 /**
@@ -28,7 +31,10 @@ export function UndoBar() {
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const cards = useCardsStore((s) => s.cards)
-  const fetchAll = useCardsStore((s) => s.fetchAll)
+  const fetchCards = useCardsStore((s) => s.fetchAll)
+  const fetchStations = useStationsStore((s) => s.fetchAll)
+  const fetchGraph = useProcessesStore((s) => s.fetchAll)
+  const setUndoBarVisible = useChromeStore((s) => s.setUndoBarVisible)
 
   const refresh = useCallback(async () => {
     try { setState(await undoApi.state()) } catch { /* offline: leave it as it was */ }
@@ -45,14 +51,18 @@ export function UndoBar() {
     try {
       const res = direction === 'undo' ? await undoApi.undo() : await undoApi.redo()
       setNote(`${direction === 'undo' ? 'Undid' : 'Redid'} · ${res.label}`)
-      await fetchAll()
+      // Undo restores STATIONS and ROUTES — refetching only the cards store
+      // left the graph stores stale, and the restore was invisible until a
+      // page reload. Cards refetch too: cheap, and a deleted station's column
+      // affects what the board shows.
+      await Promise.all([fetchStations(), fetchGraph(), fetchCards()])
     } catch (e: any) {
       setNote(e?.response?.data?.detail ?? 'That could not be undone.')
     } finally {
       setBusy(false)
       refresh()
     }
-  }, [busy, fetchAll, refresh])
+  }, [busy, fetchCards, fetchStations, fetchGraph, refresh])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -78,16 +88,23 @@ export function UndoBar() {
     return () => clearTimeout(t)
   }, [note])
 
-  if (!state || (!state.canUndo && !state.canRedo && !note)) return null
+  const visible = !!state && (state.canUndo || state.canRedo || !!note)
+
+  // Register with the shared chrome so the daily tip — the other bottom-centre
+  // card — stacks above these buttons instead of covering them. That collision
+  // was previously dodged by floating this bar 148px into the view, which put
+  // a toolbar in the middle of the screen.
+  useEffect(() => {
+    setUndoBarVisible(visible)
+    return () => setUndoBarVisible(false)
+  }, [visible, setUndoBarVisible])
+
+  if (!visible) return null
 
   return (
     <div style={{
       position: 'fixed', left: '50%', transform: 'translateX(-50%)',
-      // Clear of the daily tip, which is also a bottom-centred card and sits
-      // at a higher layer — it covered these buttons outright. Floating well
-      // above the edge reads as a toolbar rather than a notification, which is
-      // what this is: it stays for as long as there is something to undo.
-      bottom: `calc(148px + env(safe-area-inset-bottom, 0px))`, zIndex: 9100,
+      bottom: `calc(${size.sp6} + env(safe-area-inset-bottom, 0px))`, zIndex: 9100,
       display: 'flex', alignItems: 'center', gap: size.sp2,
       background: color.bgPanel, border: `1px solid ${color.border}`,
       borderRadius: size.radiusFull, boxShadow: shadow.lg,

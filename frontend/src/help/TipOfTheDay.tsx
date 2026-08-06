@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { color, font, size, shadow } from '../theme/tokens'
+import { useChromeStore } from '../store/chrome.store'
 import { useHelpStore } from './helpStore'
 import { tipOfTheDay } from './leanTips'
 import { anchorForCategory } from './manualAnchors'
@@ -13,6 +14,7 @@ export function TipOfTheDay() {
   const calloutDismissed = useHelpStore((s) => s.calloutDismissed)
   const tourActive = useHelpStore((s) => s.tourActive)
   const openManual = useHelpStore((s) => s.openManual)
+  const undoBarVisible = useChromeStore((s) => s.undoBarVisible)
 
   const [visible, setVisible] = useState(() => shouldShowTip(localStorage, todayKey()))
   const [sharing, setSharing] = useState(false)
@@ -38,7 +40,12 @@ export function TipOfTheDay() {
 
   return (
     <div style={{
-      position: 'fixed', bottom: size.sp6, left: '50%', transform: 'translateX(-50%)',
+      position: 'fixed', left: '50%', transform: 'translateX(-50%)',
+      // The undo bar owns the bottom edge; when it is on screen this card
+      // stacks above it rather than covering it.
+      bottom: undoBarVisible
+        ? `calc(${size.sp6} + 56px + env(safe-area-inset-bottom, 0px))`
+        : size.sp6,
       zIndex: 9000, width: 460, maxWidth: 'calc(100vw - 32px)',
       background: color.bgPanel, border: `1px solid ${color.border}`,
       borderTop: `3px solid ${color.bluePrimary}`,

@@ -129,10 +129,12 @@ export default function BillingTab() {
                 {busy === 'portal' ? 'Opening…' : 'Payment method, invoices and cancellation'}
               </button>
               <p style={note}>
-                Handled by Stripe. If you cancel, you keep the month you paid
-                for; after that the account pauses and nothing is ever deleted —
-                a line of {pricing.freeStations} stations or fewer simply
-                becomes a free account again.
+                Handled by Stripe. Cancelling stops the subscription
+                immediately and returns the unused time to your card, less the
+                processing fee the card network does not return to us. Nothing
+                is ever deleted — a line of {pricing.freeStations} stations or
+                fewer simply becomes a free account again, and a bigger one
+                pauses until you come back.
               </p>
             </div>
           </>

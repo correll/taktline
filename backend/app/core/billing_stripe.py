@@ -346,6 +346,22 @@ def refund_credit_balance(customer_id: str) -> None:
     _refund_credit_balance(_stripe(), customer_id)
 
 
+def _charge_fee(s, charge: dict) -> int:
+    """The processing fee Stripe kept on this charge, in cents.
+
+    Read from the balance transaction — the only place the real number lives.
+    An unreadable fee is treated as zero: a lookup failure is our problem, not
+    a reason to short the customer's refund.
+    """
+    bt = charge.get("balance_transaction")
+    if not bt:
+        return 0
+    try:
+        return int(_plain(s.BalanceTransaction.retrieve(bt)).get("fee", 0) or 0)
+    except Exception:
+        return 0
+
+
 def _refund_credit_balance(s, customer_id: str) -> None:
     customer = _plain(s.Customer.retrieve(customer_id))
     balance = customer.get("balance", 0)
@@ -375,7 +391,20 @@ def _refund_credit_balance(s, customer_id: str) -> None:
         amount = min(owed, charge["amount"] - charge.get("amount_refunded", 0))
         if amount <= 0:
             continue
-        s.Refund.create(charge=charge["id"], amount=amount)
+        # Pass through what Stripe passes through: the processing fee on the
+        # portion being refunded is not returned to us, so it is deducted from
+        # what we return — the real fee from the charge's balance transaction
+        # (card, ACH and Link each report their own), pro-rated to the slice
+        # refunded, and stated in those words on the billing page. Without
+        # this, a cancel/re-subscribe loop burns the fee on every cycle and
+        # the platform pays for the churning.
+        fee = _charge_fee(s, charge)
+        keep = round(fee * amount / charge["amount"]) if charge["amount"] else 0
+        refund = amount - keep
+        if refund > 0:
+            s.Refund.create(charge=charge["id"], amount=refund,
+                            metadata={"taktline": "cancellation",
+                                      "feeWithheldCents": str(keep)})
         owed -= amount
         if owed <= 0:
             break

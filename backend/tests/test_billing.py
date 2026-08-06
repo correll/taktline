@@ -585,8 +585,10 @@ def test_the_portal_cannot_switch_plans(monkeypatch):
     assert all(s["configuration"] == "bpc_ours" for s in sessions)
 
 
-def _refund_rig(balance, pending_items, charges):
-    """A fake SDK for _refund_credit_balance, recording what it does."""
+def _refund_rig(balance, pending_items, charges, fees=None):
+    """A fake SDK for _refund_credit_balance, recording what it does.
+
+    `fees` maps a charge's balance_transaction id to the fee Stripe kept."""
     did = {"refunds": [], "deleted": [], "balance_tx": []}
 
     class Customer:
@@ -616,14 +618,20 @@ def _refund_rig(balance, pending_items, charges):
                     return iter(charges)
             return Page
 
+    class BalanceTransaction:
+        @staticmethod
+        def retrieve(bt):
+            return {"id": bt, "fee": (fees or {}).get(bt, 0)}
+
     class Refund:
         @staticmethod
-        def create(charge, amount):
+        def create(charge, amount, **kw):
             did["refunds"].append((charge, amount))
 
     sdk = type("FakeSDK", (), {})()
     sdk.Customer, sdk.InvoiceItem, sdk.Charge, sdk.Refund = (
         Customer, InvoiceItem, Charge, Refund)
+    sdk.BalanceTransaction = BalanceTransaction
     return sdk, did
 
 
@@ -643,6 +651,26 @@ def test_a_prorated_cancellation_refunds_the_pending_credit():
     assert did["deleted"] == ["ii_unused"]
     assert did["refunds"] == [("ch_1", 2896)]
     assert did["balance_tx"] == []          # balance was 0; nothing to zero
+
+
+def test_the_refund_passes_through_stripes_fee():
+    """We return what Stripe returns us: the processing fee on the refunded
+    slice is deducted from the refund, pro-rated, read from the charge's own
+    balance transaction. Without this a cancel/re-subscribe loop burns the fee
+    on every cycle and the platform pays for the churning."""
+    sdk, did = _refund_rig(
+        balance=0,
+        pending_items=[{"id": "ii_unused", "amount": -2896, "invoice": None}],
+        charges=[{"id": "ch_f", "amount": 2900, "amount_refunded": 0,
+                  "paid": True, "refunded": False,
+                  "balance_transaction": "txn_f"}],
+        fees={"txn_f": 114})
+
+    billing_stripe._refund_credit_balance(sdk, "cus_f")
+
+    # 2896 unused, minus round(114 × 2896/2900) = 114 kept → 2782 returned.
+    assert did["refunds"] == [("ch_f", 2782)]
+    assert did["deleted"] == ["ii_unused"]
 
 
 def test_a_balance_credit_still_refunds_and_zeroes():

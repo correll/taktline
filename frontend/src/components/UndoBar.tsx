@@ -31,6 +31,8 @@ export function UndoBar() {
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const cards = useCardsStore((s) => s.cards)
+  const stations = useStationsStore((s) => s.stations)
+  const routes = useProcessesStore((s) => s.routes)
   const fetchCards = useCardsStore((s) => s.fetchAll)
   const fetchStations = useStationsStore((s) => s.fetchAll)
   const fetchGraph = useProcessesStore((s) => s.fetchAll)
@@ -40,10 +42,16 @@ export function UndoBar() {
     try { setState(await undoApi.state()) } catch { /* offline: leave it as it was */ }
   }, [])
 
-  // Re-ask whenever the board changes — including changes another tablet made,
-  // which arrive on the websocket and are exactly the ones that can invalidate
-  // an undo.
-  useEffect(() => { refresh() }, [refresh, cards])
+  // Re-ask whenever the GRAPH changes — stations and routes are what undo
+  // covers, and watching only the cards store meant deleting a station showed
+  // yesterday's stack: undo grayed out, a redo offered that the new edit had
+  // already invalidated. Cards still count (a move can invalidate an undo),
+  // and a focus refresh catches edits made from another tablet meanwhile.
+  useEffect(() => { refresh() }, [refresh, cards, stations, routes])
+  useEffect(() => {
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [refresh])
 
   const run = useCallback(async (direction: 'undo' | 'redo') => {
     if (busy) return

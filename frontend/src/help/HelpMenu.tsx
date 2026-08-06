@@ -4,10 +4,12 @@ import { color, font, size, shadow } from '../theme/tokens'
 import { useRole } from '../auth/useRole'
 import { useHelpStore } from './helpStore'
 import { WhatsNewDialog } from './WhatsNew'
+import { SupportDialog } from './SupportDialog'
 
 export function HelpMenu() {
   const [open, setOpen] = useState(false)
   const [whatsNew, setWhatsNew] = useState(false)
+  const [support, setSupport] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const { isSuperAdmin } = useRole()
   const openManual = useHelpStore((s) => s.openManual)
@@ -34,6 +36,7 @@ export function HelpMenu() {
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       {whatsNew && <WhatsNewDialog onClose={() => setWhatsNew(false)} />}
+      {support && <SupportDialog onClose={() => setSupport(false)} />}
       <button onClick={() => setOpen((v) => !v)} title="Help"
               style={{ display: 'flex', alignItems: 'center', background: 'transparent',
                        border: `1px solid ${color.border}`, borderRadius: size.radius,
@@ -48,6 +51,7 @@ export function HelpMenu() {
           <button style={item} onClick={choose(openManual)}>📖 User manual</button>
           <button style={item} onClick={choose(showCallout)}>👋 Getting started</button>
           <button style={item} onClick={choose(() => setWhatsNew(true))}>✨ What&rsquo;s new</button>
+          <button style={item} onClick={choose(() => setSupport(true))}>✉️ Contact support</button>
         </div>
       )}
     </div>

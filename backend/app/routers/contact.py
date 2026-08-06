@@ -26,12 +26,17 @@ form like this sees.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
 from ..core.email import mailer
 from ..core.ratelimit import limiter
+from ..db.connection import SESSION_SCOPE, get_session, optional_uuid
+from ..db.tables import Company, Membership, User
+from ..deps.auth import get_current_user
 
 log = logging.getLogger("taktline.contact")
 
@@ -94,4 +99,57 @@ async def submit_contact(request: Request, body: ContactBody):
         # lose the message: it is in the log either way.
         log.exception("contact email failed; message from %s follows:\n%s",
                       body.email, "\n".join(lines))
+    return {"ok": True}
+
+
+# ─── In-app support requests ─────────────────────────────────────────────────
+
+class SupportBody(BaseModel):
+    subject: str = Field(min_length=1, max_length=160)
+    message: str = Field(min_length=5, max_length=8000)
+    #: The active company, so the mail can say which floor is asking. Verified
+    #: against membership before it is believed — same rule as usage metering.
+    companyId: Optional[str] = None
+
+
+@router.post("/support", status_code=202)
+@limiter.limit("5/hour")
+async def support_request(request: Request, body: SupportBody,
+                          user: User = Depends(get_current_user),
+                          session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """A signed-in user asks for help, from the app's help menu.
+
+    None of the landing form's bot defences apply — the session is the defence
+    — but the rate limit stays, because a signed-in loop is still a loop.
+    Attribution is session-verified: the mail names the account and, after a
+    membership check, the company. The client's claim alone names nothing.
+    """
+    company_line = "—"
+    cid = optional_uuid(body.companyId) if body.companyId else None
+    if cid is not None:
+        m = (await session.execute(select(Membership).where(
+            Membership.userId == user.id,
+            Membership.companyId == cid))).scalars().first()
+        company = await session.get(Company, cid) if m is not None else None
+        if company is not None:
+            company_line = f"{company.name} ({m.role})"
+
+    subject = ("[Taktline support] "
+               + body.subject.replace("\r", " ").replace("\n", " ").strip()[:160])
+    lines = [
+        f"From:    {user.email}",
+        f"Company: {company_line}",
+        "",
+        body.message.strip(),
+        "",
+        "—",
+        f"Sent from the in-app help menu · reply to {user.email}",
+    ]
+    try:
+        await mailer.send(_RECIPIENT, subject, "\n".join(lines))
+    except Exception:
+        # Same rule as the landing form: a failed relay must not lose the
+        # message — it is in the log either way.
+        log.exception("support email failed; message from %s follows:\n%s",
+                      user.email, "\n".join(lines))
     return {"ok": True}

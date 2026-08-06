@@ -81,3 +81,47 @@ def test_a_broken_mailer_does_not_break_the_page(actor):
                new=AsyncMock(side_effect=RuntimeError("smtp down"))):
         r = a.req("POST", "/contact/", GOOD)
     assert r.status_code == 200 and r.json() == {"ok": True}
+
+
+# ─── The in-app support request ──────────────────────────────────────────────
+
+def test_a_support_request_carries_the_verified_sender(actor):
+    """The mail says who asked and which company — from the session and a
+    membership check, never from what the client asserted."""
+    from tests.helpers import bootstrap_admin
+
+    a = actor()
+    email = bootstrap_admin(a, "Asking Co")
+    with patch("app.routers.contact.mailer.send", new=AsyncMock()) as send:
+        r = a.req("POST", "/contact/support",
+                  {"subject": "The board is upside down",
+                   "message": "It was fine this morning.",
+                   "companyId": a.company})
+    assert r.status_code == 202
+    (_to, subject, mail_body), _ = send.call_args
+    assert "The board is upside down" in subject
+    assert email in mail_body
+    assert "Asking Co (super_admin)" in mail_body
+
+
+def test_a_support_request_cannot_claim_a_foreign_company(actor):
+    """A companyId the sender is no member of names nothing in the mail."""
+    from tests.helpers import bootstrap_admin
+
+    a, b = actor(), actor()
+    bootstrap_admin(a, "Mine Co")
+    bootstrap_admin(b, "Theirs Co")
+    with patch("app.routers.contact.mailer.send", new=AsyncMock()) as send:
+        r = a.req("POST", "/contact/support",
+                  {"subject": "hello", "message": "claiming someone else",
+                   "companyId": b.company})
+    assert r.status_code == 202
+    (_to, _subject, mail_body), _ = send.call_args
+    assert "Theirs Co" not in mail_body
+    assert "Company: —" in mail_body
+
+
+def test_a_support_request_needs_a_session(actor):
+    r = Actor().tc.post("/contact/support",
+                        json={"subject": "x", "message": "hello there"})
+    assert r.status_code == 401

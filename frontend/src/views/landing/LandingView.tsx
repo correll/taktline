@@ -76,6 +76,61 @@ function SignupLink({ style, where, children }: {
  *  way out to the full site for the visitor who really is browsing.
  *  Session-scoped, so choosing the desktop version sticks for the visit and
  *  resets on the next one. */
+// Captured at module load: Chrome fires `beforeinstallprompt` once, early —
+// waiting until a component mounts to listen is how the event gets missed.
+let _installPrompt: any = null
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault()
+    _installPrompt = e
+  })
+}
+
+/** The install path, per platform. Chrome hands us a real prompt; iOS Safari
+ *  has no API, so the honest thing is the two-tap instruction. Neither shows
+ *  once the app already runs standalone — the hint would be pointing at
+ *  itself. */
+function AddToHomeScreen() {
+  const [ios] = useState(() => /iPhone|iPad|iPod/.test(navigator.userAgent))
+  const [showHow, setShowHow] = useState(false)
+  const standalone = window.matchMedia('(display-mode: standalone)').matches
+    || (navigator as any).standalone
+  if (standalone) return null
+
+  const install = async () => {
+    if (_installPrompt) {
+      track('cta_click', { cta: 'a2hs', where: 'mobile-gate' })
+      _installPrompt.prompt()
+      _installPrompt = null
+    } else {
+      setShowHow(true)
+    }
+  }
+
+  if (showHow && ios) {
+    return (
+      <div style={{ fontSize: 13, color: color.textSecondary, textAlign: 'center',
+                    lineHeight: 1.6, maxWidth: 300 }}>
+        Tap <b style={{ color: color.textPrimary }}>Share</b>
+        <span aria-hidden="true"> ⎙</span> in Safari&rsquo;s toolbar, then{' '}
+        <b style={{ color: color.textPrimary }}>Add to Home Screen</b>.
+        Taktline opens full-screen, like an app.
+      </div>
+    )
+  }
+  return (
+    <button onClick={install} style={{
+      display: 'flex', alignItems: 'center', gap: 6,
+      background: 'transparent', border: `1px solid ${color.border}`,
+      color: color.textSecondary, borderRadius: size.radiusMd,
+      padding: '10px 18px', fontSize: 14, cursor: 'pointer',
+    }}>
+      <span aria-hidden="true" style={{ fontSize: 16 }}>＋</span>
+      Add to Home Screen
+    </button>
+  )
+}
+
 function MobileGate({ onDesktop }: { onDesktop: () => void }) {
   return (
     <div style={{
@@ -101,6 +156,7 @@ function MobileGate({ onDesktop }: { onDesktop: () => void }) {
             }}>
         Sign in
       </Link>
+      <AddToHomeScreen />
       <button onClick={onDesktop} style={{
         background: 'none', border: 'none', color: color.textDim,
         fontSize: 13, cursor: 'pointer', textDecoration: 'underline',

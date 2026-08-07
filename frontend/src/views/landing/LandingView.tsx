@@ -816,7 +816,8 @@ function Pricing() {
           Priced per line, not per person. Per-seat pricing pushes a shop to buy
           screens for supervisors only, and a system the operators can&apos;t see stops
           being a tool and becomes surveillance. Every operator and every tablet is
-          included, always. $2 a station, and you will never pay more than $399 a month.
+          included, always. $2 a station with a $29 minimum, and you will never pay
+          more than $399 a month.
         </p>
 
         <div style={{
@@ -998,7 +999,7 @@ function WhyTrustUs() {
         }}>
           {[
             ['Little to lose',
-             'Free for seven stations with no card and no expiry, then $2 a station a month. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
+             'Free for seven stations with no card and no expiry, then $2 a station a month with a $29 minimum. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
             ['Nothing to install',
              'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
             ['Nothing to lock you in',
@@ -1199,7 +1200,7 @@ function FinalCta() {
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textDim }}>
-          Free up to 7 stations · $2 a station beyond, capped at $399 · cancel any time
+          Free up to 7 stations · $2 a station beyond ($29 minimum), capped at $399 · cancel any time
         </div>
       </div>
     </section>

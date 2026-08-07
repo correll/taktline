@@ -92,6 +92,21 @@ describe('the advertised price is the charged price', () => {
     }
   })
 
+  it('never quotes the per-station price without the floor', () => {
+    // "then $2 a station" reads as "an 8-station line pays $16" — it pays the
+    // $29 minimum. Caught live by the founder; every mention now carries the
+    // floor in the same breath.
+    for (const [name, text] of [['LandingView', landing], ['index.html', indexHtml]] as const) {
+      for (const line of text.split('\n')) {
+        if (/\$2 (a|per) station/.test(line)) {
+          expect(/\$29|minimum|never less/.test(line),
+            `${name} quotes $2/station without the $29 floor: "${line.trim()}"`)
+            .toBe(true)
+        }
+      }
+    }
+  })
+
   it('no longer promises anything free forever', () => {
     // The old claim appeared in fifteen places. It is the kind of thing that
     // gets reintroduced by a copy-paste from an old section.

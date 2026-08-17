@@ -7,10 +7,18 @@ from pydantic import BaseModel, field_validator
 #   orders        — release pull orders + drain/ack the completion outbox + cancel
 #   cards:advance  — advance a lot forward along a route (scan-to-advance / scanners)
 #   reports        — read-only order/throughput data for BI (Power BI, Grafana)
+#   mcp            — connect an AI agent to the MCP server (core/mcp.py)
+#
+# `mcp` is deliberately its own scope and grants only *reading*. An agent that
+# should also act needs `orders` or `cards:advance` on the same key, and each
+# MCP tool is gated on the one it corresponds to — so "let an agent look at my
+# line" and "let an agent change my line" are two separate decisions, taken by
+# ticking two separate boxes.
 AVAILABLE_SCOPES = {
     "orders":       "Release orders, drain completions, cancel",
     "cards:advance": "Advance lots forward (scan-to-advance)",
     "reports":      "Read orders & throughput (BI dashboards)",
+    "mcp":          "Connect an AI agent (read-only unless paired with the scopes above)",
 }
 
 

@@ -10,6 +10,9 @@ export interface GlobalSettingsData {
   showCycleArc: boolean
   orderTracking: boolean
   orderTrackingSteps: boolean
+  /** Answer MCP calls from AI agents. Off until a super-admin turns it on;
+   *  the server is authoritative (backend/app/routers/mcp.py). */
+  mcpEnabled: boolean
   /** Which languages this company runs in (i18n/languages.ts). Invited
    *  operators choose from this set. */
   supportedLanguages: string[]

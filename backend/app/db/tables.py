@@ -579,6 +579,13 @@ class GlobalSettings(Base):
     # to tell a customer they subcontract the plating.
     orderTrackingSteps: Mapped[bool] = mapped_column(Boolean, nullable=False,
                                                      server_default=text("true"), default=True)
+    # Answer MCP calls for this company (core/mcp.py, routers/mcp.py). Off by
+    # default and a second lock rather than a first: a key already needs the
+    # 'mcp' scope to get anywhere, and this is the switch an admin can reach
+    # in a hurry — it shuts every agent out at once without hunting down and
+    # revoking keys one at a time.
+    mcpEnabled: Mapped[bool] = mapped_column(Boolean, nullable=False,
+                                             server_default=text("false"), default=False)
 
 
 # ─── ERP / production orders ────────────────────────────────────────────────────

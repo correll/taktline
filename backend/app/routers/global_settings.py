@@ -15,6 +15,7 @@ def _to_model(r: GlobalSettingsRow) -> GlobalSettings:
                           showCycleArc=bool(r.showCycleArc),
                           orderTracking=bool(r.orderTracking),
                           orderTrackingSteps=bool(r.orderTrackingSteps),
+                          mcpEnabled=bool(r.mcpEnabled),
                           supportedLanguages=list(r.supportedLanguages or ["en"]))
 
 

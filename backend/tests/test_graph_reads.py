@@ -67,6 +67,12 @@ ALLOWED = {
                              "links itself (an ERP node is not a step and would "
                              "inflate the denominator)",
     },
+    "routers/mcp.py": {
+        "_read_line": "serialises the rows as rows for an agent to read; the "
+                      "degree it reports goes through merge._boundary_station_ids "
+                      "— the same filter _incoming_routes and _outgoing_count are "
+                      "built from — and is counted per process",
+    },
     "routers/orders.py": {"_resolve_process": "picks a process, not a degree"},
     "routers/stations.py": {"_strip_split_semantics": "clears weights on flip to choice"},
 }

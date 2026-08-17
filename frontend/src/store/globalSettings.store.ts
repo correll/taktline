@@ -11,7 +11,7 @@ interface GlobalSettingsState {
 
 export const useGlobalSettingsStore = create<GlobalSettingsState>((set) => ({
   settings: { timezone: 'UTC', workHours: defaultWorkHours(), showCycleArc: false,
-              orderTracking: false, orderTrackingSteps: true,
+              orderTracking: false, orderTrackingSteps: true, mcpEnabled: false,
               supportedLanguages: [...LANGUAGE_CODES] },
   loading:  false,
 

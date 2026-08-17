@@ -110,6 +110,18 @@ The line export/import lives behind the file icon in the floor plan's
 lower-right corner (super-admin), not in Settings — the file carries the whole
 line, not just that tab's configuration.
 
+The floor plan's tool switch is **icon + word** — Select / Stations / Process —
+not three bare glyphs. Two of the three do things that clicking again does not
+undo, which is exactly when a guess is expensive, and an unlabelled toolbar is a
+memory test every time the page is opened. An **empty** floor plan opens in
+Stations mode rather than Select: there is nothing to select on a blank map, so
+starting in Select made every new line begin with a click whose only purpose was
+to leave the mode it opened in. The decision is taken once, and only after the
+station store has actually answered (`stations.store.loaded` — an empty map
+means "no stations" only once the fetch has returned, and the two readings lead
+to opposite defaults). Latching also means deleting your last station
+mid-session never yanks the tool out from under you.
+
 ## Running the line for real (`backend/simulate_line.py`)
 
 A live simulator that staffs the line from N tablets against a **running
@@ -282,8 +294,72 @@ owns the BoM, Taktline owns the flow graph.
 - `orders` — release / drain / cancel (`require_orders_access` = `require_scope("orders")`).
 - `cards:advance` — `POST /cards/{id}/advance` (**scan-to-advance**: a scanner/print station hits it after reading a lot label) and `GET /cards/{id}/label` (ZPL with a Code128 of the card id).
 - `reports` — read-only BI feeds `GET /reports/orders` + `/reports/throughput` (Power BI/Grafana).
+- `mcp` — connect an AI agent to the MCP server. Grants **reading only**; a write needs the scope its REST equivalent needs, on the same key.
 
 Other on-ramps: **CSV import** (`POST /orders/import`, multipart) releases a batch from a spreadsheet — each row in its own SAVEPOINT so one bad row is reported, not fatal; idempotent per `(source, externalRef)`.
+
+### The MCP server (`core/mcp.py` protocol, `routers/mcp.py` tools)
+
+`POST /mcp` speaks the Model Context Protocol over Streamable HTTP, so an AI
+agent can read a line and answer questions about it. `core/mcp.py` is the
+framing — JSON-RPC, the handshake, the tool registry — with no Taktline in it;
+`routers/mcp.py` decides what the protocol carries.
+
+**Stateless, and no event stream.** No `Mcp-Session-Id` is issued: every POST
+carries its own key and is authorised on its own, so there is no session to
+hijack, nothing to expire, and a revoked key stops working on the next call
+rather than whenever a stream reconnects. `GET /mcp` answers 405 rather than
+hanging, because a client given a dead stream waits forever instead of falling
+back to POST. Both spellings of the path are routed — a redirect between `/mcp`
+and `/mcp/` drops the Authorization header in some HTTP stacks.
+
+**The safety model, which is the feature.** Five locks, in the order applied:
+
+1. **Off**, per company (`globalSettings.mcpEnabled`, Settings → Integrations).
+   The switch is the one an admin can reach in a hurry — it shuts every agent
+   out at once without hunting down keys.
+2. **A key, never a cookie.** Uniquely among the integration endpoints there is
+   no session fallback: a browser-reachable agent gateway authenticated by an
+   ambient cookie is a confused deputy, and an MCP client has no browser.
+3. **Reading and acting are separate grants.** `mcp` alone yields the five
+   read-only tools; `release_order`/`cancel_order` need `orders` and
+   `advance_lot` needs `cards:advance` on the same key. A tool whose scope is
+   missing is **not listed** (an agent plans against its catalogue) and calling
+   it anyway answers exactly as a nonexistent tool does, so the catalogue
+   cannot be probed.
+4. **The dangerous half of the product is not there.** The catalogue is a fixed
+   list of eight: `get_line`, `find_lots`, `list_orders`, `get_statistics`,
+   `diagnose_line`, `release_order`, `cancel_order`, `advance_lot`. Nothing
+   creates, edits or deletes a station, route, process or product; nothing
+   deletes or unmerges a lot or moves one against the graph; nothing reaches
+   members, keys, billing, the floor plan or `/admin/reset`. The context also
+   runs at the `admin` tier, never super-admin, so even a carelessly added tool
+   could not edit configuration.
+5. **Personal data stays behind.** Every tool returns a hand-written shape, not
+   an ORM row. Excluded on purpose: `card.trackingUrl` and `station.supplierUrl`
+   are **bearer credentials**, and `order.attributes` / `card.fields` carry
+   whatever the ERP sent (customer names, ship-to addresses). None of it is
+   needed to answer "where is this lot" and all of it would go to a third
+   party's model.
+
+A tool error is returned as a *successful* JSON-RPC response carrying
+`isError` — that is what lets the model read and react to it — which makes the
+rollback load-bearing: the request is still one transaction that commits when
+the response is built, so `McpPrincipal.rollback` both rolls back **and** drops
+the `ws_events` queue, or a write that failed halfway would be committed
+halfway and broadcast to every open board. Internal exceptions become one
+sentence; the traceback stays in our logs, since that text is where stack
+frames and table names would leak to a stranger's model.
+
+`get_line` labels each station's role per process (queue / work / merge /
+split / choice / end / storage / integration) through
+`merge._boundary_station_ids`, the same filter the graph helpers use — an ERP's
+demand link is not a feed. The ordinary one-in-one-out bench is `work`;
+`unconnected` is reserved for a station with no routes at all, because labelling
+mid-line benches "unconnected" describes most of a real line as detached from
+itself. `tests/test_mcp.py` is organised by property rather than endpoint, and
+every lock in the list above was verified by removing it and watching the test
+fail.
 
 ### Connectors (`connectors/taktline_connect/`)
 

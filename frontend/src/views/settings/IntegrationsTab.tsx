@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { apiKeysApi, templatesApi, type ApiKey, type TemplateRef, type ScopeInfo } from '../../api/integrations.api'
 import { color, font, size } from '../../theme/tokens'
 import IntegrationLocations from './IntegrationLocations'
+import McpPanel from './McpPanel'
 import SuppliersPanel from './SuppliersPanel'
 
 const cell: React.CSSProperties = { padding: `${size.sp2} ${size.sp3}`, fontSize: 13, color: color.textPrimary, textAlign: 'left' }
@@ -147,6 +148,13 @@ export default function IntegrationsTab() {
             ))}</tbody>
           </table>
         )}
+      </Section>
+
+      {/* The agent-facing door. Sits under API keys because it is one of them:
+          an agent authenticates with a scoped key like every other integration,
+          and the scopes ticked above are exactly what it may do. */}
+      <Section title="AI agents (MCP)">
+        <McpPanel />
       </Section>
 
       {/* Where work enters and leaves — the boundary made explicit. */}

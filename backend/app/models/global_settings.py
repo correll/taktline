@@ -21,6 +21,8 @@ class GlobalSettings(BaseModel):
     showCycleArc: bool = False
     orderTracking: bool = False
     orderTrackingSteps: bool = True
+    # Answer MCP calls from AI agents (core/mcp.py). Off until switched on.
+    mcpEnabled: bool = False
     supportedLanguages: List[str] = Field(
         default_factory=lambda: list(languages.LANGUAGES))
 
@@ -33,6 +35,7 @@ class GlobalSettingsUpdate(BaseModel):
     showCycleArc: Optional[bool] = None
     orderTracking: Optional[bool] = None
     orderTrackingSteps: Optional[bool] = None
+    mcpEnabled: Optional[bool] = None
     supportedLanguages: Optional[List[str]] = None
 
     @field_validator("workHours")

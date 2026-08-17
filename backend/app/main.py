@@ -28,7 +28,7 @@ from .routers import (
     analysis, undo,
     admin, api_keys, auth, cards, companies, global_settings, invitations, lot_templates,
     contact, export_xlsx, map_settings, members, merge, orders, platform, processes, reports, routes, sessions,
-    billing, client_errors, map_io, network, share, stations, stats, tracking,
+    billing, client_errors, map_io, mcp, network, share, stations, stats, tracking,
 )
 from .core import entitlements, sandbox_gc, usage
 from .core.traffic import traffic
@@ -158,6 +158,9 @@ app.include_router(admin.router)
 app.include_router(platform.router)
 app.include_router(client_errors.router)
 app.include_router(map_io.router)
+# The MCP server for AI agents. API-key only, and off per company until a
+# super-admin switches it on — see routers/mcp.py for the whole safety model.
+app.include_router(mcp.router)
 # Billing. Reachable from a LOCKED account on purpose — a paywall whose
 # payment page sits behind the paywall is a lock with the key inside.
 app.include_router(billing.router)

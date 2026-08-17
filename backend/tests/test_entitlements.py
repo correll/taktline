@@ -448,8 +448,11 @@ def test_every_write_endpoint_passes_the_gate_or_declares_why_not():
             continue
         names = _gated_dependency_names(r)
         # `get_active_company` carries the gate inline; `require_scope`'s inner
-        # dep reaches it on both of its branches.
-        if names & {"get_active_company", "require_admin", "require_super_admin", "dep"}:
+        # dep reaches it on both of its branches. `require_mcp` is the MCP
+        # server's own door and calls `check_request` + `ensure_integrations`
+        # itself — it accepts no session, so it cannot reuse the others.
+        if names & {"get_active_company", "require_admin", "require_super_admin",
+                    "dep", "require_mcp"}:
             continue
         missing.append(f"{sorted(methods)} {path}")
 

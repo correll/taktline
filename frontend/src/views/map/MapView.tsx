@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { MousePointer2, MapPin, Waypoints } from 'lucide-react'
 import { useStationsStore, useProcessesStore, useCardsStore } from '../../store'
 import { useRole } from '../../auth/useRole'
@@ -14,11 +14,28 @@ export default function MapView() {
   const [routeProcessId, setRouteProcessId] = useState<string>('')
 
   const stations  = useStationsStore((s) => s.stations)
+  const stationsLoaded = useStationsStore((s) => s.loaded)
   const routes    = useProcessesStore((s) => s.routes)
   const processes = useProcessesStore((s) => s.processes)
   const createProcess = useProcessesStore((s) => s.createProcess)
   const cards     = useCardsStore((s) => s.cards)
   const { canEdit } = useRole()
+
+  // An empty floor plan opens in Stations mode. There is nothing to select on a
+  // blank map, and placing the first station is the only move that leads
+  // anywhere — starting in Select made every new line begin with a click whose
+  // only purpose was to leave the mode it opened in.
+  //
+  // Decided once, and only after the store has actually answered: `stations` is
+  // empty while the fetch is in flight too, and acting on that would flip the
+  // tool on an existing line. Latching also means deleting your last station
+  // mid-session never yanks the tool out from under you.
+  const defaultToolPicked = useRef(false)
+  useEffect(() => {
+    if (defaultToolPicked.current || !stationsLoaded) return
+    defaultToolPicked.current = true
+    if (canEdit && Object.keys(stations).length === 0) setTool('station')
+  }, [stationsLoaded, stations, canEdit])
 
   const processList = useMemo(
     () => Object.values(processes).sort((a, b) => a.name.localeCompare(b.name)),
@@ -88,19 +105,26 @@ function MapToolbar({ tool, setTool, processList, routeProcessId, setRouteProces
   setRouteProcessId: (id: string) => void
   onCreateProcess: () => void
 }) {
-  const btn = (t: MapTool, Icon: typeof MapPin, label: string) => (
+  // Icon + word. Three unlabelled glyphs are a memory test every time the
+  // floor plan is opened, and the two editing tools do things that are not
+  // undone by clicking again — which is exactly when a guess is expensive.
+  const btn = (t: MapTool, Icon: typeof MapPin, label: string, title: string) => (
     <button
-      title={label}
+      title={title}
       data-tour={`map-tool-${t}`}
       onClick={() => setTool(tool === t ? 'select' : t)}
       style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: 2, minWidth: 58, padding: '5px 8px 4px',
         borderRadius: 6, border: 'none', cursor: 'pointer',
         background: tool === t ? '#D85A30' : 'transparent',
         color: tool === t ? '#fff' : color.textSecondary,
       }}
     >
       <Icon size={18} />
+      <span style={{ fontSize: 10, lineHeight: 1, letterSpacing: '0.02em', fontWeight: 600 }}>
+        {label}
+      </span>
     </button>
   )
 
@@ -108,9 +132,9 @@ function MapToolbar({ tool, setTool, processList, routeProcessId, setRouteProces
     <div style={{ position: 'absolute', top: 14, left: 14, zIndex: 20, display: 'flex', gap: 8, alignItems: 'center' }}>
       <div style={{ display: 'flex', gap: 4, background: color.glass,
                     border: `1px solid ${color.border}`, borderRadius: 8, padding: 4 }}>
-        {btn('select', MousePointer2, 'Select / pan')}
-        {btn('station', MapPin, 'Add station — click the map to place one')}
-        {btn('route', Waypoints, 'Add route — click source then target')}
+        {btn('select', MousePointer2, 'Select', 'Select / pan')}
+        {btn('station', MapPin, 'Stations', 'Add station — click the map to place one')}
+        {btn('route', Waypoints, 'Process', 'Add route — click source then target')}
       </div>
       {tool === 'route' && (
         processList.length > 0 ? (

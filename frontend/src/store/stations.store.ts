@@ -9,6 +9,11 @@ interface StationsState {
   stations:  Record<string, Station>
   favorites: Record<string, true>   // current user's favorite station ids
   loading:   boolean
+  /** The server (or the offline snapshot) has answered at least once. An empty
+   *  `stations` map means "this company has no stations" only once this is true
+   *  — before it, empty just means the fetch is still in flight, and the two
+   *  lead to opposite decisions (see the floor plan's default tool). */
+  loaded:    boolean
   error:     string | null
 
   fetchAll: ()                                                               => Promise<void>
@@ -29,6 +34,7 @@ export const useStationsStore = create<StationsState>()(
       stations:  {},
       favorites: {},
       loading:   false,
+      loaded:    false,
       error:     null,
 
       fetchAll: async () => {
@@ -38,6 +44,7 @@ export const useStationsStore = create<StationsState>()(
           set((s) => {
             s.stations = Object.fromEntries(list.map((st) => [st._id, st]))
             s.loading = false
+            s.loaded  = true
           })
           saveSlice('stations', list)
         } catch (e) {
@@ -45,6 +52,9 @@ export const useStationsStore = create<StationsState>()(
           set((s) => {
             if (cached) s.stations = Object.fromEntries(cached.map((st) => [st._id, st]))
             s.loading = false
+            // A snapshot is an answer; a failure with nothing cached is not, and
+            // must not be read as "this company has no stations".
+            s.loaded  = cached != null
             s.error = cached ? null : String(e)
           })
         }

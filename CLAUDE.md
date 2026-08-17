@@ -325,9 +325,13 @@ removes the reason an operator presses stop. The Line Doctor's *runout clock*
 queue rather than delivering an analysis. `lineDoctor` rides on `/auth/me` so
 the client renders the bulb as absent rather than asking and being refused — a
 403 on its own one-minute poll would raise the global upgrade dialog unprompted,
-forever. SSO, benchmarking and multi-site rollup are named on the Plant and
-Enterprise tiers but **do not exist in the codebase**; they are commitments made
-in a sales conversation, not features with gates.
+forever. **Plant and Enterprise differ from Shop by capacity and service, not by
+features** — deliberately. They briefly advertised SSO, benchmarking and
+multi-site rollup; none of the three existed and all three were removed rather
+than built, because a pricing page is a promise with a price attached and
+anything on it is something a customer can ask for the Monday after they sign.
+`pricing.test.ts` fails if any of them reappears on the site. Build one against
+a signed deal, never against a page.
 
 Growing past a tier's cap produces the ordinary `plan_limit` refusal through the
 existing station quota, so hitting 31 stations on Shop points at sales rather

@@ -799,13 +799,18 @@ const TIERS = [
   {
     name: 'Plant', price: 'Talk to us', contact: true, per: '31–100 stations',
     line: 'A whole plant, priced with you rather than off a page.',
-    points: ['Everything in Shop', 'OEE analytics and benchmarking',
-             'Single sign-on', 'API access', 'A response-time SLA'],
+    // Only what exists. An earlier draft listed SSO, benchmarking and "API
+    // access" — the first two are not built, and the third is not a
+    // differentiator because Shop already has it. A pricing page is a promise
+    // with a price attached; nothing goes on it that a customer could ask for
+    // on Monday and not be given.
+    points: ['Everything in Shop', 'Up to 100 stations',
+             'Priority support, with a response-time SLA'],
   },
   {
     name: 'Enterprise', price: 'Talk to us', contact: true, per: '100+ stations',
-    line: 'Several sites, or one that cannot leave the building.',
-    points: ['Everything in Plant', 'Multi-site rollup',
+    line: 'A line that cannot leave the building, or one too big for a page.',
+    points: ['Everything in Plant', 'Unlimited stations',
              'On-premise — your hardware, your network, your backups',
              'A named contact', 'Compliance and security review support'],
   },

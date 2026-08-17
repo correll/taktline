@@ -41,6 +41,21 @@ const otherSurfaces: Array<[string, string]> = [
   ['network.py', resolve(__dirname, '../../../../backend/app/core/network.py')],
 ].map(([name, path]) => [name as string, readFileSync(path as string, 'utf-8')])
 
+/** Source with its commentary removed, so a check reads what a *visitor* sees.
+ *
+ *  Needed because the honest way to record "we deliberately do not advertise
+ *  X" is a comment saying so, next to the code that no longer does — and a
+ *  naive substring check on the file then fires on the explanation for the
+ *  rule it is enforcing. Strips `//` lines, JSDoc bodies and HTML comments;
+ *  `//` only when it opens the line, so URLs survive. */
+function copyOnly(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n')
+}
+
 /** What a Shop line of this size costs — mirrored from `plans.monthly_cents_for`
  *  so the test derives the endpoints rather than restating them. */
 function shopCents(stations: number): number {
@@ -114,6 +129,31 @@ describe('the advertised price is the charged price', () => {
       expect(block, `the ${tier} tier quotes a price`).not.toMatch(/\$[\d,]/)
       expect(block, `the ${tier} tier is not marked as a conversation`)
         .toContain('contact: true')
+    }
+  })
+
+  it('advertises no feature the product does not have', () => {
+    // These three were briefly sold on Plant and Enterprise and none of them
+    // existed: there is no identity federation, no cross-customer comparison
+    // and no organisation entity above `company` anywhere in the codebase.
+    //
+    // A tier sold in a conversation is the *easiest* place for a roadmap item
+    // to be written down as though it shipped, because nobody is checking a
+    // number. Build one of these and delete its line here; until then, a page
+    // that offers it is a promise with a price attached.
+    const landingCopy = copyOnly(landing)
+    const indexCopy = copyOnly(indexHtml)
+    // Guard the guard: stripping comments must not have stripped the page.
+    expect(landingCopy).toContain('Talk to us')
+    expect(indexCopy).toContain('Taktline')
+
+    for (const vapour of ['Single sign-on', 'single sign-on', 'SSO', 'SAML',
+                          'benchmarking', 'Benchmarking', 'benchmarks',
+                          'Multi-site', 'multi-site', 'multisite', 'rollup']) {
+      expect(landingCopy, `the landing page advertises ${vapour}, which does not exist`)
+        .not.toContain(vapour)
+      expect(indexCopy, `index.html advertises ${vapour}, which does not exist`)
+        .not.toContain(vapour)
     }
   })
 

@@ -190,17 +190,21 @@ PLANS: dict[str, Plan] = {
               f"covers the first {SHOP_BASE_STATIONS}, then $45 each. Every "
               f"connector, the Line Doctor, and email support.",
     ),
+    # Plant and Enterprise differ from Shop in **capacity and service**, not in
+    # features — deliberately. Everything a blurb claims here is either a
+    # station count this file enforces or a commitment a person can honour on
+    # the day it is asked for. Nothing that has to be built first.
     PLANT: Plan(
         code=PLANT, label="Plant", stations=PLANT_STATIONS, integrations=True,
         line_doctor=True, self_serve=False,
-        blurb=f"Up to {PLANT_STATIONS} stations, priced with you. OEE "
-              f"analytics, benchmarking, SSO, API access and an SLA.",
+        blurb=f"Up to {PLANT_STATIONS} stations, priced with you. Priority "
+              f"support with a response-time SLA.",
     ),
     ENTERPRISE: Plan(
         code=ENTERPRISE, label="Enterprise", stations=None, integrations=True,
         line_doctor=True, self_serve=False,
-        blurb="Beyond 100 stations, priced with you. Multi-site rollup, "
-              "on-premise, a named contact and compliance support.",
+        blurb="Beyond 100 stations, priced with you. On-premise, a named "
+              "contact and compliance support.",
     ),
 }
 

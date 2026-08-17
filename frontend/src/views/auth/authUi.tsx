@@ -2,7 +2,7 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import { color, font, size, shadow } from '../../theme/tokens'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
-import { LANGUAGES } from '../../i18n/languages'
+import { languageLabel } from '../../i18n/languages'
 
 export function AuthCard({ title, subtitle, children }: {
   title: string; subtitle?: React.ReactNode; children?: React.ReactNode
@@ -74,7 +74,7 @@ export function LanguageSelect({ label = LANGUAGE_FIELD_LABEL, value, onChange, 
       >
         {codes.map((code) => (
           <option key={code} value={code}>
-            {(LANGUAGES as Record<string, string>)[code] ?? code}
+            {languageLabel(code)}
           </option>
         ))}
       </select>

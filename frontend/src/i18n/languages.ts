@@ -13,6 +13,25 @@ export const LANGUAGES: Record<Lang, string> = {
   ht: 'Kreyòl ayisyen',
 }
 
+/** English names, for the parenthetical in `languageLabel`: the admin choosing
+ *  a company's languages may not read every endonym on the list. */
+export const LANGUAGES_EN: Record<Lang, string> = {
+  en: 'English',
+  es: 'Spanish',
+  'fr-CA': 'French',   // the endonym already carries "(Canada)"
+  my: 'Burmese',
+  ht: 'Haitian Creole',
+}
+
+/** "Español (Spanish)" — endonym first (that is the picker's one job), the
+ *  English name in parentheses for everyone else. Plain "English" stays as is
+ *  rather than becoming "English (English)". */
+export function languageLabel(code: string): string {
+  const own = (LANGUAGES as Record<string, string>)[code] ?? code
+  const en = (LANGUAGES_EN as Record<string, string>)[code]
+  return !en || en === own ? own : `${own} (${en})`
+}
+
 export const DEFAULT_LANGUAGE: Lang = 'en'
 
 export const LANGUAGE_CODES = Object.keys(LANGUAGES) as Lang[]

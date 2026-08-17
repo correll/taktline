@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { LANGUAGES, LANGUAGE_CODES } from '../../i18n/languages'
+import { languageLabel, LANGUAGE_CODES } from '../../i18n/languages'
 import { useGlobalSettingsStore } from '../../store/globalSettings.store'
 import { COMMON_TIMEZONES, defaultWorkHours, FULL_HOUR } from '../../api/globalSettings.api'
 import { color, font, size } from '../../theme/tokens'
@@ -149,7 +149,7 @@ export default function GlobalTab() {
                     : langs.length > 1 ? langs.filter((l) => l !== code) : langs)}
                   style={{ width: 15, height: 15 }}
                 />
-                {LANGUAGES[code]}
+                {languageLabel(code)}
               </label>
             ))}
           </div>

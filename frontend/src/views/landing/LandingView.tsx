@@ -7,7 +7,7 @@ import { ACTIVE_COMPANY_KEY } from '../../api/client'
 import { TaktlineLogo } from '../../components/TaktlineLogo'
 import { ContactForm } from './ContactForm'
 import { featuredTips } from '../../help/leanTips'
-import { LANGUAGES, LANGUAGE_CODES } from '../../i18n/languages'
+import { languageLabel, LANGUAGE_CODES } from '../../i18n/languages'
 import { LEGAL_ENTITY } from '../../legal/terms'
 import { useAuthStore } from '../../store/auth.store'
 import { useThemeStore } from '../../store/theme.store'
@@ -720,7 +720,7 @@ function FloorLanguages() {
               border: `1px solid ${color.border}`, borderRadius: size.radiusFull,
               padding: '7px 16px',
             }}>
-              {LANGUAGES[code]}
+              {languageLabel(code)}
             </span>
           ))}
         </div>

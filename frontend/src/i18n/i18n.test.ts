@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { LANGUAGE_CODES, LANGUAGES } from './languages'
+import { LANGUAGE_CODES, LANGUAGES, LANGUAGES_EN, languageLabel } from './languages'
 import { STRINGS } from './strings'
 import { translate } from './index'
 
@@ -29,6 +29,15 @@ describe('the language catalogue', () => {
     for (const code of LANGUAGE_CODES) {
       expect(LANGUAGES[code].length, code).toBeGreaterThan(0)
     }
+  })
+
+  it('glosses every language in English', () => {
+    for (const code of LANGUAGE_CODES) {
+      expect(LANGUAGES_EN[code], code).toBeTruthy()
+    }
+    expect(languageLabel('es')).toBe('Español (Spanish)')
+    expect(languageLabel('en')).toBe('English')          // never "English (English)"
+    expect(languageLabel('xx')).toBe('xx')               // unknown code stays greppable
   })
 })
 

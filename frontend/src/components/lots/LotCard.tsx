@@ -1,6 +1,8 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { color, font, size } from '../../theme/tokens'
 import { useNow } from '../../motion/useNow'
+import { useProcessesStore, useThemeStore } from '../../store'
+import { processColorsFor } from '../../domain/processColors'
 import type { Card, LotTemplate } from '../../models'
 
 interface Props {
@@ -50,6 +52,16 @@ export default function LotCard({ card, template, stationId, onClick }: Props) {
   const count  = card.bins[stationId]?.count ?? 0
   const accent = template?.color ?? color.lotBlue
   const pct    = card.totalQuantity > 0 ? count / card.totalQuantity : 0
+
+  // Which line this lot belongs to — in the same colour the map's legend gives
+  // that process, so the dot on the card and the routes on the floor plan agree.
+  const processes   = useProcessesStore((s) => s.processes)
+  const themeMode   = useThemeStore((s) => s.mode)
+  const processName = processes[card.processId]?.name
+  const processDot  = useMemo(
+    () => processColorsFor(Object.keys(processes), themeMode)[card.processId],
+    [processes, themeMode, card.processId],
+  )
 
   return (
     <div
@@ -137,10 +149,12 @@ export default function LotCard({ card, template, stationId, onClick }: Props) {
           }} />
         </div>
 
-        {/* Row 3: age (left) + description. Age leads because on a Kanban board
-            it is the number that matters — a card that has sat for two days is
-            the one to ask about, and it should be in the same place on every
-            card so a column can be scanned down rather than read. */}
+        {/* Row 3: age (left) + description + process. Age leads because on a
+            Kanban board it is the number that matters — a card that has sat for
+            two days is the one to ask about, and it should be in the same place
+            on every card so a column can be scanned down rather than read. The
+            process sits at the far right, where two lines sharing one station
+            are told apart. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 9, color: color.textDim, fontFamily: font.mono, flexShrink: 0 }}>
             {ageLabel(card.updatedAt, now)}
@@ -151,6 +165,23 @@ export default function LotCard({ card, template, stationId, onClick }: Props) {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
               {card.description}
+            </span>
+          )}
+          {processName && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              minWidth: 0, maxWidth: '55%', flexShrink: 0,
+              marginLeft: card.description ? 0 : 'auto',
+            }}>
+              {processDot && (
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: processDot, flexShrink: 0 }} />
+              )}
+              <span style={{
+                fontSize: 9, color: color.textDim, fontFamily: font.mono,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {processName}
+              </span>
             </span>
           )}
         </div>

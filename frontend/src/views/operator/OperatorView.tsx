@@ -111,6 +111,12 @@ export default function OperatorView() {
     }
   }, [scanned, upsertCard])
 
+  // The panels must see the card as it is NOW: `card` is the copy captured at
+  // selection time, but the DONE / WORKING badge lives on card.status, which
+  // handleStart/handleStop change in the store *after* that capture — the
+  // stale copy would wear yesterday's badge.
+  const liveCard = card ? (cards[card._id] ?? card) : null
+
   const reset = useCallback(() => {
     setPhase('pick-station')
     setStationId(null)
@@ -343,7 +349,7 @@ export default function OperatorView() {
         {phase === 'working' && session && stationId && (
           <WorkingPanel
             session={session}
-            card={card}
+            card={liveCard}
             stationId={stationId}
             quantity={quantity}
             elapsed={elapsed}
@@ -355,7 +361,7 @@ export default function OperatorView() {
         )}
         {phase === 'done' && stationId && (
           <DonePanel
-            card={card}
+            card={liveCard}
             stationId={stationId}
             quantity={quantity}
             elapsed={elapsed}
@@ -499,6 +505,7 @@ function LotPicker({
   const cards          = useCardsStore((s) => s.cards)
   const templates      = useProcessesStore((s) => s.lotTemplates)
   const routes         = useProcessesStore((s) => s.routes)
+  const processes      = useProcessesStore((s) => s.processes)
   const fetchAll       = useCardsStore((s) => s.fetchAll)
   const fetchProcesses = useProcessesStore((s) => s.fetchAll)
 
@@ -771,6 +778,13 @@ function LotPicker({
                       {tmpl?.name ?? 'Unknown'}
                       <span style={{ color: color.textSecondary, fontFamily: font.mono, fontWeight: 400 }}> {lotLabel(c)}</span>
                     </div>
+                    {/* The line this precursor belongs to — two chemistries can
+                        share a bench, and a merge must not eat across them. */}
+                    {processes[c.processId] && (
+                      <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, marginTop: 2 }}>
+                        {processes[c.processId].name}
+                      </div>
+                    )}
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 700, color: color.textPrimary }}>{count}</div>
@@ -841,6 +855,7 @@ function LotPicker({
                     </div>
                     <div style={{ fontSize: 10, color: color.textDim, fontFamily: font.mono, marginTop: 2 }}>
                       at {feed?.name ?? '—'}
+                      {processes[c.processId] ? ` · ${processes[c.processId].name}` : ''}
                     </div>
                   </div>
                   {badge && (
@@ -1240,10 +1255,12 @@ function DonePanel({
         </div>
       </div>
 
+      {/* The card itself, wearing its DONE badge — the same card the lot
+          board shows, so the operator's view and the board never disagree
+          about what state the lot is in. */}
       {card && (
-        <div style={{ fontSize: 12, color: color.textSecondary, textAlign: 'center' }}>
-          {tmpl?.name ?? 'Lot'}
-          <span style={{ fontFamily: font.mono }}> {lotLabel(card)}</span>
+        <div style={{ width: '100%', maxWidth: 320 }}>
+          <LotCard card={card} template={tmpl ?? undefined} stationId={stationId} />
         </div>
       )}
 

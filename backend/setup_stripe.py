@@ -72,21 +72,48 @@ def _tiers_match(price, want: list[dict]) -> bool:
     return True
 
 
-def ensure_station_price(stripe) -> tuple[str, bool]:
+def ensure_station_price(stripe, replace: bool = False) -> tuple[str, bool]:
+    """The station price, created if absent.
+
+    A Stripe price is **immutable**: changing what a station costs means a new
+    price object, not an edit. When one already exists under our lookup key and
+    disagrees with `plans.py`, that is a live price charging something the
+    pricing page no longer says — the single most expensive drift in this
+    system, and one no test can see because it lives in Stripe.
+
+    So this refuses by default and says exactly how to fix it. `--replace`
+    mints the new price and moves the lookup key onto it in one call
+    (`transfer_lookup_key`), which is the whole remedy: existing subscriptions
+    keep billing on the old price object until they are moved deliberately, and
+    every *new* checkout gets the new one.
+    """
     want = plans.station_tiers()
     found = stripe.Price.list(lookup_keys=[STATION_LOOKUP], limit=1,
                               expand=["data.tiers"])["data"]
     if found:
         price = found[0]
-        if not _tiers_match(price, want):
-            print(f"  !! {STATION_LOOKUP}: exists with different tiers or mode "
-                  f"than plans.py — create the new price and move the lookup "
-                  f"key by hand, this script will not.")
+        if _tiers_match(price, want):
+            print(f"  ok {STATION_LOOKUP}: {price['id']} (existing)")
+            return price["id"], True
+        if not replace:
+            print(f"  !! {STATION_LOOKUP}: {price['id']} exists with different "
+                  f"tiers or mode than plans.py.")
+            print(f"     A Stripe price cannot be edited. Until this is "
+                  f"resolved the site advertises one price and checkout "
+                  f"charges another.")
+            print(f"     Re-run with --replace to create the new price and "
+                  f"move the lookup key onto it, then set "
+                  f"{plans.STATION_PRICE_ENV} to the id it prints.")
+            print(f"     Subscriptions already on {price['id']} keep billing "
+                  f"at the old price until you move them on purpose.")
             return price["id"], False
-        print(f"  ok {STATION_LOOKUP}: {price['id']} (existing)")
-        return price["id"], True
+        print(f"  ~~ {STATION_LOOKUP}: {price['id']} disagrees with plans.py — "
+              f"creating a replacement and transferring the lookup key")
     price = stripe.Price.create(
         lookup_key=STATION_LOOKUP,
+        # Takes the key off whatever held it. Only reachable via --replace, and
+        # only after the tiers were found to disagree.
+        transfer_lookup_key=bool(found),
         currency="usd",
         recurring={"interval": "month"},
         billing_scheme="tiered",
@@ -145,12 +172,20 @@ def main() -> int:
     mode = "LIVE" if key.startswith(("sk_live", "rk_live")) else "test/sandbox"
     print(f"Creating Taktline prices ({mode} mode)…")
 
-    station_id, ok1 = ensure_station_price(stripe)
+    replace = "--replace" in sys.argv
+    station_id, ok1 = ensure_station_price(stripe, replace=replace)
     onprem_id, ok2 = ensure_onprem_price(stripe)
 
+    # Only print an env line for a price that is actually right. Printing the
+    # id of a price we just refused invites someone to paste it into the
+    # deployment, which is how the pricing page and the invoice come to
+    # disagree in the first place.
     print("\nEnvironment:")
-    print(f"  {plans.STATION_PRICE_ENV}={station_id}")
-    print(f"  {plans.ONPREM_PRICE_ENV}={onprem_id}")
+    print(f"  {plans.STATION_PRICE_ENV}={station_id}" if ok1
+          else f"  {plans.STATION_PRICE_ENV}=  ** unresolved — see above, "
+               f"do NOT paste the id printed there **")
+    print(f"  {plans.ONPREM_PRICE_ENV}={onprem_id}" if ok2
+          else f"  {plans.ONPREM_PRICE_ENV}=  ** unresolved — see above **")
 
     print("\nStill manual, in the Dashboard:")
     print("  - Tax: origin address + your registrations "

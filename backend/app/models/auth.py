@@ -113,6 +113,11 @@ class CompanyMembership(BaseModel):
     planState: str = "ok"          # ok | read_only | locked
     stationLimit: Optional[int] = None
     integrations: bool = False
+    #: Whether the Line Doctor report is included. Carried here so the client
+    #: can render the control as unavailable rather than *asking and being
+    #: refused* — a refusal on a poll would pop the plan dialog unprompted,
+    #: every time the bulb refreshed itself.
+    lineDoctor: bool = False
 
 
 class MeResponse(BaseModel):

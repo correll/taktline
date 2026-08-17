@@ -288,6 +288,58 @@ error that points at the ERP rather than at us.
 Product → template mapping still lives in the **connector's** config: the ERP
 owns the BoM, Taktline owns the flow graph.
 
+## Pricing and entitlements (`core/plans.py`, `core/entitlements.py`)
+
+Four tiers, **two of them published**. `plans.py` is the single source of truth
+— every limit, capability and price — and `pricing.md` is the argument for it.
+
+| Tier | Stations | Price | Bought how |
+|---|---|---|---|
+| Free | ≤7 | $0 | self-serve |
+| Shop | 8–30 | $200/mo covering the first 8, then $45 each ($200 → $1,190) | self-serve |
+| Plant | 31–100 | agreed with the customer | **talk to us** |
+| Enterprise | 100+ | agreed with the customer | **talk to us** |
+
+**The split is the design.** The bottom stays frictionless because free
+accounts are the distribution mechanism; the top stays open because a number
+published there is either too low for a plant or too high for the shop reading
+the same page. `Plan.self_serve` records which tiers a checkout may produce, and
+the Stripe webhook only overwrites a plan code when the current one is
+self-serve — otherwise the next subscription event would demote a staff-set
+Plant account to a 30-station cap, and the first symptom would be a customer
+unable to add a station.
+
+**Stripe is `graduated`, not `volume`.** Volume applies one rate to every unit
+(that was the retired flat model); graduated charges the base for the first 8
+and the step thereafter, which is what "a base plus a step" means. Prices are
+immutable in Stripe, so switching modes means a new price object —
+`setup_stripe.py` compares `tiers_mode` as well as the amounts, because the same
+numbers under the wrong mode charge the wrong thing.
+
+**Only two things are gated by plan**, both booleans on `Plan`:
+`integrations` (connectors, API-key use, MCP) and `line_doctor`
+(`GET /analysis/`). Statistics and OEE stay open on **every** tier on purpose —
+the measurement is why anyone installs the product, and taking it from Free
+removes the reason an operator presses stop. The Line Doctor's *runout clock*
+(`/analysis/runout/{id}`) is deliberately ungated too: it orders the operator's
+queue rather than delivering an analysis. `lineDoctor` rides on `/auth/me` so
+the client renders the bulb as absent rather than asking and being refused — a
+403 on its own one-minute poll would raise the global upgrade dialog unprompted,
+forever. SSO, benchmarking and multi-site rollup are named on the Plant and
+Enterprise tiers but **do not exist in the codebase**; they are commitments made
+in a sales conversation, not features with gates.
+
+Growing past a tier's cap produces the ordinary `plan_limit` refusal through the
+existing station quota, so hitting 31 stations on Shop points at sales rather
+than silently billing plant volumes at shop rates.
+
+**Three places state a price and they must agree**: `plans.py`, the landing page
+(hard-coded, because it renders for crawlers), and `index.html`'s meta + JSON-LD.
+`frontend/src/views/landing/pricing.test.ts` reads `plans.py` as text and pins
+all three — including a test that **fails if a number ever appears beside Plant
+or Enterprise**, since that is the negotiating position given away. Prices live
+in integer cents; a plan code is permanent and may be aliased but never renamed.
+
 ### Scoped API keys & the auth model for integrations
 
 `ApiKey` rows (`tk_…`, SHA-256 hashed at rest, prefix shown for display, revocable, company-scoped) authenticate integrations — no admin login. `deps/auth.require_scope(scope, session_role=…)` is the dependency factory: it accepts a Bearer/`X-Api-Key` key carrying `scope`, **or** a session (a key resolves its own company, so `X-Company-Id` is ignored and tenant isolation is automatic). A key with no cookie skips CSRF. Scope catalog (`models/apikey.AVAILABLE_SCOPES`, surfaced at `GET /api-keys/scopes`):

@@ -80,6 +80,10 @@ class Entitlement:
     def integrations(self) -> bool:
         return self.plan.integrations
 
+    @property
+    def line_doctor(self) -> bool:
+        return self.plan.line_doctor
+
     def as_dict(self) -> dict:
         return {
             "plan": self.plan.code,
@@ -89,6 +93,7 @@ class Entitlement:
             "onPremise": self.on_premise,
             "stationLimit": self.plan.stations,
             "integrations": self.plan.integrations,
+            "lineDoctor": self.plan.line_doctor,
             "currentPeriodEnd": self.period_end,
             "graceEndsAt": self.grace_ends_at,
             "settling": self.settling,
@@ -199,7 +204,7 @@ def _derive(cid: str, row) -> Entitlement:
 
     if plan.code == plans.FREE:
         # No clock, no expiry, no states. A free account is simply OK, forever
-        # — the 3-station quota is the whole of its metering.
+        # — the station quota is the whole of its metering.
         return Entitlement(**common, state=OK, reason=None)
 
     # A paid plan with no Stripe subscription is a comped account — staff granted
@@ -388,17 +393,39 @@ def _locked_message(ent: Entitlement) -> str:
 def ensure_integrations(ent: Entitlement) -> None:
     """Refuse an ERP/shop binding on a tier that does not include them.
 
-    Only the free tier and the sandbox lack integrations. On the paid plan
+    Only the free tier and the sandbox lack integrations. On every paid tier
     every catalogue connector is included, deliberately unmetered — see
     plans.py. There is no per-connector count to check, anywhere.
     """
     if ent.integrations:
         return
     raise HTTPException(403, {
-        "message": ("Integrations come with the paid plan — every connector "
+        "message": ("Integrations come with Shop and above — every connector "
                     f"in the catalogue, included. Your plan is {ent.plan.label}."),
         "code": "plan_limit",
         "resource": "integrations",
+        "plan": ent.plan.code,
+    })
+
+
+def ensure_line_doctor(ent: Entitlement) -> None:
+    """Refuse the Line Doctor report on a tier that does not include it.
+
+    Scoped to the *report* (`GET /analysis/`). The runout clock the operator's
+    lot picker reads lives in the same router and is deliberately NOT gated: it
+    orders a queue rather than delivering an analysis, and refusing it would
+    degrade the operator view — taking something away from the person on the
+    floor to sell something to the person who buys, which is the wrong end of
+    this product to squeeze.
+    """
+    if ent.line_doctor:
+        return
+    raise HTTPException(403, {
+        "message": ("The Line Doctor reads your line and tells you what is "
+                    "wrong with it — it comes with Shop and above. Your plan "
+                    f"is {ent.plan.label}."),
+        "code": "plan_limit",
+        "resource": "line_doctor",
         "plan": ent.plan.code,
     })
 

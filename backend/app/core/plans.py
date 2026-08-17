@@ -1,40 +1,57 @@
 """The price, as data.
 
 One module owns what an account may do — how many stations, whether it can
-talk to an ERP, what it costs. Everything else (the gate, the quotas, the
-billing endpoints, the marketing page, the staff dashboard) reads from here,
-so a price change is one edit rather than a hunt.
+talk to an ERP, whether it gets the Line Doctor, what it costs. Everything else
+(the gate, the quotas, the billing endpoints, the marketing page, the staff
+dashboard) reads from here, so a price change is one edit rather than a hunt.
 
 The model (pricing.md is the argument; this file is the arithmetic):
 
-**One paid plan, metered by station.** $2 per station per month, with a $29
-floor and a $399 ceiling. Linear on purpose: a banded price makes customers
-model 10 stations instead of their actual 14 to stay under a threshold, and
-everything of value here — merge/split detection, the accumulation warning,
-every Line Doctor finding — rests on the graph being a faithful map of the
-floor. A pricing metric that rewards under-modelling is hostile to the product
-working. The ceiling is a deliberate refusal of the enterprise upside, bought
-in exchange for never having a deal large enough to need a salesperson; the
-floor is the smallest number at which an account covers its own cost to serve.
+**Four tiers, two of them published.** Free and Shop carry a number on the
+pricing page and are bought without talking to anyone. Plant and Enterprise
+carry no number at all — they are a conversation, and the page says so. That
+split is the whole design: the bottom stays frictionless so a small shop
+installs a line on a whim and tells people, and the top stays open so a
+200-station plant is not silently sold a $399 subscription because a ceiling
+was written into the product three years earlier.
 
-**A free tier, not a trial.** Up to 3 stations, no card, no expiry — and free
-accounts are never deleted. Someone who drew a three-station cell and came
-back six months later should find it waiting.
+**Free is ≤7 stations.** No card, no expiry, never deleted — someone who drew a
+six-station cell and came back six months later should find it waiting. This is
+the tier the growth loop runs on and it should be raised, never lowered, if
+people park on it.
 
-**Connectors are included. Operators are free.** Charging monthly for a
-connector taxes integration depth, and integration depth is the strongest
-predictor of a floor worth talking to about automation. Charging per operator
-is the competitor anti-pattern this product is positioned against. Neither is
-metered, anywhere, and there is deliberately no code with which to meter them.
+**Shop is 8–30 stations, and it is a base plus a step.** $200 a month covers
+the first 8; every station after that is $45. That is a rising *effective*
+rate — $25 a station at 8, about $40 at 30 — which is deliberate: a small shop
+sees a number it can expense, and a shop with thirty stations is running most
+of a plant on this and pays accordingly. Above 30 stations the answer is not a
+bigger number, it is a phone call, so Shop is **capped** at 30 and the cap
+refusal points at sales.
 
-Two rules this file exists to enforce:
+**Plant and Enterprise are capacity, not price.** They exist here so an
+entitlement resolves and a limit is enforced; what they cost is agreed with a
+person and set on the subscription by staff. No self-serve checkout reaches
+them.
 
-**A plan code is permanent.** It is stored on every `subscriptions` row.
-Codes may be added and aliased; never renamed. The retired banded codes are
-aliased below so a row written before this model resolves to something sane.
+**Connectors are included on every paid tier. Operators are free, always.**
+Charging monthly for a connector taxes integration depth, and integration depth
+is the strongest predictor of a floor worth talking to about automation.
+Charging per operator is the competitor anti-pattern this product is positioned
+against. Neither is metered, anywhere, and there is deliberately no code with
+which to meter them.
 
-**Prices live in cents, as integers.** Money in floats is how a $116.00
-charge becomes $115.99999999999999.
+Three rules this file exists to enforce:
+
+**A plan code is permanent.** It is stored on every `subscriptions` row. Codes
+may be added and aliased; never renamed. The retired codes are aliased below so
+a row written under an older model resolves to something sane.
+
+**Prices live in cents, as integers.** Money in floats is how a $116.00 charge
+becomes $115.99999999999999.
+
+**A capability is a field on Plan, not an `if` somewhere.** `integrations` and
+`line_doctor` are booleans here and are read by `entitlements.ensure_*`. A gate
+written any other way is a gate the pricing page will eventually contradict.
 """
 
 from __future__ import annotations
@@ -47,53 +64,69 @@ from dataclasses import dataclass
 #: answer is to raise it, never to lower it (pricing.md, open questions).
 FREE_STATIONS = 7
 
-PER_STATION_CENTS = 200      # $2 / station / month
-MIN_CENTS = 2_900            # the floor — bites below 15 stations
-CAP_CENTS = 39_900           # the ceiling — bites at 200 stations
+#: Shop: 8–30 stations. A base that covers the first `SHOP_BASE_STATIONS`, then
+#: a flat step per station up to the cap.
+SHOP_BASE_CENTS = 20_000        # $200 / month, covers the first 8 stations
+SHOP_BASE_STATIONS = 8
+SHOP_PER_STATION_CENTS = 4_500  # $45 for each station above the base
+SHOP_STATIONS = 30              # the cap — past this it is a conversation
 
-#: Derived, for display and for building the Stripe tiers. The floor covers
-#: 1–14 stations (14 × $2 = $28 < $29); station 15 is the first metered one.
-#: 199 × $2 = $398 is the last metered count; 200 up is the flat cap.
-MIN_STATIONS = MIN_CENTS // PER_STATION_CENTS + 1        # 15
-CAP_STATIONS = CAP_CENTS // PER_STATION_CENTS + 1        # 200
+#: Sales-assisted capacity. No price here on purpose: what these cost is agreed
+#: with a person, and a number in this file would leak onto the pricing page.
+PLANT_STATIONS = 100
+#: Enterprise is uncapped (None), like self-hosted.
 
 GRACE_DAYS = 7   # read-only window after a failed payment, before pausing
 
 
 def monthly_cents_for(stations: int) -> int:
-    """What a paid account with this many stations pays per month.
+    """What a Shop account with this many stations pays per month.
 
-    The clamp IS the price list: min($29) below 15 stations, $2 × n between,
-    max($399) from 200 up. `station_tiers()` below must describe the same
-    function to Stripe — `tests/test_billing.py` holds the two together.
+    Base plus step: $200 covers the first 8, then $45 each. Below the base the
+    base still applies — "$200 covers up to 8 stations" is the promise, not
+    "$200 is what 8 stations cost". Above the cap the number stops meaning
+    anything, because a line that size cannot be on Shop (`SHOP_STATIONS`), so
+    it clamps rather than inventing a price nobody can buy.
+
+    `station_tiers()` below must describe the same function to Stripe —
+    `tests/test_billing.py` holds the two together.
     """
-    return min(max(stations * PER_STATION_CENTS, MIN_CENTS), CAP_CENTS)
+    billable = min(max(stations, SHOP_BASE_STATIONS), SHOP_STATIONS)
+    return SHOP_BASE_CENTS + (billable - SHOP_BASE_STATIONS) * SHOP_PER_STATION_CENTS
 
 
 def station_tiers() -> list[dict]:
-    """The same price, in Stripe's vocabulary: volume tiers on one price.
+    """The same price, in Stripe's vocabulary: **graduated** tiers.
 
-    Volume mode (the tier containing the total applies to ALL units), not
-    graduated — graduated would charge the floor *plus* $2 for station 15,
-    and the promise is "between the floor and the cap it is just $2 a
-    station". The cap is a flat final tier, so Stripe enforces it rather
-    than us. Cents, like everything else in this file.
+    Graduated, not volume — the opposite of the old flat-rate model. Under
+    graduated, the first 8 units are charged the flat base and only units 9 and
+    up take the per-station rate, which is exactly "a base plus a step". Volume
+    mode would apply one rate to every unit and make station 9 re-price the
+    first eight.
+
+    The final tier is unreachable in practice: the app caps a Shop line at
+    `SHOP_STATIONS`, so Stripe is never asked to price a 31st station. It exists
+    because Stripe requires the last tier to be open-ended, and it continues the
+    step rather than being free — an unreachable tier that bills $0 is how an
+    unnoticed cap bug becomes an unnoticed revenue bug.
     """
     return [
-        {"up_to": MIN_STATIONS - 1, "flat_amount": MIN_CENTS},
-        {"up_to": CAP_STATIONS - 1, "unit_amount": PER_STATION_CENTS},
-        {"up_to": "inf", "flat_amount": CAP_CENTS},
+        {"up_to": SHOP_BASE_STATIONS, "flat_amount": SHOP_BASE_CENTS},
+        {"up_to": SHOP_STATIONS, "unit_amount": SHOP_PER_STATION_CENTS},
+        {"up_to": "inf", "unit_amount": SHOP_PER_STATION_CENTS},
     ]
 
 
 # The on-premise add-on: the same product, running on the customer's own
-# hardware, enforced by a signed licence file rather than by this database.
-# An add-on rather than a tier because it is orthogonal — any size can be
-# on-premise.
+# hardware, enforced by a signed licence file rather than by this database. An
+# add-on rather than a tier because it is orthogonal — any size can be
+# on-premise — and it is **no longer advertised with a price**: it is listed
+# under Enterprise, where the conversation happens. The mechanism stays, because
+# accounts that have it need it to keep working and issued licences depend on it.
 ONPREM_CENTS = 19_900
 ONPREM_PRICE_ENV = "STRIPE_PRICE_ONPREM"
 
-#: The metered station price (a single Stripe price with `station_tiers()`).
+#: The Shop station price (a single Stripe price carrying `station_tiers()`).
 STATION_PRICE_ENV = "STRIPE_PRICE_TAKTLINE"
 
 
@@ -103,17 +136,30 @@ STATION_PRICE_ENV = "STRIPE_PRICE_TAKTLINE"
 class Plan:
     code: str
     label: str
-    #: Station cap. **None means uncapped** — the paid plan is metered, not
-    #: capped, and a large sentinel would show up in the UI as
-    #: "3 of 100000 stations".
+    #: Station cap. **None means uncapped** — a large sentinel would show up in
+    #: the UI as "3 of 100000 stations".
     stations: int | None
     integrations: bool
+    #: The Line Doctor (`GET /analysis/`). The report, not the runout clock the
+    #: operator's lot picker reads — that is queue ordering and stays open on
+    #: every tier, because gating it would break the operator view rather than
+    #: withhold a feature.
+    line_doctor: bool
+    #: Can this tier be bought without talking to anyone? False means the
+    #: pricing page shows "talk to us" and no checkout reaches it.
+    self_serve: bool
     blurb: str
 
 
 FREE = "free"
-PAID = "taktline"
+SHOP = "shop"
+PLANT = "plant"
+ENTERPRISE = "enterprise"
 SANDBOX = "sandbox"
+
+#: The self-serve paid plan. Kept as a name because a lot of code and several
+#: tests ask "is this the plan a checkout produces"; it is Shop now.
+PAID = SHOP
 
 #: Not for sale. Handed out where we do not meter: a customer's own hardware
 #: (their licence file governs) and any deployment with no payment provider
@@ -123,32 +169,52 @@ SELF_HOSTED = "self_hosted"
 PLANS: dict[str, Plan] = {
     SELF_HOSTED: Plan(
         code=SELF_HOSTED, label="Self-hosted", stations=None, integrations=True,
+        line_doctor=True, self_serve=False,
         blurb="Running on your own hardware. Not metered by us.",
     ),
     SANDBOX: Plan(
         code=SANDBOX, label="Sandbox", stations=40, integrations=False,
+        line_doctor=False, self_serve=False,
         blurb="A throwaway line to try the product. Expires after 7 days.",
     ),
     FREE: Plan(
         code=FREE, label="Free", stations=FREE_STATIONS, integrations=False,
+        line_doctor=False, self_serve=True,
         blurb=f"Up to {FREE_STATIONS} stations. No card, no expiry — your line "
               f"is kept for whenever you come back.",
     ),
-    PAID: Plan(
-        code=PAID, label="Taktline", stations=None, integrations=True,
-        blurb="Unlimited stations at $2 each per month — never less than $29, "
-              "never more than $399. Every connector included. Operators are "
-              "free, always.",
+    SHOP: Plan(
+        code=SHOP, label="Shop", stations=SHOP_STATIONS, integrations=True,
+        line_doctor=True, self_serve=True,
+        blurb=f"{SHOP_BASE_STATIONS}–{SHOP_STATIONS} stations. $200 a month "
+              f"covers the first {SHOP_BASE_STATIONS}, then $45 each. Every "
+              f"connector, the Line Doctor, and email support.",
+    ),
+    PLANT: Plan(
+        code=PLANT, label="Plant", stations=PLANT_STATIONS, integrations=True,
+        line_doctor=True, self_serve=False,
+        blurb=f"Up to {PLANT_STATIONS} stations, priced with you. OEE "
+              f"analytics, benchmarking, SSO, API access and an SLA.",
+    ),
+    ENTERPRISE: Plan(
+        code=ENTERPRISE, label="Enterprise", stations=None, integrations=True,
+        line_doctor=True, self_serve=False,
+        blurb="Beyond 100 stations, priced with you. Multi-site rollup, "
+              "on-premise, a named contact and compliance support.",
     ),
 }
 
-#: Codes that no longer exist, mapped to what they now mean. A subscription
-#: row written under the banded model resolves here rather than crashing the
-#: gate; the trial maps to free because that is what replaced it.
+#: Codes that no longer exist, mapped to what they now mean. A subscription row
+#: written under an older model resolves here rather than crashing the gate.
+#:
+#: `taktline` was the single metered plan that Shop replaces, and the retired
+#: bands before it are mapped by the capacity they sold rather than all funnelled
+#: to one tier — `pro_100` bought a hundred stations and should not resolve to a
+#: plan that caps at thirty.
 _LEGACY = {
     "trial": FREE,
-    "basic_50": PAID, "pro_50": PAID, "pro_100": PAID, "plant_250": PAID,
-    "enterprise": PAID,
+    "taktline": SHOP,
+    "basic_50": SHOP, "pro_50": PLANT, "pro_100": PLANT, "plant_250": ENTERPRISE,
 }
 
 

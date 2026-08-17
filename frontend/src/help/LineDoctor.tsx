@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { ImprovementStrip } from '../share/ImprovementStrip'
 import { analysisApi, type Finding, type LineReport } from '../api/analysis.api'
 import { useHelpStore } from './helpStore'
+import { usePlan } from '../auth/usePlan'
 import { useStationsStore } from '../store/stations.store'
 import { color, font, shadow, size } from '../theme/tokens'
 
@@ -31,20 +32,28 @@ export function LineDoctor() {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const tourActive = useHelpStore((s) => s.tourActive)
+  // Tiers below Shop do not get the report. Checked here so the poll is never
+  // *made* rather than made and refused: a 403 carrying a plan refusal raises
+  // the global upgrade dialog, and this component refreshes itself every
+  // minute — an account without the feature would have that dialog appear on
+  // its own, forever, having asked for nothing.
+  const { lineDoctor: entitled } = usePlan()
 
   const load = useCallback(async () => {
+    if (!entitled) return
     setBusy(true)
     try { setReport(await analysisApi.report()) } catch { /* offline: keep the last one */ }
     finally { setBusy(false) }
-  }, [])
+  }, [entitled])
 
   useEffect(() => {
+    if (!entitled) { setReport(null); return }
     load()
     const t = setInterval(load, REFRESH_MS)
     return () => clearInterval(t)
-  }, [load])
+  }, [load, entitled])
 
-  if (!report) return null
+  if (!entitled || !report) return null
 
   const lit = report.readiness === 'ready'
   const alarming = report.counts.critical > 0

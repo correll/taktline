@@ -43,10 +43,19 @@ STATION_LOOKUP = "taktline_station"
 ONPREM_LOOKUP = "taktline_onprem"
 
 
+#: How the tiers are applied. Not cosmetic: the same numbers under `volume`
+#: bill every unit at one rate and under `graduated` bill each unit at its own
+#: tier's rate, so a price that matches on amounts alone can still charge the
+#: wrong thing. Checked because this repo has switched modes once already.
+TIERS_MODE = "graduated"
+
+
 def _tiers_match(price, want: list[dict]) -> bool:
     # Attribute access, not .get(): StripeObject stopped being a dict subclass
     # in stripe v15, and this branch only runs when the lookup key already
     # exists — an account state the sandbox bootstrap never had.
+    if getattr(price, "tiers_mode", None) != TIERS_MODE:
+        return False
     got = getattr(price, "tiers", None) or []
     if len(got) != len(want):
         return False
@@ -70,9 +79,9 @@ def ensure_station_price(stripe) -> tuple[str, bool]:
     if found:
         price = found[0]
         if not _tiers_match(price, want):
-            print(f"  !! {STATION_LOOKUP}: exists with different tiers than "
-                  f"plans.py — create the new price and move the lookup key "
-                  f"by hand, this script will not.")
+            print(f"  !! {STATION_LOOKUP}: exists with different tiers or mode "
+                  f"than plans.py — create the new price and move the lookup "
+                  f"key by hand, this script will not.")
             return price["id"], False
         print(f"  ok {STATION_LOOKUP}: {price['id']} (existing)")
         return price["id"], True
@@ -81,10 +90,16 @@ def ensure_station_price(stripe) -> tuple[str, bool]:
         currency="usd",
         recurring={"interval": "month"},
         billing_scheme="tiered",
-        tiers_mode="volume",         # the tier containing the total applies to
-        tiers=want,                  # ALL units — the clamp, not a staircase
+        # GRADUATED: each tier prices only the units that fall inside it, so the
+        # first 8 stations take the flat base and station 9 onward takes the
+        # step. Volume mode would apply one rate to every unit, which is the
+        # retired flat-rate model — and switching a live price between the two
+        # is impossible (Stripe prices are immutable), which is what the
+        # mismatch refusal above exists to catch.
+        tiers_mode=TIERS_MODE,
+        tiers=want,
         tax_behavior="exclusive",
-        product_data={"name": "Taktline — per station",
+        product_data={"name": "Taktline Shop — per station",
                       "tax_code": SAAS_TAX_CODE,
                       "metadata": {"taktline": "station"}},
         metadata={"taktline": "station"},

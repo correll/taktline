@@ -764,38 +764,54 @@ function Integrations() {
 
 /** The price list, on the page.
  *
- *  One number, a floor, and a ceiling — see pricing.md for the argument. The
- *  ceiling is the best line on the page ("you will never pay more than $399"),
- *  and linear pricing exists so nobody models 10 stations instead of their
- *  actual 14 to duck a band; everything the product computes rests on the
- *  graph being a faithful map of the floor.
+ *  Four tiers, **two of them with a number**. Free and Shop are bought without
+ *  talking to anyone; Plant and Enterprise say "talk to us" and mean it. That
+ *  split is the whole design — see pricing.md for the argument. Publishing a
+ *  number at the top would either be too low for a plant or too high for the
+ *  shop reading the same page, and the only way to be right about both is to
+ *  ask. Keeping the bottom free and frictionless is what keeps the growth loop
+ *  turning: a six-station shop gets a real product for nothing and tells
+ *  people about it.
  *
  *  Prices are duplicated here rather than fetched: this section renders for
  *  signed-out visitors and for crawlers, and a pricing table that arrives after
  *  a round trip is a pricing table search engines never see. `test_billing.py`
- *  pins the same numbers on the server.
+ *  pins the same numbers on the server, and `pricing.test.ts` holds this file
+ *  and `plans.py` together.
  */
 const TIERS = [
   {
     name: 'Free', price: '$0', per: 'up to 7 stations',
     line: 'A real line, not a demo. No card, no expiry — and never deleted.',
-    points: ['The live board and floor plan', 'Cycle time, line cycle time and OEE',
-             'The line doctor', 'Unlimited operators',
+    points: ['The live board and floor plan', 'The operator dashboard, on any tablet',
+             'Cycle time, line cycle time and OEE', 'Unlimited operators',
              'Come back in six months and it is still here'],
   },
   {
-    name: 'Taktline', price: '$2', per: 'per station /month', featured: true,
-    line: 'Unlimited stations. Never less than $29, never more than $399 — however big you get.',
+    name: 'Shop', price: '$200', per: '/month, 8–30 stations', featured: true,
+    line: 'Covers your first 8 stations; each one after that is $45.',
     points: ['Every ERP and shop connector included: Odoo, NetSuite, Shopify, QuickBooks, ShipStation and more',
+             'The Line Doctor — what is wrong with your line, and what to do about it',
              'Unlimited operators — we price the line, not the people',
-             'Scan-to-advance, label printing, reporting API',
-             '50 stations = $100 · 100 = $200 · 200+ = $399, capped'],
+             'Scan-to-advance, label printing, order tracking',
+             'Email support'],
+  },
+  {
+    name: 'Plant', price: 'Talk to us', contact: true, per: '31–100 stations',
+    line: 'A whole plant, priced with you rather than off a page.',
+    points: ['Everything in Shop', 'OEE analytics and benchmarking',
+             'Single sign-on', 'API access', 'A response-time SLA'],
+  },
+  {
+    name: 'Enterprise', price: 'Talk to us', contact: true, per: '100+ stations',
+    line: 'Several sites, or one that cannot leave the building.',
+    points: ['Everything in Plant', 'Multi-site rollup',
+             'On-premise — your hardware, your network, your backups',
+             'A named contact', 'Compliance and security review support'],
   },
 ]
 
 const ADD_ONS = [
-  ['On-premise', '+$199/month',
-   'On your own hardware, at any size. Your database, your network, your backups.'],
   ['New connector build', '$750 once',
    'An ERP or store we have not written yet. Once built it enters the catalogue — free for everyone, including you.'],
   ['Taktline Box', '$2,900 once',
@@ -807,22 +823,21 @@ function Pricing() {
     <section id="pricing" style={{ padding: `clamp(56px, 9vw, 110px) ${size.sp6} 0` }}>
       <div style={{ maxWidth: 1060, margin: '0 auto' }}>
         <h2 style={{ ...h2Style, textAlign: 'center' }}>
-          One price for the whole floor
+          Priced by the floor, never by the person
         </h2>
         <p style={{
           margin: `${size.sp4} auto 0`, maxWidth: 620, textAlign: 'center',
           fontSize: 15.5, lineHeight: 1.7, color: color.textSecondary,
         }}>
-          Priced per line, not per person. Per-seat pricing pushes a shop to buy
-          screens for supervisors only, and a system the operators can&apos;t see stops
-          being a tool and becomes surveillance. Every operator and every tablet is
-          included, always. $2 a station with a $29 minimum, and you will never pay
-          more than $399 a month.
+          Per-seat pricing pushes a shop to buy screens for supervisors only, and a
+          system the operators can&apos;t see stops being a tool and becomes
+          surveillance. Every operator and every tablet is included, on every tier,
+          always. Under eight stations it is free — a real line, not a trial.
         </p>
 
         <div style={{
           margin: `${size.sp8} 0 0`, display: 'grid', gap: size.sp4,
-          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
         }}>
           {TIERS.map((t) => (
             <div key={t.name} style={{
@@ -834,8 +849,15 @@ function Pricing() {
                             textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                 {t.name}
               </div>
-              <div style={{ margin: `${size.sp3} 0 0`, display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                <span style={{ fontSize: 38, fontWeight: 600, color: color.textPrimary }}>{t.price}</span>
+              {/* A price and an invitation are different kinds of thing, so
+                  they are not set at the same size — "Talk to us" in 38px
+                  display type reads as a price with the digits missing. */}
+              <div style={{ margin: `${size.sp3} 0 0`, display: 'flex', alignItems: 'baseline',
+                            gap: 4, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: t.contact ? 24 : 38, fontWeight: 600,
+                               color: t.contact ? color.textSecondary : color.textPrimary }}>
+                  {t.price}
+                </span>
                 <span style={{ fontSize: 15, color: color.textDim }}>{t.per}</span>
               </div>
               <p style={{ margin: `${size.sp3} 0 0`, fontSize: 14, lineHeight: 1.6, color: color.textSecondary }}>
@@ -851,6 +873,14 @@ function Pricing() {
                   </li>
                 ))}
               </ul>
+              {t.contact && (
+                <a href="#contact" style={{
+                  marginTop: 'auto', paddingTop: size.sp4, fontSize: 13.5,
+                  fontWeight: 600, color: color.blueBright, textDecoration: 'none',
+                }}>
+                  Tell us about your floor →
+                </a>
+              )}
             </div>
           ))}
         </div>
@@ -897,8 +927,8 @@ function Pricing() {
           margin: `${size.sp5} auto 0`, maxWidth: 700, textAlign: 'center',
           fontSize: 13.5, lineHeight: 1.7, color: color.textDim,
         }}>
-          The price follows your floor by itself: draw a station, pay $2 more next month;
-          remove one, pay $2 less. Nothing to renegotiate, no band to fall out of.
+          The price follows your floor by itself: draw a station, the next invoice
+          knows; remove one, it knows that too. Nothing to renegotiate mid-month.
           Everything exports at any time in a format you can read, and if you ever stop,
           your line is here waiting if you change your mind.
         </p>
@@ -999,7 +1029,7 @@ function WhyTrustUs() {
         }}>
           {[
             ['Little to lose',
-             'Free for seven stations with no card and no expiry, then $2 a station a month with a $29 minimum. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
+             'Free for seven stations with no card and no expiry, then $200 a month for a shop of up to thirty. Every operator and every tablet is included — there is no seat count, no budget to defend and no procurement to survive.'],
             ['Nothing to install',
              'It runs in a browser on the phones and tablets you already own. No server, no IT project, no shop-floor hardware to buy before you know whether it helps.'],
             ['Nothing to lock you in',
@@ -1130,11 +1160,13 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
         ready-made connectors; anything else goes through one small order API, a CSV
         import, or Zapier and Make.</> },
   { q: 'What does it cost?',
-    a: <>Free for up to 7 stations, with no card and no expiry. Beyond that,
-        <strong> $2 per station a month</strong> — never less than $29, never more than
-        $399, and every ERP connector is included. Every operator and every tablet is
-        included too — we price the line, not the people, because a worker who can see
-        the system improves it. Running it on your own hardware adds $199 a month.</> },
+    a: <>Free for up to 7 stations, with no card and no expiry. A shop of 8–30
+        stations is <strong>$200 a month</strong> covering the first eight, then $45
+        for each one after — and every ERP connector and the Line Doctor are included.
+        Bigger than thirty stations, or running several sites, and we price it with
+        you rather than off a page. Every operator and every tablet is included on
+        every tier — we price the line, not the people, because a worker who can see
+        the system improves it.</> },
   { q: 'What happens if I stop paying?',
     a: <>Your line is waiting for you if you come back. Payment stops, the board goes
         read-only for a week so you can still see and export everything, and then it
@@ -1200,7 +1232,7 @@ function FinalCta() {
           </SignupLink>
         </div>
         <div style={{ marginTop: size.sp3, fontSize: 13, color: color.textDim }}>
-          Free up to 7 stations · $2 a station beyond ($29 minimum), capped at $399 · cancel any time
+          Free up to 7 stations · $200/month for a shop of up to 30 · cancel any time
         </div>
       </div>
     </section>

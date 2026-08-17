@@ -157,14 +157,20 @@ def test_an_ach_payment_still_clearing_keeps_service_on(billing, actor):
 
 
 def test_a_comped_account_is_honoured(billing, actor):
-    """The paid plan code with no Stripe subscription is staff having granted
-    it by hand. It must not read as 'never paid'."""
+    """A paid plan code with no Stripe subscription is staff having granted it
+    by hand. It must not read as 'never paid' — and it keeps its tier's cap,
+    because comping is how Plant and Enterprise are granted at all."""
     a = actor()
     bootstrap_admin(a, "Comped co")
-    _set_plan(a.company, planCode="taktline", stripeStatus=None)
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus=None)
     ent = _entitlement(a.company)
     assert ent.state == entitlements.OK
-    assert ent.station_limit is None
+    assert ent.station_limit == plans.SHOP_STATIONS
+
+    _set_plan(a.company, planCode=plans.ENTERPRISE, stripeStatus=None)
+    ent = _entitlement(a.company)
+    assert ent.state == entitlements.OK
+    assert ent.station_limit is None          # the only uncapped sold tier
 
 
 def test_billing_disabled_meters_nothing(actor):
@@ -289,12 +295,31 @@ def test_the_free_tier_caps_at_the_free_station_count(billing, actor):
            ("plan_limit", "stations", plans.FREE_STATIONS, plans.FREE_STATIONS)
 
 
-def test_the_paid_plan_has_no_station_ceiling(billing, actor):
+def test_shop_lifts_the_free_cap_and_then_has_one_of_its_own(billing, actor):
+    """Shop is a band, not a licence to grow forever. It clears the free cap
+    and stops at its own — which is the moment the product is supposed to say
+    'talk to us' rather than quietly bill a plant at shop rates."""
     a = actor()
     bootstrap_admin(a, "Metered co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active")
-    for i in range(plans.FREE_STATIONS + 2):
-        assert _station(a, f"S{i}").status_code == 201
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active")
+
+    for i in range(plans.SHOP_STATIONS):
+        assert _station(a, f"S{i}").status_code == 201, i
+
+    over = _station(a, "one too many")
+    assert over.status_code == 403
+    detail = over.json()["detail"]
+    assert detail["code"] == "plan_limit" and detail["resource"] == "stations"
+    assert detail["limit"] == plans.SHOP_STATIONS
+
+
+def test_enterprise_is_the_uncapped_one(billing, actor):
+    a = actor()
+    bootstrap_admin(a, "Big co")
+    _set_plan(a.company, planCode=plans.ENTERPRISE, stripeStatus="active")
+    assert _entitlement(a.company).station_limit is None
+    for i in range(plans.SHOP_STATIONS + 3):
+        assert _station(a, f"E{i}").status_code == 201, i
 
 
 def test_a_line_file_cannot_walk_around_the_free_cap(billing, actor):
@@ -311,6 +336,45 @@ def test_a_line_file_cannot_walk_around_the_free_cap(billing, actor):
     r = a.req("POST", "/map-io/import", doc)
     assert r.status_code == 403, r.text
     assert r.json()["detail"]["code"] == "plan_limit"
+
+
+# ─── The Line Doctor ─────────────────────────────────────────────────────────
+
+def test_the_line_doctor_needs_shop_and_the_runout_clock_does_not(billing, actor):
+    """The gate is on the *report*, not on the router.
+
+    `/analysis/runout/{station}` lives in the same file and orders the operator's
+    lot queue. Gating it would take something away from the person on the floor
+    in order to sell something to the person who buys — the wrong end of this
+    product to squeeze — so it stays open on every tier, and this test fails if
+    a future dependency is added at router level instead of per endpoint."""
+    a = actor()
+    bootstrap_admin(a, "Doctor co")
+    station = _station(a, "Cutting").json()["_id"]
+
+    refused = a.req("GET", "/analysis/")
+    assert refused.status_code == 403
+    detail = refused.json()["detail"]
+    assert detail["code"] == "plan_limit" and detail["resource"] == "line_doctor"
+
+    assert a.req("GET", f"/analysis/runout/{station}").status_code == 200
+
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active")
+    assert a.req("GET", "/analysis/").status_code == 200
+
+
+def test_every_paid_tier_gets_the_line_doctor(billing, actor):
+    """It is a Shop-and-above feature, so 'above' must actually include the
+    tiers above — a capability table that only works for the tier it was
+    written against is the bug this catches."""
+    a = actor()
+    bootstrap_admin(a, "Tiers co")
+    for code in (plans.SHOP, plans.PLANT, plans.ENTERPRISE):
+        _set_plan(a.company, planCode=code, stripeStatus="active")
+        assert a.req("GET", "/analysis/").status_code == 200, code
+    for code in (plans.FREE,):
+        _set_plan(a.company, planCode=code, stripeStatus=None)
+        assert a.req("GET", "/analysis/").status_code == 403, code
 
 
 # ─── Integrations ────────────────────────────────────────────────────────────

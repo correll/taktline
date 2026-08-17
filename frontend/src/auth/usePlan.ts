@@ -29,6 +29,8 @@ export function usePlan() {
     isFree: company?.plan === 'free',
     isSandbox: company?.plan === 'sandbox',
     integrations: company?.integrations ?? false,
+    /** The Line Doctor report. False on Free and sandbox. */
+    lineDoctor: company?.lineDoctor ?? false,
     stationLimit: limit,
     stationsUsed: used,
     stationsRemaining: remaining,

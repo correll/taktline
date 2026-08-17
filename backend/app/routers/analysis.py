@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core import analysis as engine
-from ..core import line_snapshot, runout as runout_engine
+from ..core import entitlements, line_snapshot, runout as runout_engine
 from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import (
     Card as CardRow, LotTemplate as LotTemplateRow, MapSettings as MapSettingsRow,
@@ -81,9 +81,12 @@ async def line_report(ctx: CompanyContext = Depends(get_active_company),
                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
     """What is wrong with this line, and what to do about it.
 
-    Readable by any member: an operator being able to see that their bench is
-    the constraint is the point of the thing, not a risk.
+    Readable by any member of an entitled company: an operator being able to see
+    that their bench is the constraint is the point of the thing, not a risk.
+    The gate is per *plan*, never per role.
     """
+    ent = ctx.entitlement or await entitlements.resolve(session, ctx.company_id)
+    entitlements.ensure_line_doctor(ent)
     snap = await _snapshot(session, ctx.company_id)
     report = engine.analyse(snap)
     return ReportOut(

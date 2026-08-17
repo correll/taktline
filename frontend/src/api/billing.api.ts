@@ -3,14 +3,17 @@ import { client } from './client'
 // `client` unwraps `response.data` in an interceptor, so these return the body
 // directly — no `.then(r => r.data)`.
 
-/** The whole price list — one metered plan, so it is arithmetic, not tiers. */
+/** The **published** price list: Free and Shop, the two tiers bought without
+ *  talking to anyone. Plant and Enterprise carry no number by design and so
+ *  have no field here — see `PricingOut` in `routers/billing.py`. */
 export interface Pricing {
   freeStations: number
-  perStationCents: number
-  minimumCents: number
-  capCents: number
-  minStations: number
-  capStations: number
+  /** Shop: a base covering the first `shopBaseStations`, then a step each. */
+  shopBaseCents: number
+  shopBaseStations: number
+  shopPerStationCents: number
+  /** Past this, Shop stops and the answer is a conversation. */
+  shopStations: number
   onpremCents: number
 }
 
@@ -52,11 +55,14 @@ export const billingApi = {
     client.post(`/billing/${companyId}/on-premise`, { enabled }),
 }
 
-/** The clamp, mirrored from `plans.monthly_cents_for` for instant display.
- *  The server's number is authoritative; this exists so the price updates as
- *  the reader thinks about station counts, without a round trip each time. */
+/** Shop's base-plus-step, mirrored from `plans.monthly_cents_for` for instant
+ *  display. The server's number is authoritative; this exists so the price
+ *  updates as the reader thinks about station counts, without a round trip
+ *  each time. Clamped at the cap for the same reason the server clamps: past
+ *  it there is no Shop price to quote. */
 export function monthlyCentsFor(stations: number, p: Pricing): number {
-  return Math.min(Math.max(stations * p.perStationCents, p.minimumCents), p.capCents)
+  const billable = Math.min(Math.max(stations, p.shopBaseStations), p.shopStations)
+  return p.shopBaseCents + (billable - p.shopBaseStations) * p.shopPerStationCents
 }
 
 export function money(cents: number): string {

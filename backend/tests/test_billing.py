@@ -3,8 +3,9 @@
 Stripe is stubbed. That is not a shortcut — the things worth pinning here are
 *our* decisions, and every one of them is a way to lose money or a customer:
 
-  - the clamp ($29 floor, $2 a station, $399 cap) and the Stripe tiers must be
-    the same function, or the invoice disagrees with the pricing page,
+  - the Shop price ($200 covering the first 8 stations, then $45 each, capped
+    at 30) and the Stripe tiers must be the same function, or the invoice
+    disagrees with the pricing page,
   - the station count must be reported when the floor changes, without ever
     blocking the floor change on Stripe being up,
   - a webhook redelivered twice must do the work once,
@@ -141,33 +142,62 @@ def _webhook(_unused, event: dict, monkeypatch):
 
 # ─── The price itself ────────────────────────────────────────────────────────
 
-def test_the_clamp_is_the_price_list():
-    """The published table, verbatim: the floor bites below 15, the cap at
-    200, and in between it is just $2 a station."""
-    for stations, cents in [(1, 2900), (3, 2900), (14, 2900),   # floor
-                            (15, 3000), (50, 10000), (100, 20000),
-                            (199, 39800),                        # last metered
-                            (200, 39900), (250, 39900), (100_000, 39900)]:
+def test_the_base_and_step_are_the_price_list():
+    """The published Shop table, verbatim: $200 covers the first 8 stations,
+    then $45 each, to a cap of 30.
+
+    The two endpoints are the ones on the pricing page, so they are spelled out
+    rather than derived: 8 stations is $200 (an effective $25 each) and 30 is
+    $1,190 (an effective $39.67). Above the cap the number stops meaning
+    anything, because a line that size cannot be on Shop."""
+    for stations, cents in [(1, 20_000), (7, 20_000), (8, 20_000),   # the base
+                            (9, 24_500), (20, 74_000),
+                            (30, 119_000),                            # the cap
+                            (31, 119_000), (500, 119_000)]:
         assert plans.monthly_cents_for(stations) == cents, stations
 
+    # The two numbers a customer reads off the page, as rates.
+    assert plans.monthly_cents_for(8) / 8 == 2_500            # $25.00 a station
+    assert round(plans.monthly_cents_for(30) / 30) == 3_967   # ~$39.67 a station
 
-def _stripe_volume_price(tiers, quantity):
-    """What Stripe's volume mode charges: the tier containing the total
-    applies to all units."""
+
+def _stripe_graduated_price(tiers, quantity):
+    """What Stripe's graduated mode charges: each tier prices only the units
+    that fall inside it, and a flat amount applies once if the tier is reached
+    at all."""
+    total, consumed = 0, 0
     for tier in tiers:
-        if tier["up_to"] == "inf" or quantity <= tier["up_to"]:
-            return (tier.get("flat_amount", 0)
-                    + tier.get("unit_amount", 0) * quantity)
-    raise AssertionError("no tier matched")
+        if consumed >= quantity:
+            break
+        ceiling = quantity if tier["up_to"] == "inf" else min(tier["up_to"], quantity)
+        units = ceiling - consumed
+        if units <= 0:
+            continue
+        total += tier.get("flat_amount", 0) + tier.get("unit_amount", 0) * units
+        consumed = ceiling
+    return total
 
 
-def test_the_stripe_tiers_and_the_clamp_are_the_same_function():
+def test_the_stripe_tiers_and_the_price_list_are_the_same_function():
     """The one that costs money if it drifts: plans.py computes what the UI
     shows and Stripe computes what the card is charged. They must be equal at
-    every station count, including both boundaries."""
+    every station count a Shop account can actually reach.
+
+    Only up to the cap: past it the app refuses the station, so plans.py clamps
+    while Stripe would keep stepping. Asserting equality there would be
+    asserting a number nobody can be billed."""
     tiers = plans.station_tiers()
-    for n in range(1, 301):
-        assert _stripe_volume_price(tiers, n) == plans.monthly_cents_for(n), n
+    for n in range(1, plans.SHOP_STATIONS + 1):
+        assert _stripe_graduated_price(tiers, n) == plans.monthly_cents_for(n), n
+
+
+def test_the_open_ended_tier_is_never_free():
+    """Stripe requires a final open-ended tier and the app caps below it, so it
+    is unreachable — which is exactly why it must still bill. An unreachable
+    tier priced at zero is how a cap bug becomes a revenue bug in silence."""
+    last = plans.station_tiers()[-1]
+    assert last["up_to"] == "inf"
+    assert last.get("unit_amount") or last.get("flat_amount")
 
 
 def test_the_pricing_endpoint_reports_the_numbers(stripe, actor):
@@ -175,10 +205,22 @@ def test_the_pricing_endpoint_reports_the_numbers(stripe, actor):
     bootstrap_admin(a, "Pricing co")
     body = a.req("GET", "/billing/plans").json()
     assert body["freeStations"] == plans.FREE_STATIONS
-    assert body["perStationCents"] == 200
-    assert body["minimumCents"] == 2900 and body["capCents"] == 39900
-    assert body["minStations"] == 15 and body["capStations"] == 200
+    assert body["shopBaseCents"] == 20_000
+    assert body["shopBaseStations"] == 8
+    assert body["shopPerStationCents"] == 4_500
+    assert body["shopStations"] == 30
     assert body["onpremCents"] == 19900
+
+
+def test_the_pricing_endpoint_publishes_no_number_for_the_top_two(stripe, actor):
+    """Plant and Enterprise are a conversation. A field carrying a price would
+    sooner or later be rendered, so there is no such field — and this fails if
+    anyone adds one."""
+    a = actor()
+    bootstrap_admin(a, "Quiet co")
+    body = a.req("GET", "/billing/plans").json()
+    blob = str(body).lower()
+    assert "plant" not in blob and "enterprise" not in blob, body
 
 
 def test_line_items_carry_the_station_count_as_quantity(stripe):
@@ -201,12 +243,12 @@ def test_subscription_reports_state_usage_and_price(stripe, actor):
     assert body["monthlyCents"] == 0
     assert body["billingEnabled"] is True
 
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_u", stripeCustomerId="cus_u")
     body = a.req("GET", f"/billing/{a.company}/subscription").json()
-    assert body["plan"] == "taktline"
-    assert body["usage"] == {"stations": 1, "stationLimit": None}
-    assert body["monthlyCents"] == 2900          # one station = the floor
+    assert body["plan"] == "shop"
+    assert body["usage"] == {"stations": 1, "stationLimit": plans.SHOP_STATIONS}
+    assert body["monthlyCents"] == 20_000        # the base covers the first 8
 
 
 def test_billing_is_reachable_from_a_paused_account(stripe, actor):
@@ -215,7 +257,7 @@ def test_billing_is_reachable_from_a_paused_account(stripe, actor):
     again through checkout; one merely past_due fixes its card in the portal."""
     a = actor()
     bootstrap_admin(a, "Locked co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="canceled",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="canceled",
               stripeCustomerId="cus_l",
               graceEndsAt=utcnow() - timedelta(days=1))
 
@@ -257,7 +299,7 @@ def test_a_live_subscription_cannot_buy_a_second_one(stripe, actor):
     a = actor()
     bootstrap_admin(a, "Double co")
     for status in ("active", "incomplete", "past_due"):
-        _set_plan(a.company, planCode="taktline", stripeStatus=status,
+        _set_plan(a.company, planCode=plans.SHOP, stripeStatus=status,
                   stripeSubscriptionId="sub_d", stripeCustomerId="cus_d")
         assert a.req("POST", f"/billing/{a.company}/checkout",
                      {}).status_code == 409, status
@@ -268,7 +310,7 @@ def test_a_live_subscription_cannot_buy_a_second_one(stripe, actor):
 def test_creating_and_deleting_a_station_reports_the_count(stripe, actor):
     a = actor()
     bootstrap_admin(a, "Metered co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_m", stripeCustomerId="cus_m")
     stripe.subscription("sub_m", stations=1)
 
@@ -296,7 +338,7 @@ def test_stripe_being_down_never_blocks_the_floor(stripe, actor, monkeypatch):
     change."""
     a = actor()
     bootstrap_admin(a, "Resilient co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_r", stripeCustomerId="cus_r")
 
     def boom(sub_id, quantity):
@@ -311,7 +353,7 @@ def test_stripe_being_down_never_blocks_the_floor(stripe, actor, monkeypatch):
 def test_toggling_on_premise(stripe, actor):
     a = actor()
     bootstrap_admin(a, "Onprem co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_o", stripeCustomerId="cus_o")
     stripe.subscription("sub_o", stations=5)
 
@@ -350,7 +392,7 @@ def test_a_redelivered_webhook_does_the_work_once(stripe, actor, monkeypatch):
 
     assert first.status_code == 200 and first.json().get("duplicate") is None
     assert second.json()["duplicate"] is True
-    assert _read_plan(a.company).planCode == "taktline"
+    assert _read_plan(a.company).planCode == plans.PAID
 
 
 def test_verify_returns_plain_dicts(stripe):
@@ -411,7 +453,7 @@ def test_an_errored_delivery_can_be_redelivered(stripe, actor, monkeypatch):
     assert second.status_code == 200
     assert second.json().get("duplicate") is None
     assert second.json().get("error") is None
-    assert _read_plan(a.company).planCode == "taktline"
+    assert _read_plan(a.company).planCode == plans.PAID
 
 
 def test_the_webhook_reads_stripe_rather_than_trusting_the_payload(stripe, actor,
@@ -432,14 +474,14 @@ def test_the_webhook_reads_stripe_rather_than_trusting_the_payload(stripe, actor
                     "metadata": {"onPremise": "false"}}, "evt_stale")
     _webhook(a, stale, monkeypatch)
     row = _read_plan(a.company)
-    assert row.planCode == "taktline" and row.onPremise is True
+    assert row.planCode == plans.PAID and row.onPremise is True
 
 
 def test_a_failed_invoice_starts_the_grace_clock_and_paying_clears_it(stripe, actor,
                                                                       monkeypatch):
     a = actor()
     bootstrap_admin(a, "Dunning co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_11", stripeCustomerId="cus_11")
     stripe.subscription("sub_11", status="past_due")
 
@@ -464,7 +506,7 @@ def test_a_dispute_is_treated_as_a_failed_payment(stripe, actor, monkeypatch):
     while it resolves is service given away."""
     a = actor()
     bootstrap_admin(a, "Dispute co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeCustomerId="cus_12")
     _webhook(a, _event("charge.dispute.created", {"customer": "cus_12"},
                        "evt_dispute"), monkeypatch)
@@ -479,7 +521,7 @@ def test_a_cancelled_small_line_simply_becomes_free(stripe, actor, monkeypatch):
     a = actor()
     bootstrap_admin(a, "Small co")
     a.req("POST", "/stations/", {**STATION, "name": "One"})
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_14", stripeCustomerId="cus_14")
     refunded = []
     monkeypatch.setattr(billing_stripe, "refund_credit_balance", refunded.append)
@@ -499,7 +541,7 @@ def test_a_cancelled_big_line_pauses_after_grace_and_is_never_deleted(stripe, ac
                                                                       monkeypatch):
     a = actor()
     bootstrap_admin(a, "Big co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_15", stripeCustomerId="cus_15")
     stripe.subscription("sub_15", stations=1)
     for i in range(plans.FREE_STATIONS + 1):        # one more than free covers
@@ -513,7 +555,7 @@ def test_a_cancelled_big_line_pauses_after_grace_and_is_never_deleted(stripe, ac
              monkeypatch)
 
     row = _read_plan(a.company)
-    assert row.planCode == "taktline" and row.stripeStatus == "canceled"
+    assert row.planCode == plans.PAID and row.stripeStatus == "canceled"
     assert row.graceEndsAt is not None
     assert refunded == ["cus_15"]
     assert entitlements._derive(a.company, row).state == entitlements.READ_ONLY
@@ -748,7 +790,7 @@ def test_deleting_a_company_cancels_its_subscription(stripe, actor, monkeypatch)
     being billed for an account that no longer exists."""
     a = actor()
     bootstrap_admin(a, "Paying doomed co")
-    _set_plan(a.company, planCode="taktline", stripeStatus="active",
+    _set_plan(a.company, planCode=plans.SHOP, stripeStatus="active",
               stripeSubscriptionId="sub_del", stripeCustomerId="cus_del")
 
     cancelled = []

@@ -43,6 +43,10 @@ export interface CompanyMembership {
   planState: 'ok' | 'read_only' | 'locked'
   stationLimit: number | null
   integrations: boolean
+  /** Whether the Line Doctor report is included on this tier. Carried so the
+   *  control can render as unavailable rather than asking and being refused —
+   *  a refusal on a background poll pops the plan dialog unprompted. */
+  lineDoctor: boolean
 }
 
 export interface MeResponse {

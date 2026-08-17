@@ -342,7 +342,7 @@ The launch sequence, in order:
 5. **Set the four variables** in Render (`STRIPE_SECRET_KEY`,
    `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TAKTLINE`, `STRIPE_PRICE_ONPREM`)
    and let the service restart. Billing is now live.
-6. **Spend $29 on yourself.** Create a company, add a station, subscribe with
+6. **Spend $200 on yourself.** Create a company, add a station, subscribe with
    a real card, watch the webhook flip the row to `active`, open the portal,
    cancel, and confirm the refund-and-pause path. Ten minutes, and it is the
    only test that exercises Stripe's half of the contract. (A dry run of the

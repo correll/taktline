@@ -42,8 +42,12 @@ export function PlanBanner() {
     text = 'This account is read-only — you can still see and export everything. '
          + 'After the grace week it will be completely paused.'
   } else if (plan.atStationLimit) {
+    // No price here on purpose. This banner is in the app shell, which is not
+    // covered by pricing.test.ts, so a number written here goes stale silently
+    // the next time the price moves — and it did, once. The billing page owns
+    // the arithmetic; this says only that a ceiling was reached.
     text = plan.isFree
-      ? `The free tier covers ${plan.stationLimit} stations — the next one is $2/month each.`
+      ? `The free tier covers ${plan.stationLimit} stations. A paid plan carries a bigger floor.`
       : `You are at your plan's limit of ${plan.stationLimit} stations.`
   }
 
@@ -99,8 +103,10 @@ export function PlanRefusalDialog() {
 
   const heading =
     refusal.code === 'plan_limit' && refusal.resource === 'integrations'
-      ? 'Integrations come with the paid plan'
-      : refusal.code === 'plan_limit' ? 'The free tier stops here'
+      ? 'Integrations come with Shop'
+      : refusal.code === 'plan_limit' && refusal.resource === 'line_doctor'
+        ? 'The Line Doctor comes with Shop'
+      : refusal.code === 'plan_limit' ? 'Your plan stops here'
       : refusal.code === 'read_only' ? 'This account is read-only'
       : 'This account is paused'
 

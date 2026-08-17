@@ -33,16 +33,21 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 # ─── Shapes ──────────────────────────────────────────────────────────────────
 
 class PricingOut(BaseModel):
-    """The whole price list — one metered plan, so this is arithmetic, not a
-    table of tiers. The client renders from these numbers rather than from
-    prose, and the same numbers build the Stripe price (`plans.station_tiers`)."""
+    """The published price list — Free and Shop, the two tiers a customer can
+    buy without talking to anyone.
+
+    Plant and Enterprise are deliberately **not** here. They have no number, and
+    a field carrying one would sooner or later be rendered. What a client needs
+    to know about them is that they exist and where the boundary is, which is
+    `shopStations`: past that, the answer is a conversation.
+
+    The same numbers build the Stripe price (`plans.station_tiers`)."""
     freeStations: int
-    perStationCents: int
-    minimumCents: int
-    capCents: int
-    #: Where the floor stops and the cap starts biting, for display.
-    minStations: int
-    capStations: int
+    #: Shop: a base covering the first `shopBaseStations`, then a step each.
+    shopBaseCents: int
+    shopBaseStations: int
+    shopPerStationCents: int
+    shopStations: int
     onpremCents: int
 
 
@@ -60,7 +65,8 @@ class SubscriptionOut(BaseModel):
     stationLimit: Optional[int] = None
     integrations: bool
     #: What this account costs at its current station count — the number the
-    #: billing tab shows next to "N stations × $2".
+    #: billing tab shows beside "your line today". Zero on the tiers that were
+    #: priced in a conversation rather than by a formula.
     monthlyCents: int
     currentPeriodEnd: Optional[str] = None
     graceEndsAt: Optional[str] = None
@@ -114,9 +120,10 @@ async def pricing():
     """The price list. Public to any signed-in user — it is on the website too."""
     return PricingOut(
         freeStations=plans.FREE_STATIONS,
-        perStationCents=plans.PER_STATION_CENTS,
-        minimumCents=plans.MIN_CENTS, capCents=plans.CAP_CENTS,
-        minStations=plans.MIN_STATIONS, capStations=plans.CAP_STATIONS,
+        shopBaseCents=plans.SHOP_BASE_CENTS,
+        shopBaseStations=plans.SHOP_BASE_STATIONS,
+        shopPerStationCents=plans.SHOP_PER_STATION_CENTS,
+        shopStations=plans.SHOP_STATIONS,
         onpremCents=plans.ONPREM_CENTS,
     )
 
@@ -133,8 +140,11 @@ async def get_subscription(company_id: str, user: User = Depends(get_current_use
     ent = await entitlements.resolve(session, company_uuid, user=user)
     used = await _station_count(session, company_uuid)
 
-    # What this account costs: the metered clamp at its current count, plus
-    # the add-on. Free (and sandbox, self-hosted, comped) accounts cost 0.
+    # What this account costs: the Shop base-plus-step at its current count,
+    # plus the add-on. Zero for free, sandbox, self-hosted and comped accounts —
+    # and zero for Plant and Enterprise too, whose price was agreed with a
+    # person and does not live in this codebase. Showing 0 there is honest;
+    # inventing a number from a formula they did not buy would not be.
     monthly = 0
     if ent.plan.code == plans.PAID and row.stripeSubscriptionId:
         monthly = plans.monthly_cents_for(used)
@@ -156,10 +166,12 @@ async def get_subscription(company_id: str, user: User = Depends(get_current_use
 
 # ─── Buying and changing ─────────────────────────────────────────────────────
 #
-# There is nothing to choose. The paid plan is the station count the company
-# already has, at $2 each within the floor and the cap — so checkout carries a
-# quantity, not a plan code, and there is no downgrade to refuse: a shop that
-# removes stations simply pays less next period.
+# There is nothing to choose. Shop is the only tier with a price object, and
+# what it costs is the station count the company already has — so checkout
+# carries a quantity, not a plan code, and there is no downgrade to refuse: a
+# shop that removes stations simply pays less next period. Plant and Enterprise
+# are not reachable from here at all; they are set on the subscription by staff
+# after a conversation, which is what `Plan.self_serve` records.
 
 @router.post("/{company_id}/checkout")
 async def start_checkout(company_id: str, body: CheckoutIn, request: Request,
@@ -241,10 +253,20 @@ def _apply_subscription(row: Subscription, obj) -> None:
     from datetime import datetime, timezone
 
     _stations, on_premise = billing_stripe.shape_of_subscription(obj)
-    # A live Stripe subscription IS the paid plan; there is nothing else it
-    # could be. The station quantity is not copied anywhere — the stations
-    # table is the truth and Stripe's quantity is the report of it.
-    row.planCode = plans.PAID
+    # A live Stripe subscription from *our checkout* is the self-serve paid
+    # plan, and there is nothing else it could be — Shop is the only tier with
+    # a price object.
+    #
+    # But a Plant or Enterprise account also has a real Stripe subscription,
+    # created by hand against a negotiated price. Overwriting its plan code
+    # here would quietly demote a hundred-station plant to a thirty-station cap
+    # the next time any subscription webhook arrived, and the first symptom
+    # would be a customer unable to add a station. So a sales-assisted tier
+    # keeps whatever staff set; only the billing state is refreshed.
+    if plans.get(row.planCode).self_serve:
+        row.planCode = plans.PAID
+    # The station quantity is not copied anywhere — the stations table is the
+    # truth and Stripe's quantity is the report of it.
     row.onPremise = on_premise
     row.stripeSubscriptionId = obj["id"]
     row.stripeStatus = obj["status"]
@@ -389,7 +411,7 @@ async def _handle(session: AsyncSession, event) -> None:
 
     if kind == "customer.subscription.deleted":
         # Cancelled. They keep the data. A line that still fits the free tier
-        # simply becomes free — a three-station shop that stops paying is
+        # simply becomes free — a six-station shop that stops paying is
         # exactly who the free tier is for. A bigger line keeps its grace
         # window and then pauses; nothing is deleted either way.
         stations = (await session.execute(

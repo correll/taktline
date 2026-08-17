@@ -100,9 +100,10 @@ export default function BillingTab() {
             </button>
             <p style={note}>
               Handled by Stripe. Card and US bank transfer (ACH) are both accepted.
-              The price follows your floor by itself: add a station and next
-              month costs {money(pricing.perStationCents)} more, remove one and
-              it costs {money(pricing.perStationCents)} less. Nothing to renegotiate.
+              The price follows your floor by itself: past your first{' '}
+              {pricing.shopBaseStations} stations, adding one costs{' '}
+              {money(pricing.shopPerStationCents)} more next month and removing one
+              costs that much less. Nothing to renegotiate.
             </p>
           </>
         ) : (
@@ -320,22 +321,30 @@ function CurrentPlan({ sub, pricing }: { sub: Subscription; pricing: Pricing }) 
       <div style={{ marginTop: size.sp3, fontSize: 12.5, color: color.textDim }}>
         {sub.integrations
           ? 'Every ERP and shop-system connector is included.'
-          : `Integrations come with the paid plan — every connector included, ` +
-            `unlimited stations at ${money(pricing.perStationCents)} each.`}
+          : `Integrations and the Line Doctor come with Shop — every connector ` +
+            `included, from ${money(pricing.shopBaseCents)} a month.`}
       </div>
     </section>
   )
 }
 
-/** The whole model, in one strip the reader can check with a pencil. */
+/** The published model, in one strip the reader can check with a pencil.
+ *
+ *  Only Free and Shop appear, because only those two have a number. The last
+ *  row is where Shop stops — said plainly, because a customer growing toward
+ *  thirty stations should find out from this page rather than from a refusal
+ *  when they draw the thirty-first. */
 function PriceExplainer({ pricing, stations }: { pricing: Pricing; stations: number }) {
   const rows: Array<[string, string]> = [
-    [`Up to ${pricing.freeStations} stations`, 'free, forever'],
-    [`${money(pricing.perStationCents)} per station / month`,
-     `never less than ${money(pricing.minimumCents)}`],
-    [`From ${pricing.capStations} stations`,
-     `capped at ${money(pricing.capCents)} — you will never pay more`],
+    [`Up to ${pricing.freeStations} stations`, 'free — no card, no expiry'],
+    [`${money(pricing.shopBaseCents)} / month`,
+     `covers your first ${pricing.shopBaseStations} stations`],
+    [`Each station after that`,
+     `${money(pricing.shopPerStationCents)} / month, up to ${pricing.shopStations}`],
+    [`Past ${pricing.shopStations} stations`,
+     'we price it with you — talk to us'],
   ]
+  const overShop = stations > pricing.shopStations
   return (
     <div style={{
       display: 'grid', gap: 6, margin: `0 0 ${size.sp2}`,
@@ -349,8 +358,9 @@ function PriceExplainer({ pricing, stations }: { pricing: Pricing; stations: num
       ))}
       {stations > 0 && (
         <div style={{ marginTop: 4, fontFamily: font.mono, fontSize: 12.5 }}>
-          Your line today: {stations} × {money(pricing.perStationCents)} →{' '}
-          {money(monthlyCentsFor(stations, pricing))}/month
+          {overShop
+            ? `Your line today: ${stations} stations — bigger than Shop covers.`
+            : `Your line today: ${stations} stations → ${money(monthlyCentsFor(stations, pricing))}/month`}
         </div>
       )}
     </div>

@@ -69,6 +69,7 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
             id=str(c.id), name=c.name, slug=c.slug, role=m.role, timezone=c.timezone,
             plan=ent.plan.code, planLabel=ent.plan.label, planState=ent.state,
             stationLimit=ent.station_limit, integrations=ent.integrations,
+            lineDoctor=ent.line_doctor,
         ))
 
     # Platform staff: active impersonation grants appear as extra super_admin
@@ -93,7 +94,7 @@ async def _me_response(session: AsyncSession, user: User) -> MeResponse:
                     impersonationExpiresAt=g.expiresAt,
                     plan=ent.plan.code, planLabel=ent.plan.label,
                     planState=ent.state, stationLimit=ent.station_limit,
-                    integrations=ent.integrations,
+                    integrations=ent.integrations, lineDoctor=ent.line_doctor,
                 ))
     return MeResponse(user=_to_user_public(user), companies=companies)
 

@@ -30,6 +30,7 @@ export default function McpPanel() {
   const [busy, setBusy] = useState(false)
   const [err, setErr]   = useState('')
   const [copied, setCopied] = useState(false)
+  const [copiedCli, setCopiedCli] = useState(false)
 
   useEffect(() => {
     fetch().catch(() => {})
@@ -38,6 +39,9 @@ export default function McpPanel() {
 
   const on = settings.mcpEnabled
   const url = serverUrl()
+  const isLocal = url.startsWith('http://')
+  const cliCommand =
+    `claude mcp add --transport http taktline ${url} --header "Authorization: Bearer <your key>"`
   // Only a live key with the scope can actually connect, so the panel says
   // whether one exists rather than leaving the admin to switch the toggle on
   // and wonder why nothing happens.
@@ -97,6 +101,58 @@ export default function McpPanel() {
             Add it to your client as a remote MCP server, authenticating with{' '}
             <span style={mono}>Authorization: Bearer &lt;your key&gt;</span>.
           </div>
+
+          <div style={{ fontSize: 11, color: color.textDim, textTransform: 'uppercase',
+                        letterSpacing: '0.06em', margin: `${size.sp4} 0 ${size.sp2}` }}>
+            Connecting a client
+          </div>
+          <p style={{ fontSize: 12.5, color: color.textSecondary, lineHeight: 1.65, margin: 0 }}>
+            <b style={{ color: color.textPrimary }}>Claude, and most other clients</b> — paste the
+            URL above into the custom-connector dialog and give it your key.
+          </p>
+          <p style={{ fontSize: 12.5, color: color.textSecondary, lineHeight: 1.65,
+                      margin: `${size.sp2} 0 ${size.sp1}` }}>
+            <b style={{ color: color.textPrimary }}>Claude Code</b>, from a terminal:
+          </p>
+          <Row>
+            <code style={{ flex: 1, ...mono, color: color.textSecondary, wordBreak: 'break-all' }}>
+              {cliCommand}
+            </code>
+            <button
+              onClick={() => { navigator.clipboard?.writeText(cliCommand); setCopiedCli(true) }}
+              style={{ background: 'transparent', border: `1px solid ${color.border}`,
+                       color: color.textSecondary, borderRadius: size.radius,
+                       padding: `${size.sp1} ${size.sp3}`, fontSize: 12, cursor: 'pointer',
+                       flexShrink: 0 }}>
+              {copiedCli ? 'Copied' : 'Copy'}
+            </button>
+          </Row>
+
+          {/* Only when it applies. A connector dialog refuses a non-HTTPS URL
+              before it sends anything, which reads as "your server is broken"
+              — it is not, and the way round it is a one-line bridge. On a
+              deployed instance this whole paragraph is untrue, so it is absent
+              rather than hedged. */}
+          {isLocal && (
+            <div style={{ marginTop: size.sp3, padding: size.sp3, borderRadius: size.radius,
+                          background: `${color.statusWarning}12`,
+                          border: `1px solid ${color.statusWarning}35` }}>
+              <div style={{ fontSize: 12, color: color.textPrimary, lineHeight: 1.6 }}>
+                This address is <span style={mono}>http://</span>, so the connector dialogs will
+                refuse it — they require HTTPS, and the web client also needs a public host it can
+                actually reach. Claude Code (above) has no such rule. For the Claude desktop app,
+                bridge it as a local command instead:
+              </div>
+              <code style={{ display: 'block', ...mono, color: color.textSecondary,
+                             marginTop: size.sp2, wordBreak: 'break-all' }}>
+                npx -y mcp-remote@latest {url} --allow-http --header "Authorization: Bearer &lt;your key&gt;"
+              </code>
+              <div style={{ fontSize: 11.5, color: color.textDim, marginTop: size.sp2, lineHeight: 1.55 }}>
+                Once this instance is deployed behind HTTPS, none of that is needed — the URL
+                above works in the dialogs directly.
+              </div>
+            </div>
+          )}
         </div>
       )}
 

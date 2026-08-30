@@ -14,7 +14,7 @@ Ground rules baked in here:
   deletion of both actor and target.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,10 +26,11 @@ from ..core.config import settings
 from ..core.traffic import traffic
 from ..core.usage import month_bucket
 from ..core import entitlements, plans
-from ..db.connection import SESSION_SCOPE, get_session, require_uuid
+from ..db.connection import SESSION_SCOPE, get_session, parse_uuid, require_uuid
 from ..db.tables import (
     AuthSession, Card, CardEvent, ClientError as ClientErrorRow, Company, Membership,
-    PlatformAudit, Station, Subscription, SupportGrant, UsageCounter, User, WorkSession,
+    PlatformAudit, Station, Subscription, SupportGrant, UsageCounter, User,
+    Voucher, WorkSession,
 )
 from ..deps.auth import platform_role_of, require_platform_owner, require_platform_staff
 from ..models.common import utcnow
@@ -69,7 +70,10 @@ async def platform_status(user: User = Depends(require_platform_staff),
     mrr_cents = paying = free_lines = comped = at_risk = 0
     for row in sub_rows:
         ent = entitlements._derive(str(row.companyId), row)
-        on_paid_plan = (plans.get(row.planCode).code == plans.PAID
+        # `ent.plan`, not `plans.get(row.planCode)`: an expired voucher leaves
+        # the paid code on the row while the derived plan is Free, and reading
+        # the raw code would count that account as comped forever.
+        on_paid_plan = (ent.plan.code == plans.PAID
                         and ent.state == entitlements.OK)
         if on_paid_plan and row.stripeSubscriptionId:
             mrr_cents += plans.monthly_cents_for(
@@ -82,7 +86,7 @@ async def platform_status(user: User = Depends(require_platform_staff),
             # billing migration grandfathered them. Real service, no revenue —
             # and worth its own number rather than being hidden inside MRR.
             comped += 1
-        elif plans.get(row.planCode).code == plans.FREE:
+        elif ent.plan.code == plans.FREE:
             free_lines += 1
         if ent.state in (entitlements.READ_ONLY, entitlements.LOCKED):
             at_risk += 1
@@ -242,7 +246,7 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
 
     def _collected(row, ent) -> bool:
         return (ent.state == entitlements.OK
-                and plans.get(row.planCode).code == plans.PAID
+                and ent.plan.code == plans.PAID
                 and bool(row.stripeSubscriptionId))
 
     def _collected_cents(cid, row, ent) -> int:
@@ -255,11 +259,13 @@ async def list_platform_companies(user: User = Depends(require_platform_staff),
         row = subs.get(cid)
         if row is None:
             return {"plan": None, "planState": None, "mrrCents": 0,
-                    "renewsAt": None}
+                    "renewsAt": None, "compedUntil": None, "voucherCode": None}
         ent = entitlements._derive(str(cid), row)
         return {
             "plan": ent.plan.code,
             "planState": ent.state,
+            "compedUntil": row.compedUntil,
+            "voucherCode": row.voucherCode,
             # Only money actually being collected. A free line, a locked
             # account and a **comped** one are all $0 of revenue — and comped
             # is the one that catches you out, because it wears the paid plan
@@ -308,6 +314,130 @@ async def delete_platform_company(company_id: str, body: DeleteCompanyBody,
     await session.delete(company)   # all domain rows cascade via companyId FKs
     _audit(session, actor, "company_deleted", "company", company_id,
            name=company.name, members=member_count)
+
+
+# ── Plans, set by hand ────────────────────────────────────────────────────────
+
+#: What staff may put a company on. Sandbox is minted only by the public
+#: sandbox endpoint and self_hosted only by the absence of a payment provider —
+#: neither is a thing a person should be put on by hand.
+_STAFF_SETTABLE = {plans.FREE, plans.SHOP, plans.PLANT, plans.ENTERPRISE}
+
+
+class PlanBody(BaseModel):
+    plan: str
+
+
+@router.put("/companies/{company_id}/plan")
+async def set_company_plan(company_id: str, body: PlanBody,
+                           actor: User = Depends(require_platform_owner),
+                           session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Owner-only: put a company on a tier by hand.
+
+    This is the mechanism behind "Plant and Enterprise are set on the
+    subscription by staff after a conversation" — and behind comping an
+    account outright. A staff-set plan has no Stripe subscription and no
+    clock: the gate honours it until staff change it, and the webhook never
+    overwrites a non-self-serve code (`Plan.self_serve`), so a later Stripe
+    event cannot demote it.
+
+    Setting a plan clears any voucher clock — a hand-set plan is not "free
+    until", it is the plan.
+    """
+    if body.plan not in _STAFF_SETTABLE:
+        raise HTTPException(400, f"Plan must be one of: {', '.join(sorted(_STAFF_SETTABLE))}")
+    company = await session.get(Company, require_uuid(company_id, "Company not found"))
+    if company is None:
+        raise HTTPException(404, "Company not found")
+    row = await entitlements.ensure_subscription(session, company.id)
+    previous = row.planCode
+    row.planCode = body.plan
+    row.compedUntil = None
+    row.graceEndsAt = None
+    row.updatedAt = utcnow()
+    _audit(session, actor, "company_plan_set", "company", company_id,
+           name=company.name, plan=body.plan, previous=previous)
+    return {"plan": body.plan}
+
+
+# ── Vouchers ──────────────────────────────────────────────────────────────────
+
+class VoucherBody(BaseModel):
+    code: str = Field(min_length=3, max_length=32, pattern=r"^#?[A-Za-z0-9_-]+$")
+    plan: str = plans.SHOP
+    months: int = Field(ge=1, le=36)
+    maxRedemptions: Optional[int] = Field(None, ge=1)
+    expiresAt: Optional[datetime] = None
+    note: Optional[str] = Field(None, max_length=500)
+
+
+def _voucher_out(v: Voucher) -> dict:
+    return {
+        "id": str(v.id), "code": v.code, "plan": v.planCode, "months": v.months,
+        "maxRedemptions": v.maxRedemptions, "redeemedCount": v.redeemedCount,
+        "expiresAt": v.expiresAt, "note": v.note, "createdAt": v.createdAt,
+    }
+
+
+@router.get("/vouchers")
+async def list_vouchers(user: User = Depends(require_platform_staff),
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    rows = (await session.execute(
+        select(Voucher).order_by(Voucher.createdAt.desc())
+    )).scalars().all()
+    return [_voucher_out(v) for v in rows]
+
+
+@router.post("/vouchers", status_code=201)
+async def create_voucher(body: VoucherBody,
+                         actor: User = Depends(require_platform_owner),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Owner-only: mint a voucher code — a paid plan, free, for N months.
+
+    The code is stored uppercase (redemption is case-insensitive, and a
+    leading `#` is stripped on both sides — a code lives on a flyer). The plan
+    must be a paid tier: a voucher for Free grants nothing, and sandbox /
+    self_hosted are not plans a customer can hold.
+    """
+    from ..routers.billing import normalize_voucher_code
+
+    plan = plans.get(body.plan) if body.plan in plans.PLANS else None
+    if plan is None or plan.code in (plans.FREE, plans.SANDBOX, plans.SELF_HOSTED):
+        raise HTTPException(400, "A voucher grants a paid tier: shop, plant or enterprise")
+    code = normalize_voucher_code(body.code)
+    if len(code) < 3:
+        raise HTTPException(400, "Voucher codes need at least 3 characters")
+    existing = (await session.execute(
+        select(Voucher).where(func.upper(Voucher.code) == code)
+    )).scalars().first()
+    if existing is not None:
+        raise HTTPException(409, f"Voucher {code} already exists")
+    expires = body.expiresAt
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    voucher = Voucher(code=code, planCode=plan.code, months=body.months,
+                      maxRedemptions=body.maxRedemptions, expiresAt=expires,
+                      note=body.note)
+    session.add(voucher)
+    await session.flush()
+    _audit(session, actor, "voucher_created", "voucher", str(voucher.id),
+           code=code, plan=plan.code, months=body.months,
+           maxRedemptions=body.maxRedemptions)
+    return _voucher_out(voucher)
+
+
+@router.delete("/vouchers/{voucher_id}", status_code=204)
+async def delete_voucher(voucher_id: str,
+                         actor: User = Depends(require_platform_owner),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Retire a voucher: no further redemptions. Grants already made keep
+    running to their `compedUntil` — a promise already made is kept."""
+    voucher = await session.get(Voucher, require_uuid(voucher_id, "Voucher not found"))
+    if voucher is None:
+        return
+    await session.delete(voucher)
+    _audit(session, actor, "voucher_deleted", "voucher", voucher_id,
+           code=voucher.code, redeemed=voucher.redeemedCount)
 
 
 # ── Impersonation ─────────────────────────────────────────────────────────────

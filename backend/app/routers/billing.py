@@ -24,7 +24,7 @@ from ..core.config import settings
 from ..db.connection import SESSION_SCOPE, get_session, require_uuid
 from ..db.tables import (BillingEvent, Company, Station as StationRow, Subscription,
                          User)
-from ..deps.auth import get_current_user, load_membership
+from ..deps.auth import ensure_full_account, get_current_user, load_membership
 from ..models.common import utcnow
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -75,10 +75,21 @@ class SubscriptionOut(BaseModel):
     billingEnabled: bool
     #: True once there is a Stripe customer, i.e. the portal is worth showing.
     hasPaymentMethod: bool = False
+    #: When a voucher grant runs out (null for everyone else). While it is in
+    #: the future and there is no Stripe subscription, the plan is free until
+    #: then and the account returns to Free after.
+    compedUntil: Optional[str] = None
+    #: The voucher that granted the current plan — kept for attribution even
+    #: after the account converts to paying.
+    voucherCode: Optional[str] = None
 
 
 class CheckoutIn(BaseModel):
     onPremise: bool = False
+
+
+class VoucherIn(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
 
 
 class OnPremiseIn(BaseModel):
@@ -161,7 +172,99 @@ async def get_subscription(company_id: str, user: User = Depends(get_current_use
         usage=UsageOut(stations=used, stationLimit=ent.station_limit),
         billingEnabled=settings.billing_enabled,
         hasPaymentMethod=bool(row.stripeCustomerId),
+        compedUntil=_iso(row.compedUntil),
+        voucherCode=row.voucherCode,
     )
+
+
+# ─── Vouchers ────────────────────────────────────────────────────────────────
+
+def _months_from_now(n: int):
+    """`n` calendar months from now, day clamped (Aug 31 + 6 → Feb 28/29).
+
+    Calendar months rather than `n * 30` days, because "six months free" is a
+    promise made in a sentence and a lawyerly 180 days breaks it three times a
+    year.
+    """
+    import calendar
+
+    now = utcnow()
+    month0 = now.month - 1 + n
+    year, month = now.year + month0 // 12, month0 % 12 + 1
+    day = min(now.day, calendar.monthrange(year, month)[1])
+    return now.replace(year=year, month=month, day=day)
+
+
+def normalize_voucher_code(raw: str) -> str:
+    """Codes live on flyers and get typed from paper: uppercase, and a leading
+    `#` (how a code is usually printed) is not part of it."""
+    return raw.strip().lstrip("#").strip().upper()
+
+
+@router.post("/{company_id}/voucher", response_model=SubscriptionOut)
+async def redeem_voucher(company_id: str, body: VoucherIn,
+                         user: User = Depends(get_current_user),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Redeem a voucher code: the plan it names, free, for the months it says.
+
+    The grant is a stamped subscription row (`planCode` + `compedUntil`), not a
+    Stripe object — no card is asked for, because a voucher handed to an
+    association's members must not open with a payment form. When the clock
+    runs out the account simply returns to Free; nothing is deleted and
+    nothing starts billing by itself.
+
+    One redemption per voucher per company, enforced by a row lock plus a
+    unique constraint so two concurrent redeems of the last slot resolve to
+    one grant and one refusal, never two grants.
+    """
+    from ..db.tables import Voucher, VoucherRedemption
+
+    await _owner(company_id, user, session)
+    ensure_full_account(user)
+    company_uuid = require_uuid(company_id, "Company not found")
+
+    code = normalize_voucher_code(body.code)
+    if not code:
+        raise HTTPException(404, "That voucher code does not exist")
+    voucher = (await session.execute(
+        select(Voucher).where(func.upper(Voucher.code) == code).with_for_update()
+    )).scalars().first()
+    if voucher is None:
+        raise HTTPException(404, "That voucher code does not exist")
+
+    now = utcnow()
+    if voucher.expiresAt is not None and now >= voucher.expiresAt:
+        raise HTTPException(400, "That voucher has expired")
+    if voucher.maxRedemptions is not None and voucher.redeemedCount >= voucher.maxRedemptions:
+        raise HTTPException(400, "That voucher has been fully redeemed")
+
+    row = await _subscription(session, company_uuid)
+    if row.stripeSubscriptionId:
+        raise HTTPException(400, "This account already has a subscription — "
+                                 "vouchers apply to accounts that have not "
+                                 "subscribed yet")
+    already = (await session.execute(
+        select(VoucherRedemption).where(
+            VoucherRedemption.voucherId == voucher.id,
+            VoucherRedemption.companyId == company_uuid,
+        )
+    )).scalars().first()
+    if already is not None:
+        raise HTTPException(400, "This voucher has already been used on this company")
+    ent = await entitlements.resolve(session, company_uuid, user=user)
+    if ent.plan.code != plans.FREE:
+        raise HTTPException(400, f"This account is already on {ent.plan.label}")
+
+    plan = plans.get(voucher.planCode)
+    row.planCode = plan.code
+    row.compedUntil = _months_from_now(voucher.months)
+    row.voucherCode = voucher.code
+    row.graceEndsAt = None
+    row.updatedAt = now
+    voucher.redeemedCount += 1
+    session.add(VoucherRedemption(voucherId=voucher.id, companyId=company_uuid))
+    await session.flush()
+    return await get_subscription(company_id, user, session)
 
 
 # ─── Buying and changing ─────────────────────────────────────────────────────
@@ -268,6 +371,9 @@ def _apply_subscription(row: Subscription, obj) -> None:
     # The station quantity is not copied anywhere — the stations table is the
     # truth and Stripe's quantity is the report of it.
     row.onPremise = on_premise
+    # A real subscription supersedes a voucher's clock; the voucher code stays
+    # for attribution (this is how a campaign's conversions are counted).
+    row.compedUntil = None
     row.stripeSubscriptionId = obj["id"]
     row.stripeStatus = obj["status"]
     period_end = obj.get("current_period_end")

@@ -802,8 +802,77 @@ class Subscription(Base):
     # locked. Cleared on a successful invoice.
     graceEndsAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    #: When a voucher grant runs out. A paid `planCode` with `stripeStatus`
+    #: NULL and this set means "free until then, then back to Free"; with this
+    #: NULL it is a staff comp, honoured until staff change it.
+    compedUntil: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The voucher that granted it — attribution for the campaign that brought
+    #: the account in, kept even after they convert to paying.
+    voucherCode: Mapped[str | None] = mapped_column(String, nullable=True)
+
     createdAt: Mapped[datetime] = _created()
     updatedAt: Mapped[datetime] = _updated()
+
+
+class Voucher(Base):
+    """A code that grants a paid plan free for a number of months.
+
+    Platform-global (no companyId): staff mint one for a campaign — an
+    association's members, a trade-show batch — and any company may redeem it
+    once, from Settings → Billing. Codes are stored uppercase and matched
+    case-insensitively, with a leading ``#`` stripped, because a code lives on
+    a flyer and gets typed from paper.
+
+    Redeeming stamps the company's subscription row (`planCode`,
+    `compedUntil`, `voucherCode`); the entitlement gate derives "back to Free"
+    from the clock, so nothing here needs a background job. Deleting a voucher
+    stops future redemptions and claws nothing back — a grant already made is
+    a promise already made.
+    """
+    __tablename__ = "vouchers"
+    __table_args__ = (
+        CheckConstraint('months >= 1', name="ck_voucher_months"),
+        CheckConstraint('"maxRedemptions" IS NULL OR "maxRedemptions" >= 1',
+                        name="ck_voucher_max_redemptions"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    code: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    planCode: Mapped[str] = mapped_column(String, nullable=False)
+    months: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: NULL = no cap on how many companies may redeem it.
+    maxRedemptions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    redeemedCount: Mapped[int] = mapped_column(Integer, nullable=False,
+                                               server_default=text("0"), default=0)
+    #: NULL = the code itself never stops being redeemable.
+    expiresAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Who this was for — "CAMA members, 2026 campaign".
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    createdAt: Mapped[datetime] = _created()
+
+
+class VoucherRedemption(Base):
+    """Which company used which voucher — the once-per-company guard.
+
+    `redeemedCount` on the voucher stays the authoritative counter (it does
+    not decrement when a company is deleted and its rows cascade away), so a
+    capped voucher cannot be farmed by deleting and re-creating companies.
+    """
+    __tablename__ = "voucher_redemptions"
+    __table_args__ = (
+        UniqueConstraint("voucherId", "companyId", name="uq_voucher_redemption"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    voucherId: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vouchers.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    companyId: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    redeemedAt: Mapped[datetime] = _created()
 
 
 class TrialGrant(Base):

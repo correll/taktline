@@ -32,6 +32,10 @@ export interface Subscription {
   usage: { stations: number; stationLimit: number | null }
   billingEnabled: boolean
   hasPaymentMethod: boolean
+  /** When a voucher grant runs out (null otherwise). While it is in the
+   *  future and there is no payment method, the plan is free until then. */
+  compedUntil: string | null
+  voucherCode: string | null
 }
 
 export const billingApi = {
@@ -53,6 +57,11 @@ export const billingApi = {
    *  credits forward. */
   setOnPremise: (companyId: string, enabled: boolean): Promise<Subscription> =>
     client.post(`/billing/${companyId}/on-premise`, { enabled }),
+
+  /** Redeem a voucher code (e.g. CAMA2026): the plan it names, free, for the
+   *  months it says. Case-insensitive; a leading # is fine. No card asked. */
+  redeemVoucher: (companyId: string, code: string): Promise<Subscription> =>
+    client.post(`/billing/${companyId}/voucher`, { code }),
 }
 
 /** Shop's base-plus-step, mirrored from `plans.monthly_cents_for` for instant

@@ -51,6 +51,22 @@ export interface PlatformCompany {
   planState: 'ok' | 'read_only' | 'locked' | null
   mrrCents: number
   renewsAt: string | null
+  /** When a voucher grant runs out; null for everyone else. */
+  compedUntil: string | null
+  voucherCode: string | null
+}
+
+/** A code that grants a paid plan free for N months (e.g. CAMA2026). */
+export interface Voucher {
+  id: string
+  code: string
+  plan: string
+  months: number
+  maxRedemptions: number | null
+  redeemedCount: number
+  expiresAt: string | null
+  note: string | null
+  createdAt: string
 }
 
 export interface AuditEntry {
@@ -97,6 +113,21 @@ export const platformApi = {
   deleteUser: (id: string): Promise<void> => client.delete(`/platform/users/${id}`),
   setPlatformRole: (id: string, role: 'support' | null): Promise<void> =>
     client.put(`/platform/users/${id}/platform-role`, { role }),
+
+  /** Owner-only: put a company on a tier by hand — how Plant, Enterprise and
+   *  comped accounts are set. The webhook never demotes a non-self-serve code. */
+  setPlan: (companyId: string, plan: string): Promise<{ plan: string }> =>
+    client.put(`/platform/companies/${companyId}/plan`, { plan }),
+
+  vouchers: (): Promise<Voucher[]> => client.get('/platform/vouchers'),
+  /** Owner-only. `plan` must be a paid tier; months are calendar months. */
+  createVoucher: (body: {
+    code: string; plan: string; months: number
+    maxRedemptions?: number | null; expiresAt?: string | null; note?: string | null
+  }): Promise<Voucher> => client.post('/platform/vouchers', body),
+  /** Retire a code: no further redemptions; grants already made keep running. */
+  deleteVoucher: (id: string): Promise<void> =>
+    client.delete(`/platform/vouchers/${id}`),
 
   /** Dismiss one crash report once it has been read, reported or fixed. */
   deleteClientError: (id: string): Promise<void> =>

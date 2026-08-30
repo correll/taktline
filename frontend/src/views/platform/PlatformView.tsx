@@ -7,7 +7,8 @@ import { useSortable } from './useSortable'
 import { useFilter } from './useFilter'
 import { useAuthStore } from '../../store/auth.store'
 import {
-  platformApi, type AuditEntry, type PlatformCompany, type PlatformStatus, type PlatformUser,
+  platformApi, type AuditEntry, type PlatformCompany, type PlatformStatus,
+  type PlatformUser, type Voucher,
 } from '../../api/platform.api'
 
 // Customer-service dashboard. Server-side checks are authoritative — this view
@@ -20,14 +21,16 @@ export default function PlatformView() {
   const [status, setStatus]       = useState<PlatformStatus | null>(null)
   const [users, setUsers]         = useState<PlatformUser[]>([])
   const [companies, setCompanies] = useState<PlatformCompany[]>([])
+  const [vouchers, setVouchers]   = useState<Voucher[]>([])
   const [audit, setAudit]         = useState<AuditEntry[]>([])
   const [error, setError]         = useState<string | null>(null)
-  const [tab, setTab]             = useState<'companies' | 'users' | 'audit'>('companies')
+  const [tab, setTab]             = useState<'companies' | 'users' | 'vouchers' | 'audit'>('companies')
 
   const reload = useCallback(() => {
     platformApi.status().then(setStatus).catch((e) => setError(String(e)))
     platformApi.users().then(setUsers).catch(() => {})
     platformApi.companies().then(setCompanies).catch(() => {})
+    platformApi.vouchers().then(setVouchers).catch(() => {})
     platformApi.audit().then(setAudit).catch(() => {})
   }, [])
 
@@ -58,6 +61,7 @@ export default function PlatformView() {
           {([
             ['companies', `Companies (${companies.length})`],
             ['users', `Users (${users.length})`],
+            ['vouchers', `Vouchers (${vouchers.length})`],
             ['audit', 'Audit trail'],
           ] as const).map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
@@ -75,9 +79,14 @@ export default function PlatformView() {
           ))}
         </nav>
 
-        {tab === 'companies' && <CompaniesSection companies={companies} onChanged={reload} />}
+        {tab === 'companies' && (
+          <CompaniesSection companies={companies} isOwner={isOwner} onChanged={reload} />
+        )}
         {tab === 'users' && (
           <UsersSection users={users} isOwner={isOwner} selfId={user?.id} onChanged={reload} />
+        )}
+        {tab === 'vouchers' && (
+          <VouchersSection vouchers={vouchers} isOwner={isOwner} onChanged={reload} />
         )}
         {tab === 'audit' && <AuditSection audit={audit} />}
 
@@ -136,8 +145,15 @@ function PlanCell({ company }: { company: PlatformCompany }) {
              : company.planState === 'read_only' ? color.statusWarning
              : color.textSecondary
   return (
-    <span style={{ color: tone, whiteSpace: 'nowrap' }}>
+    <span style={{ color: tone, whiteSpace: 'nowrap' }}
+          title={company.voucherCode
+            ? `Voucher ${company.voucherCode}${company.compedUntil
+                ? ` · until ${new Date(withZ(company.compedUntil)).toLocaleDateString()}` : ''}`
+            : undefined}>
       {company.plan ?? '—'}
+      {company.voucherCode && company.compedUntil && (
+        <span style={{ fontSize: 10.5, marginLeft: 5, color: color.textDim }}>(voucher)</span>
+      )}
       {company.planState && company.planState !== 'ok' && (
         <span style={{ fontSize: 10.5, marginLeft: 5 }}>
           ({company.planState.replace('_', '-')})
@@ -146,6 +162,9 @@ function PlanCell({ company }: { company: PlatformCompany }) {
     </span>
   )
 }
+
+//: What staff may set by hand — mirrors the server's `_STAFF_SETTABLE`.
+const STAFF_PLANS = ['free', 'shop', 'plant', 'enterprise']
 
 function StatusSection({ status }: { status: PlatformStatus }) {
   const tiles: [string, string | number][] = [
@@ -253,16 +272,28 @@ function TrafficTile({ perMinute, total }: {
 
 // ─── Companies ────────────────────────────────────────────────────────────────
 
-function CompaniesSection({ companies, onChanged }: {
-  companies: PlatformCompany[]; onChanged: () => void
+function CompaniesSection({ companies, isOwner, onChanged }: {
+  companies: PlatformCompany[]; isOwner: boolean; onChanged: () => void
 }) {
   const navigate = useNavigate()
   const refresh = useAuthStore((s) => s.refresh)
   const setActiveCompany = useAuthStore((s) => s.setActiveCompany)
   const [deleting, setDeleting] = useState<PlatformCompany | null>(null)
   const [confirmName, setConfirmName] = useState('')
+  const [planFor, setPlanFor] = useState<PlatformCompany | null>(null)
+  const [planChoice, setPlanChoice] = useState('shop')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const savePlan = async () => {
+    if (!planFor) return
+    setBusy(planFor.id); setError(null)
+    try {
+      await platformApi.setPlan(planFor.id, planChoice)
+      setPlanFor(null)
+      onChanged()
+    } catch (e) { setError(String(e)) } finally { setBusy(null) }
+  }
 
   const impersonate = async (c: PlatformCompany) => {
     setBusy(c.id); setError(null)
@@ -361,6 +392,15 @@ function CompaniesSection({ companies, onChanged }: {
                   <button style={smallBtn} disabled={busy === c.id} onClick={() => impersonate(c)}>
                     Impersonate
                   </button>
+                  {isOwner && (
+                    <button style={{ ...smallBtn, marginLeft: 6 }}
+                            onClick={() => {
+                              setPlanFor(c)
+                              setPlanChoice(STAFF_PLANS.includes(c.plan ?? '') ? c.plan! : 'shop')
+                            }}>
+                      Plan…
+                    </button>
+                  )}
                   <button style={{ ...smallBtn, color: color.statusFault, marginLeft: 6 }}
                           onClick={() => { setDeleting(c); setConfirmName('') }}>
                     Delete
@@ -371,6 +411,36 @@ function CompaniesSection({ companies, onChanged }: {
           </tbody>
         </table>
       </div>
+
+      {planFor && (
+        <div style={backdropStyle} onClick={(e) => { if (e.target === e.currentTarget) setPlanFor(null) }}>
+          <div style={modalStyle}>
+            <div style={{ fontWeight: 600, fontSize: 14, color: color.textPrimary }}>
+              Set plan for "{planFor.name}"
+            </div>
+            <p style={{ fontSize: 12.5, color: color.textSecondary, margin: 0, lineHeight: 1.5 }}>
+              A hand-set plan has no Stripe subscription and no expiry — the gate
+              honours it until you change it, and a webhook never demotes it. This
+              is how Plant, Enterprise and comped accounts are set. Any voucher
+              clock on the account is cleared.
+            </p>
+            <select value={planChoice} onChange={(e) => setPlanChoice(e.target.value)}
+                    style={{ background: color.bgInput, border: `1px solid ${color.border}`,
+                             borderRadius: 4, color: color.textPrimary, padding: '7px 10px',
+                             fontSize: 13 }}>
+              {STAFF_PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button style={smallBtn} onClick={() => setPlanFor(null)}>Cancel</button>
+              <button style={{ ...smallBtn, background: color.bluePrimary, color: '#fff',
+                               borderColor: color.bluePrimary }}
+                      disabled={busy === planFor.id} onClick={savePlan}>
+                {busy === planFor.id ? 'Saving…' : 'Set plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleting && (
         <div style={backdropStyle} onClick={(e) => { if (e.target === e.currentTarget) setDeleting(null) }}>
@@ -508,6 +578,163 @@ function UsersSection({ users, isOwner, selfId, onChanged }: {
   )
 }
 
+// ─── Vouchers ─────────────────────────────────────────────────────────────────
+
+/** Codes that grant a paid plan free for N months — e.g. CAMA2026 for an
+ *  association's members. Owners mint and retire them; support can read the
+ *  list to answer "why is this account on Shop for free". */
+function VouchersSection({ vouchers, isOwner, onChanged }: {
+  vouchers: Voucher[]; isOwner: boolean; onChanged: () => void
+}) {
+  const [code, setCode] = useState('')
+  const [plan, setPlan] = useState('shop')
+  const [months, setMonths] = useState('6')
+  const [maxRedemptions, setMaxRedemptions] = useState('')
+  const [expiresAt, setExpiresAt] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+
+  const create = async () => {
+    if (!code.trim() || busy) return
+    setBusy(true); setError(null)
+    try {
+      await platformApi.createVoucher({
+        code: code.trim(),
+        plan,
+        months: Math.max(1, parseInt(months, 10) || 1),
+        maxRedemptions: maxRedemptions.trim() ? parseInt(maxRedemptions, 10) : null,
+        // <input type="date"> yields a bare day; the server reads it as UTC.
+        expiresAt: expiresAt ? `${expiresAt}T23:59:59+00:00` : null,
+        note: note.trim() || null,
+      })
+      setCode(''); setNote(''); setMaxRedemptions(''); setExpiresAt('')
+      onChanged()
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? String(e))
+    } finally { setBusy(false) }
+  }
+
+  const retire = async (v: Voucher) => {
+    setError(null)
+    try { await platformApi.deleteVoucher(v.id); setConfirmId(null); onChanged() }
+    catch (e) { setError(String(e)) }
+  }
+
+  const input: React.CSSProperties = {
+    background: color.bgInput, border: `1px solid ${color.border}`, borderRadius: 4,
+    color: color.textPrimary, padding: '6px 9px', fontSize: 12.5,
+  }
+
+  return (
+    <section>
+      <SectionTitle>Vouchers ({vouchers.length})</SectionTitle>
+      {error && <div style={{ fontSize: 12, color: color.statusFault, marginBottom: 6 }}>{error}</div>}
+
+      {isOwner && (
+        <div style={{ ...cardListStyle, padding: size.sp4, marginBottom: size.sp3,
+                      display: 'flex', gap: size.sp2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <label style={voucherLabel}>Code
+            <input style={{ ...input, width: 130, fontFamily: font.mono, textTransform: 'uppercase' }}
+                   value={code} onChange={(e) => setCode(e.target.value)} placeholder="CAMA2026" />
+          </label>
+          <label style={voucherLabel}>Plan
+            <select style={input} value={plan} onChange={(e) => setPlan(e.target.value)}>
+              {['shop', 'plant', 'enterprise'].map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </label>
+          <label style={voucherLabel}>Free months
+            <input style={{ ...input, width: 60 }} type="number" min={1} max={36}
+                   value={months} onChange={(e) => setMonths(e.target.value)} />
+          </label>
+          <label style={voucherLabel}>Max uses
+            <input style={{ ...input, width: 70 }} type="number" min={1} placeholder="∞"
+                   value={maxRedemptions} onChange={(e) => setMaxRedemptions(e.target.value)} />
+          </label>
+          <label style={voucherLabel}>Redeemable until
+            <input style={input} type="date"
+                   value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+          </label>
+          <label style={{ ...voucherLabel, flex: '1 1 160px' }}>Note
+            <input style={{ ...input, width: '100%' }} value={note}
+                   onChange={(e) => setNote(e.target.value)} placeholder="Who this is for" />
+          </label>
+          <button style={{ ...smallBtn, background: color.bluePrimary, color: '#fff',
+                           borderColor: color.bluePrimary }}
+                  disabled={!code.trim() || busy} onClick={create}>
+            {busy ? 'Minting…' : 'Mint voucher'}
+          </button>
+        </div>
+      )}
+
+      <div style={{ ...cardListStyle, overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead>
+            <tr>
+              {['Code', 'Plan', 'Free months', 'Redeemed', 'Redeemable until', 'Note', ''].map((h) => (
+                <th key={h} style={thStyle}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {vouchers.length === 0 && (
+              <tr><td colSpan={7} style={{ ...tdStyle, color: color.textDim }}>
+                No vouchers yet{isOwner ? ' — mint one above.' : '.'}
+              </td></tr>
+            )}
+            {vouchers.map((v) => (
+              <tr key={v.id} style={{ borderTop: `1px solid ${color.border}` }}>
+                <td style={{ ...tdStyle, fontFamily: font.mono, color: color.textPrimary }}>{v.code}</td>
+                <td style={tdStyle}>{v.plan}</td>
+                <td style={tdStyle}>{v.months}</td>
+                <td style={tdStyle}>{v.redeemedCount}{v.maxRedemptions != null && ` of ${v.maxRedemptions}`}</td>
+                <td style={tdStyle}>
+                  {v.expiresAt ? new Date(withZ(v.expiresAt)).toLocaleDateString() : 'no expiry'}
+                </td>
+                <td style={{ ...tdStyle, maxWidth: 260, overflow: 'hidden',
+                             textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={v.note ?? undefined}>
+                  {v.note ?? '—'}
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {isOwner && (
+                    confirmId === v.id ? (
+                      <button style={{ ...smallBtn, background: color.statusFault, color: '#fff',
+                                       borderColor: color.statusFault }}
+                              onClick={() => retire(v)}>
+                        Confirm retire
+                      </button>
+                    ) : (
+                      <button style={{ ...smallBtn, color: color.statusFault }}
+                              onClick={() => setConfirmId(v.id)}
+                              onBlur={() => setConfirmId(null)}>
+                        Retire
+                      </button>
+                    )
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 11.5, color: color.textDim, margin: `${size.sp2} 0 0`, lineHeight: 1.5 }}>
+        A company redeems a code in Settings → Billing and gets the plan free for
+        the months stated — no card. Codes are case-insensitive and a leading # is
+        ignored. Retiring a code stops new redemptions; grants already made keep
+        running to their end date.
+      </p>
+    </section>
+  )
+}
+
+const voucherLabel: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 4,
+  fontSize: 10.5, fontFamily: font.mono, letterSpacing: '0.06em',
+  textTransform: 'uppercase', color: color.textDim,
+}
+
 // ─── Audit ────────────────────────────────────────────────────────────────────
 
 function AuditSection({ audit }: { audit: AuditEntry[] }) {
@@ -539,7 +766,12 @@ function AuditSection({ audit }: { audit: AuditEntry[] }) {
 
 function summarizeDetail(a: AuditEntry): string {
   const d = a.detail as Record<string, unknown>
-  const bits = [d.name, d.email, d.role != null ? `role=${d.role}` : null, d.minutes != null ? `${d.minutes} min` : null]
+  const bits = [d.name, d.email, d.code,
+                d.plan != null ? `plan=${d.plan}` : null,
+                d.previous != null ? `was ${d.previous}` : null,
+                d.months != null ? `${d.months} months` : null,
+                d.role != null ? `role=${d.role}` : null,
+                d.minutes != null ? `${d.minutes} min` : null]
   return bits.filter(Boolean).join(' · ')
 }
 

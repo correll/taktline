@@ -337,6 +337,26 @@ Growing past a tier's cap produces the ordinary `plan_limit` refusal through the
 existing station quota, so hitting 31 stations on Shop points at sales rather
 than silently billing plant volumes at shop rates.
 
+**Two ways onto a paid tier without a checkout**, both riding the existing
+"comped" reading (`stripeStatus is None` on a paid code = no money moving, still
+honoured). A **staff-set plan** (`PUT /platform/companies/{id}/plan`,
+owner-only, audited, Platform → Companies → *Plan…*) is the mechanism behind
+"Plant and Enterprise are set on the subscription by staff" — no clock, and the
+webhook's `self_serve` guard already keeps a later Stripe event from demoting
+it. A **voucher** (`vouchers` table; minted at Platform → Vouchers, owner-only;
+redeemed at Settings → Billing via `POST /billing/{id}/voucher`, e.g.
+`CAMA2026`) grants a paid plan free for N **calendar** months — codes are
+matched case-insensitively with a leading `#` stripped, because they get typed
+from flyers. The grant is `compedUntil` on the subscription row and the gate
+*derives* "back to Free" from the clock (state stays `ok`, reason
+`voucher_expired` — nothing was unpaid, so no grace theatre and no lock), the
+same way every other entitlement state is derived rather than stored. Once per
+voucher per company (row lock + unique redemption row, and `redeemedCount`
+survives a company's deletion so a capped code cannot be farmed); a real
+checkout supersedes the clock but keeps `voucherCode`, which is how a
+campaign's conversions get counted; retiring a voucher stops new redemptions
+and claws nothing back. `tests/test_vouchers.py` pins all of it.
+
 **Three places state a price and they must agree**: `plans.py`, the landing page
 (hard-coded, because it renders for crawlers), and `index.html`'s meta + JSON-LD.
 `frontend/src/views/landing/pricing.test.ts` reads `plans.py` as text and pins

@@ -46,7 +46,9 @@ export default function BillingTab() {
     return <p style={{ color: color.textDim, fontSize: 13 }}>{error ?? 'Loading…'}</p>
   }
 
-  const paying = sub.plan === 'taktline' && sub.hasPaymentMethod
+  const paying = sub.plan === 'shop' && sub.hasPaymentMethod
+  // A voucher grant: a paid plan, no money moving, a clock running.
+  const onVoucher = sub.plan !== 'free' && !!sub.compedUntil && sub.monthlyCents === 0
   const stations = sub.usage.stations
   const wouldPay = monthlyCentsFor(stations, pricing)
     + (wantOnPremise ? pricing.onpremCents : 0)
@@ -81,6 +83,13 @@ export default function BillingTab() {
       {sub.billingEnabled ? (
         sub.plan === 'free' ? (
           <>
+            {sub.reason === 'voucher_expired' && (
+              <p style={{ ...note, marginBottom: size.sp4 }}>
+                Your voucher&rsquo;s free months have ended, so the account is back
+                on the Free plan. Nothing was deleted — subscribe below to pick up
+                where the voucher left off.
+              </p>
+            )}
             <h3 style={h3}>Go beyond {pricing.freeStations} stations</h3>
             <PriceExplainer pricing={pricing} stations={stations} />
             <label style={{
@@ -105,7 +114,18 @@ export default function BillingTab() {
               {money(pricing.shopPerStationCents)} more next month and removing one
               costs that much less. Nothing to renegotiate.
             </p>
+            <VoucherForm companyId={activeCompanyId}
+                         onRedeemed={async (s) => { setSub(s); await refreshMe() }} />
           </>
+        ) : onVoucher ? (
+          <p style={note}>
+            Your {sub.planLabel} plan is free
+            {sub.compedUntil && ` until ${new Date(withZ(sub.compedUntil)).toLocaleDateString()}`}
+            {sub.voucherCode && ` thanks to voucher ${sub.voucherCode}`}. No card is
+            on file and nothing will be charged. When it ends, the account simply
+            returns to the Free plan — nothing is deleted — and you can subscribe
+            then to keep {sub.planLabel}.
+          </p>
         ) : (
           <>
             {paying && (
@@ -122,23 +142,32 @@ export default function BillingTab() {
                                : 'adding is charged today, pro-rated'}
               </label>
             )}
-            <div>
-              <button
-                onClick={() => go(() => billingApi.portal(activeCompanyId), 'portal')}
-                disabled={busy === 'portal'}
-                style={ghost}
-              >
-                {busy === 'portal' ? 'Opening…' : 'Payment method, invoices and cancellation'}
-              </button>
+            {sub.hasPaymentMethod ? (
+              <div>
+                <button
+                  onClick={() => go(() => billingApi.portal(activeCompanyId), 'portal')}
+                  disabled={busy === 'portal'}
+                  style={ghost}
+                >
+                  {busy === 'portal' ? 'Opening…' : 'Payment method, invoices and cancellation'}
+                </button>
+                <p style={note}>
+                  Handled by Stripe. Cancelling stops the subscription
+                  immediately and returns the unused time to your card, less the
+                  processing fee the card network does not return to us. Nothing
+                  is ever deleted — a line of {pricing.freeStations} stations or
+                  fewer simply becomes a free account again, and a bigger one
+                  pauses until you come back.
+                </p>
+              </div>
+            ) : (
+              // A staff-set plan (Plant, Enterprise, a comped account) has no
+              // Stripe customer, so there is no portal to open.
               <p style={note}>
-                Handled by Stripe. Cancelling stops the subscription
-                immediately and returns the unused time to your card, less the
-                processing fee the card network does not return to us. Nothing
-                is ever deleted — a line of {pricing.freeStations} stations or
-                fewer simply becomes a free account again, and a bigger one
-                pauses until you come back.
+                This plan was set up with us directly — for billing questions,
+                just get in touch.
               </p>
-            </div>
+            )}
           </>
         )
       ) : (
@@ -158,6 +187,65 @@ export default function BillingTab() {
       )}
 
       <DangerZone companyId={activeCompanyId} />
+    </div>
+  )
+}
+
+// ─── Voucher redemption ──────────────────────────────────────────────────────
+
+/** "Have a voucher code?" — a single field, because the code arrives on a
+ *  flyer or in an association's newsletter and this is the whole ceremony:
+ *  type it, get the plan, no card. The server normalises case and a leading #. */
+function VoucherForm({ companyId, onRedeemed }: {
+  companyId: string; onRedeemed: (sub: Subscription) => void | Promise<void>
+}) {
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const redeem = async () => {
+    if (!code.trim() || busy) return
+    setBusy(true); setError(null)
+    try {
+      await onRedeemed(await billingApi.redeemVoucher(companyId, code.trim()))
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ marginTop: size.sp5 }}>
+      <h3 style={h3}>Have a voucher code?</h3>
+      <div style={{ display: 'flex', gap: size.sp2, alignItems: 'center' }}>
+        <input
+          value={code} onChange={(e) => setCode(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void redeem() }}
+          placeholder="e.g. CAMA2026"
+          style={{
+            flex: '0 1 200px', padding: '7px 10px', fontSize: 13,
+            background: color.bgInput, color: color.textPrimary,
+            border: `1px solid ${color.border}`, borderRadius: size.radius,
+            fontFamily: font.mono, textTransform: 'uppercase',
+          }}
+        />
+        <button onClick={redeem} disabled={!code.trim() || busy} style={{
+          ...ghost, cursor: code.trim() && !busy ? 'pointer' : 'default',
+          color: code.trim() ? color.textSecondary : color.textDisabled,
+        }}>
+          {busy ? 'Redeeming…' : 'Redeem'}
+        </button>
+      </div>
+      {error && (
+        <div style={{ marginTop: size.sp2, color: color.statusFault, fontSize: 12.5 }}>
+          {String(error)}
+        </div>
+      )}
+      <p style={note}>
+        A voucher puts this company on a paid plan, free, for the months it
+        says — no card needed. When it ends the account simply returns to Free.
+      </p>
     </div>
   )
 }
@@ -284,6 +372,9 @@ function CurrentPlan({ sub, pricing }: { sub: Subscription; pricing: Pricing }) 
           {sub.planLabel}
         </span>
         {sub.onPremise && <Chip>on-premise</Chip>}
+        {sub.plan !== 'free' && sub.compedUntil && sub.monthlyCents === 0 && (
+          <Chip tone={color.statusRunning}>voucher</Chip>
+        )}
         {sub.monthlyCents > 0 && (
           <span style={{ fontSize: 14, color: color.textSecondary }}>
             {money(sub.monthlyCents)}/month
@@ -368,18 +459,27 @@ function PriceExplainer({ pricing, stations }: { pricing: Pricing; stations: num
 }
 
 function Deadline({ sub }: { sub: Subscription }) {
-  const when = sub.state === 'read_only' ? sub.graceEndsAt : sub.currentPeriodEnd
+  const onVoucher = sub.plan !== 'free' && !!sub.compedUntil && sub.monthlyCents === 0
+  const when = sub.state === 'read_only' ? sub.graceEndsAt
+             : onVoucher ? sub.compedUntil : sub.currentPeriodEnd
   if (!when) return null
-  const date = new Date(when.endsWith('Z') || when.includes('+') ? when : `${when}Z`)
+  const date = new Date(withZ(when))
   const days = Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86_400_000))
-  const label = sub.state === 'read_only' ? 'Read-only until' : 'Renews'
+  const label = sub.state === 'read_only' ? 'Read-only until'
+              : onVoucher ? 'Free until' : 'Renews'
   return (
     <div style={{ marginTop: size.sp2, fontSize: 13, color: color.textSecondary }}>
       {label} {date.toLocaleDateString()} · {days} day{days === 1 ? '' : 's'}
       {sub.state === 'read_only' &&
         ' — after that the account will be completely paused. Nothing is deleted.'}
+      {onVoucher && sub.voucherCode && ` — voucher ${sub.voucherCode}`}
     </div>
   )
+}
+
+// Belt-and-suspenders ISO parsing (see CLAUDE.md datetime rule).
+function withZ(raw: string): string {
+  return raw.endsWith('Z') || raw.includes('+') ? raw : `${raw}Z`
 }
 
 function StateChip({ sub }: { sub: Subscription }) {

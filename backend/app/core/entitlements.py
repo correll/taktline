@@ -207,9 +207,22 @@ def _derive(cid: str, row) -> Entitlement:
         # — the station quota is the whole of its metering.
         return Entitlement(**common, state=OK, reason=None)
 
-    # A paid plan with no Stripe subscription is a comped account — staff granted
-    # it by hand. Honour it.
+    # A paid plan with no Stripe subscription is a comped account. Two kinds:
+    # staff granted it by hand (no clock — honour it until staff change it),
+    # or a voucher granted it for a fixed run (`compedUntil`). When the voucher
+    # runs out the account simply becomes Free — derived from the clock, never
+    # written by a background job, so it cannot be missed or applied twice.
+    # No grace window and no lock: nothing was unpaid, nothing is deleted, and
+    # the station quota alone is the free tier's whole metering.
     if row.stripeStatus is None:
+        if row.compedUntil is not None:
+            if now < row.compedUntil:
+                return Entitlement(**{**common, "period_end": row.compedUntil},
+                                   state=OK, reason=None)
+            return Entitlement(
+                company_id=cid, plan=plans.get(plans.FREE),
+                on_premise=row.onPremise, state=OK, reason="voucher_expired",
+            )
         return Entitlement(**common, state=OK, reason=None)
 
     if row.stripeStatus in _LIVE:

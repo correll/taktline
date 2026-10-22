@@ -254,7 +254,13 @@ class _Sim:
         units = sum(q for _, _, q in self.done)
         lead = (sum((b - a) * q for a, b, q in self.done) / units) if units else None
         span = (self.m.horizon / f) or 1.0
-        return {"lead_sec": lead, "units": units,
+        # What an observer of the window would have seen: only lots finished
+        # by its end. The observed lead time is censored that way, so the
+        # calibration compares like with like; gains use every lot.
+        seen = [(a, b, q) for a, b, q in self.done if b <= span]
+        seen_units = sum(q for _, _, q in seen)
+        lead_seen = (sum((b - a) * q for a, b, q in seen) / seen_units) if seen_units else None
+        return {"lead_sec": lead, "units": units, "lead_seen_sec": lead_seen,
                 "busy": {k: v / span for k, v in self.busy_time.items()},
                 "down": {k: v / span for k, v in self.down_time.items()}}
 
@@ -291,9 +297,10 @@ def run(model: LineModel, scenarios: list, replications: int = 20, seed: int = 1
                         "gainShare": m / out["baseline"]["leadTimeSec"]
                         if out["baseline"]["leadTimeSec"] else None})
         out["scenarios"].append(row)
+    seen = [b["lead_seen_sec"] for b in base_runs if b["lead_seen_sec"] is not None]
     out["calibration"] = {"observedLeadTimeSec": model.observed_lead_sec,
                           "observedUnits": model.observed_n,
-                          "modelLeadTimeSec": out["baseline"]["leadTimeSec"]}
+                          "modelLeadTimeSec": statistics.fmean(seen) if seen else None}
     return out
 
 

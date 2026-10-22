@@ -74,6 +74,10 @@ async def build_model(session, company_id, since: datetime, until: datetime,
                                  SessionRow.endedAt.isnot(None),
                                  SessionRow.endedAt >= since, SessionRow.startedAt <= until)
     )).scalars().all()
+    # One work-rate sample per lot and station: a lot worked across a break
+    # is recorded as two sessions, and treating a two-piece remnant as a lot
+    # of its own adds variance the line never had.
+    per_lot = defaultdict(lambda: [0.0, 0])
     rates = defaultdict(list)
     spans = defaultdict(list)
     working = defaultdict(float)
@@ -81,12 +85,19 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     for w in work:
         sid = str(w.stationId)
         if w.durationSec and w.quantity and w.quantity > 0 and w.closedBy != "next_start":
-            rates[sid].append(w.durationSec / w.quantity)
+            if w.cardId:
+                acc = per_lot[(sid, w.cardId)]
+                acc[0] += w.durationSec
+                acc[1] += w.quantity
+            else:
+                rates[sid].append(w.durationSec / w.quantity)
         working[sid] += w.durationSec or 0.0
         if w.startedAt and w.endedAt:
             spans[sid].append((w.startedAt, w.endedAt))
         if w.cardId:
             lots[sid].add(w.cardId)
+    for (sid, _), (secs, units) in per_lot.items():
+        rates[sid].append(secs / units)
     stops = (await session.execute(
         select(StoppageRow).where(StoppageRow.companyId == company_id,
                                   StoppageRow.endedAt.isnot(None),

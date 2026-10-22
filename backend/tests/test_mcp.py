@@ -222,7 +222,8 @@ def test_a_key_without_the_mcp_scope_cannot_connect(actor):
 
 # ── Reading and acting are separately granted ────────────────────────────────
 
-READ_TOOLS = {"get_line", "find_lots", "list_orders", "get_statistics", "diagnose_line"}
+READ_TOOLS = {"get_line", "find_lots", "list_orders", "get_statistics", "diagnose_line",
+              "what_if", "rank_automation"}
 
 
 def test_the_mcp_scope_alone_is_read_only(actor):
@@ -267,7 +268,7 @@ def test_no_tool_can_reshape_or_destroy_the_factory(actor):
     # not just the read half — the mistake that made this test decorative once.
     all_scopes = [s["scope"] for s in a.req("GET", "/api-keys/scopes").json()]
     all_tools = Agent(actor, _key(a, all_scopes)).tools()
-    assert len(all_tools) == 8, all_tools
+    assert len(all_tools) == 10, all_tools
     forbidden = ("station", "route", "process", "template", "product_create",
                  "delete", "remove", "reset", "member", "invit", "key",
                  "billing", "import", "export", "unmerge", "move", "handoff",
@@ -276,7 +277,7 @@ def test_no_tool_can_reshape_or_destroy_the_factory(actor):
     assert not offenders, f"a tool reaches configuration or destruction: {offenders}"
 
 
-def test_the_full_catalogue_is_exactly_these_eight(actor):
+def test_the_full_catalogue_is_exactly_these_ten(actor):
     """A deliberate inventory. Adding a tool should be a decision someone makes
     on purpose, with this list in front of them."""
     a = actor(); bootstrap_admin(a); _line(a); _enable(a)

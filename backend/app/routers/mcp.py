@@ -534,6 +534,101 @@ async def diagnose_line(p: McpPrincipal, args: dict) -> dict:
 
 
 @_tool(
+    name="what_if",
+    title="What if?",
+    description=(
+        "Replay the line's recorded history (lots released, work times, "
+        "breakdowns, changeovers) in a simulation with something changed, and "
+        "report how much the lead time moves, with a 95% interval. A change can "
+        "make a station faster (`speedFactor` 0.75 = 25% faster), less variable "
+        "(`cv`), free of breakdowns, or add servers; `demandFactor` makes the "
+        "same work arrive faster. Lead times are in open hours. Check "
+        "`calibration` first: it compares the model's lead time with the one "
+        "the line actually had."),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "scenarios": {"type": "array", "maxItems": 12, "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "demandFactor": {"type": "number"},
+                    "changes": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "stationId": {"type": "string"},
+                            "speedFactor": {"type": "number"},
+                            "cv": {"type": "number"},
+                            "breakdowns": {"type": "boolean"},
+                            "changeovers": {"type": "boolean"},
+                            "servers": {"type": "integer"}},
+                        "required": ["stationId"]}}},
+                "required": ["name"]}},
+            "replications": {"type": "integer"},
+        },
+        "required": ["scenarios"],
+        "additionalProperties": False,
+    },
+)
+async def what_if(p: McpPrincipal, args: dict) -> dict:
+    from pydantic import ValidationError
+    from ..core import whatif
+    from .analysis import WhatIfIn, _model, _present
+    try:
+        body = WhatIfIn(**args)
+    except ValidationError as e:
+        raise ToolError("invalid scenarios: " + "; ".join(x["msg"] for x in e.errors()))
+    model, names = await _model(p.session, p.ctx.company_id, body.days)
+    if not any(st.worked for st in model.stations.values()) or not model.arrivals:
+        raise ToolError("Nothing to simulate yet: the line has no timed work or released lots in the window")
+    scen = []
+    for sc in body.scenarios:
+        for c in sc.changes:
+            if c.stationId not in model.stations:
+                raise ToolError(f"unknown station {c.stationId}")
+        scen.append(whatif.Scenario(name=sc.name, demand=sc.demandFactor, changes=[
+            whatif.Change(station=c.stationId, speed=c.speedFactor, cv=c.cv,
+                          breakdowns=c.breakdowns, changeovers=c.changeovers,
+                          servers=c.servers) for c in sc.changes]))
+    return _present(whatif.run(model, scen, body.replications), names)
+
+
+@_tool(
+    name="rank_automation",
+    title="Where would a machine help most?",
+    description=(
+        "Try the same machine at every station that is worked by hand, in a "
+        "simulation of the line's recorded history, and rank the stations by how "
+        "much shorter the lead time gets. Describe the machine relative to the "
+        "people it replaces: `speedFactor` (0.75 = 25% faster), `cv` (its piece-"
+        "time variability) and whether it breaks down like the station did."),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "speedFactor": {"type": "number"},
+            "cv": {"type": "number"},
+            "breakdowns": {"type": "boolean"},
+            "replications": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    },
+)
+async def rank_automation(p: McpPrincipal, args: dict) -> dict:
+    from pydantic import ValidationError
+    from ..core import whatif
+    from .analysis import AutomationIn, _model, _present
+    try:
+        body = AutomationIn(**args)
+    except ValidationError as e:
+        raise ToolError("invalid request: " + "; ".join(x["msg"] for x in e.errors()))
+    model, names = await _model(p.session, p.ctx.company_id, body.days)
+    if not any(st.worked for st in model.stations.values()) or not model.arrivals:
+        raise ToolError("Nothing to simulate yet: the line has no timed work or released lots in the window")
+    return _present(whatif.automation_candidates(model, body.speedFactor, body.cv,
+                                                 body.breakdowns, body.replications), names)
+
+
+@_tool(
     name="release_order",
     title="Release a production order",
     description=(

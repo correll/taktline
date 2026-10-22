@@ -61,6 +61,11 @@ ALLOWED = {
     "core/line_snapshot.py": {
         "build": "hands rows to core.analysis, which filters boundary links itself",
     },
+    "core/whatif_data.py": {
+        "build_model": "builds the what-if model's process graph; drops every edge "
+                       "touching an integration node itself (partners filter) "
+                       "before any graph question is asked",
+    },
     "core/tracking.py": {
         "_ordered_stations": "topologically orders one process's stations for a "
                              "customer-facing progress bar; filters boundary "

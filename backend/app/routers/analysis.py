@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ from ..db.tables import (
 )
 from ..deps.auth import CompanyContext, get_active_company
 from .sessions import _station_metrics, _work_schedule
+from ..models.common import utcnow
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -123,3 +124,116 @@ async def station_runout(station_id: str,
             bufferUnits=r.buffer_units, lineCycleSec=r.line_cycle_sec,
             runoutSec=r.runout_sec,
         ) for pid, r in lines.items()})
+
+
+# ─── What if? ────────────────────────────────────────────────────────────────
+
+class ChangeIn(BaseModel):
+    stationId: str
+    #: Multiplies the work time: 0.75 is a process 25% faster.
+    speedFactor: float = Field(1.0, gt=0.05, le=10)
+    #: Piece-time variability of the new process; omit to keep the measured one.
+    cv: Optional[float] = Field(None, ge=0, le=3)
+    #: False: the new process does not break down.
+    breakdowns: bool = True
+    #: False: changeovers eliminated (SMED).
+    changeovers: bool = True
+    servers: Optional[int] = Field(None, ge=1, le=20)
+
+
+class ScenarioIn(BaseModel):
+    name: str = Field(..., max_length=80)
+    changes: list[ChangeIn] = Field(default_factory=list, max_length=20)
+    #: 1.1 = the same work arriving 10% faster.
+    demandFactor: float = Field(1.0, gt=0.1, le=5)
+
+
+class WhatIfIn(BaseModel):
+    scenarios: list[ScenarioIn] = Field(..., min_length=1, max_length=12)
+    replications: int = Field(20, ge=2, le=50)
+    days: int = Field(LOOKBACK_DAYS, ge=1, le=LOOKBACK_DAYS)
+
+
+class AutomationIn(BaseModel):
+    speedFactor: float = Field(0.75, gt=0.05, le=10)
+    cv: Optional[float] = Field(0.05, ge=0, le=3)
+    breakdowns: bool = True
+    replications: int = Field(20, ge=2, le=50)
+    days: int = Field(LOOKBACK_DAYS, ge=1, le=LOOKBACK_DAYS)
+
+
+async def _model(session, company_id, days):
+    from ..core import whatif_data
+    schedule, tzname = await _work_schedule(session, company_id)
+    until = utcnow()
+    return await whatif_data.build_model(session, company_id, until - timedelta(days=days),
+                                         until, schedule, tzname)
+
+
+def _present(res: dict, names: dict) -> dict:
+    hours = lambda s: None if s is None else round(s / 3600, 5)
+    def stations(d):
+        return {names.get(k, k): {"busy": round(v["busy"], 3), "down": round(v["down"], 3)}
+                for k, v in d.items()}
+    out = {"unit": "open hours",
+           "baseline": {"leadTimeHours": hours(res["baseline"]["leadTimeSec"]),
+                        "stations": stations(res["baseline"]["stations"])},
+           "calibration": {"observedLeadTimeHours": hours(res["calibration"]["observedLeadTimeSec"]),
+                           "modelLeadTimeHours": hours(res["calibration"]["modelLeadTimeSec"]),
+                           "observedUnits": res["calibration"]["observedUnits"]},
+           "scenarios": []}
+    for r in res["scenarios"]:
+        out["scenarios"].append({
+            "name": names.get(r["name"], r["name"]),
+            "stationId": r["name"] if r["name"] in names else None,
+            "leadTimeHours": hours(r["leadTimeSec"]),
+            "gainHours": hours(r.get("gainSec")),
+            "gainCi95Hours": [hours(x) for x in r.get("gainCi95", [])] or None,
+            "gainShare": None if r.get("gainShare") is None else round(r["gainShare"], 4),
+            "stations": stations(r["stations"])})
+    return out
+
+
+def _assert_answerable(model):
+    from fastapi import HTTPException
+    if not any(st.worked for st in model.stations.values()):
+        raise HTTPException(409, "Nothing to simulate yet: no station has timed work in this window")
+    if not model.arrivals:
+        raise HTTPException(409, "Nothing to simulate yet: no lot has left an entry station in this window")
+
+
+@router.post("/what-if")
+async def what_if(body: WhatIfIn, ctx: CompanyContext = Depends(get_active_company),
+                  session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Replay the recorded period with something changed, and say how much the
+    lead time moves. See `core/whatif.py` for what the model is and is not."""
+    from ..core import whatif
+    from fastapi import HTTPException
+    ent = ctx.entitlement or await entitlements.resolve(session, ctx.company_id)
+    entitlements.ensure_line_doctor(ent)
+    model, names = await _model(session, ctx.company_id, body.days)
+    _assert_answerable(model)
+    scen = []
+    for sc in body.scenarios:
+        for c in sc.changes:
+            if c.stationId not in model.stations:
+                raise HTTPException(404, "Station not found")
+        scen.append(whatif.Scenario(name=sc.name, demand=sc.demandFactor, changes=[
+            whatif.Change(station=c.stationId, speed=c.speedFactor, cv=c.cv,
+                          breakdowns=c.breakdowns, changeovers=c.changeovers,
+                          servers=c.servers) for c in sc.changes]))
+    return _present(whatif.run(model, scen, body.replications), names)
+
+
+@router.post("/automation")
+async def automation(body: AutomationIn, ctx: CompanyContext = Depends(get_active_company),
+                     session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """The same machine tried at every station worked by hand, ranked by how
+    much it would shorten the lead time."""
+    from ..core import whatif
+    ent = ctx.entitlement or await entitlements.resolve(session, ctx.company_id)
+    entitlements.ensure_line_doctor(ent)
+    model, names = await _model(session, ctx.company_id, body.days)
+    _assert_answerable(model)
+    return _present(whatif.automation_candidates(model, body.speedFactor, body.cv,
+                                                 body.breakdowns, body.replications), names)

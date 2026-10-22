@@ -3,6 +3,8 @@ import { useStationsStore, useProcessesStore, useCardsStore, useMachinesStore } 
 import { statsApi } from '../../api/cards.api'
 import { sessionsApi, TREND_WINDOWS, type SessionStats, type TrendWindow } from '../../api/sessions.api'
 import { Trend } from './Trend'
+import { WhatIf } from './WhatIf'
+import { usePlan } from '../../auth/usePlan'
 import { StationDetail, type DetailMetric } from './StationDetail'
 import { client } from '../../api/client'
 import { useRole } from '../../auth/useRole'
@@ -18,6 +20,7 @@ type Overview = Awaited<ReturnType<typeof statsApi.overview>>
 const REFRESH_MS = 15_000
 
 export default function StatisticsView() {
+  const { lineDoctor } = usePlan()
   const [overview,      setOverview]      = useState<Overview | null>(null)
   const [sessionStats,  setSessionStats]  = useState<SessionStats[]>([])
   const [loading,       setLoading]       = useState(true)
@@ -269,6 +272,14 @@ export default function StatisticsView() {
             )}
           </Panel>
 
+          {/* Same plan gate as the line doctor: absent rather than refused, so
+              no 403 raises the upgrade dialog unprompted. */}
+          {lineDoctor && (
+            <Panel label="WHAT IF? WHERE WOULD A MACHINE HELP MOST" wide>
+              <WhatIf stations={stationList} />
+            </Panel>
+          )}
+
         </div>
       </div>
     </div>
@@ -395,7 +406,8 @@ function CycleOeeTable({
           <tr style={{ borderBottom: `1px solid ${color.border}` }}>
             {([['Station', undefined], ['Sessions', 'sessions'], ['Units', 'units'],
                ['Working time', 'workingTime'], ['Cycle time', 'cycleTime'],
-               ['Line cycle time', 'lineCycleTime'], ['OEE', 'oee']] as const).map(([h, metric]) => (
+               ['Line cycle time', 'lineCycleTime'], ['OEE', 'oee'], ['Uptime', undefined],
+               ['Avg WIP', undefined]] as const).map(([h, metric]) => (
               <th key={h} style={{
                 ...colStyle,
                 textAlign:     h === 'Station' ? 'left' : 'right',
@@ -494,6 +506,20 @@ function CycleOeeTable({
                   {trendWindow && !st?.isWarehouse
                     && <Trend now={st?.oee} before={st?.previous?.oee} unit="%"
                               windowLabel={TREND_WINDOWS[trendWindow]} />}
+                </td>
+                {/* Uptime is what the data box asks for and a timer cannot give:
+                    it comes from Pauses marked as breakdowns. Shown with the
+                    downtime behind it, so 100% with nothing recorded is not
+                    mistaken for a station that never stops. */}
+                <td style={{ ...colStyle, color: color.textSecondary }}
+                    title={st?.downtimeSec ? `${(st.downtimeSec / 60).toFixed(0)} min down in ${st.breakdowns} breakdown(s)`
+                                           : 'No breakdowns recorded'}>
+                  {st?.uptime != null && st.downtimeSec ? `${(st.uptime * 100).toFixed(1)}%` : '—'}
+                </td>
+                {/* The average over the window, from the lot history — not the
+                    count on the board right now, which swings through the day. */}
+                <td style={{ ...colStyle, color: color.textSecondary }}>
+                  {st?.wipAvg != null ? st.wipAvg.toFixed(st.wipAvg < 10 ? 1 : 0) : '—'}
                 </td>
               </tr>
             )

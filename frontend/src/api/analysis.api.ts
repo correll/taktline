@@ -6,7 +6,7 @@ export type Readiness = 'no-data' | 'partial' | 'ready'
 export interface Finding {
   rule: string
   severity: Severity
-  basis: 'topology' | 'timing'
+  basis: 'topology' | 'timing' | 'load'
   title: string
   detail: string
   stations: string[]
@@ -48,7 +48,38 @@ export interface RunoutInfo {
   lines: Record<string, LineRunout>
 }
 
+export interface WhatIfChange {
+  stationId: string
+  speedFactor?: number
+  cv?: number | null
+  breakdowns?: boolean
+  servers?: number
+}
+export interface WhatIfScenario { name: string; changes: WhatIfChange[]; demandFactor?: number }
+export interface WhatIfRow {
+  name: string
+  stationId: string | null
+  leadTimeHours: number | null
+  gainHours: number | null
+  gainCi95Hours: [number, number] | null
+  gainShare: number | null
+}
+export interface WhatIfResult {
+  unit: string
+  baseline: { leadTimeHours: number | null }
+  calibration: { observedLeadTimeHours: number | null; modelLeadTimeHours: number | null; observedUnits: number }
+  scenarios: WhatIfRow[]
+}
+
 export const analysisApi = {
+  /** Replay the recorded period with something changed. */
+  whatIf: (scenarios: WhatIfScenario[], replications = 20): Promise<WhatIfResult> =>
+    client.post('/analysis/what-if', { scenarios, replications }),
+
+  /** The same machine tried at every hand-worked station, ranked by gain. */
+  automation: (body: { speedFactor: number; cv: number | null; breakdowns: boolean }): Promise<WhatIfResult> =>
+    client.post('/analysis/automation', { ...body, replications: 20 }),
+
   /** What is wrong with this line. Computed entirely on our own server — no
    *  production data is sent anywhere. */
   report: (): Promise<LineReport> => client.get('/analysis/'),

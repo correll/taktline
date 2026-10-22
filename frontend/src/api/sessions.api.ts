@@ -9,7 +9,23 @@ export interface WorkSession {
   startedAt:   string
   endedAt:     string | null
   durationSec: number | null
+  /** Stoppage time inside the session; durationSec excludes it. */
+  pausedSec?:  number
+  /** Set while the session is paused. */
+  pausedAt?:   string | null
+  pauseReason?: StoppageReason | null
+  /** operator | move | next_start — anything but operator means Stop was never pressed. */
+  closedBy?:   string | null
 }
+
+export type StoppageReason = 'breakdown' | 'changeover' | 'material' | 'other'
+
+export const STOPPAGE_REASONS: { key: StoppageReason; label: string }[] = [
+  { key: 'breakdown',  label: 'Breakdown' },
+  { key: 'changeover', label: 'Changeover' },
+  { key: 'material',   label: 'Waiting for material' },
+  { key: 'other',      label: 'Other' },
+]
 
 export interface SessionStats {
   stationId:       string
@@ -33,6 +49,17 @@ export interface SessionStats {
     totalUnits:       number
   } | null
   window?: TrendWindow
+  /** Sessions closed only by the operator's next Start (not used for cycle time). */
+  unstoppedSessions?: number
+  downtimeSec?:   number
+  breakdowns?:    number
+  changeoverSec?: number
+  changeovers?:   number
+  otherStopSec?:  number
+  /** Working time ÷ (working + breakdown) — the data box's uptime. */
+  uptime?:        number | null
+  /** Time-averaged units at the station, rebuilt from the lot history. */
+  wipAvg?:        number | null
 }
 
 /** How far back a trend compares. Also the labels the picker shows. */
@@ -52,6 +79,12 @@ export const sessionsApi = {
 
   end: (id: string, quantity?: number): Promise<WorkSession> =>
     client.post(`/sessions/${id}/end`, { quantity }),
+
+  pause: (id: string, reason: StoppageReason): Promise<WorkSession> =>
+    client.post(`/sessions/${id}/pause`, { reason }),
+
+  resume: (id: string): Promise<WorkSession> =>
+    client.post(`/sessions/${id}/resume`),
 
   allStats: (window?: TrendWindow): Promise<SessionStats[]> =>
     client.get('/sessions/stats', window ? { params: { window } } : undefined),

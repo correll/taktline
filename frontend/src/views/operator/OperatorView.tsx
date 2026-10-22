@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Heart, ScanLine } from 'lucide-react'
 import { useStationsStore, useCardsStore, useProcessesStore } from '../../store'
-import { sessionsApi, type WorkSession } from '../../api/sessions.api'
+import { sessionsApi, STOPPAGE_REASONS, type StoppageReason, type WorkSession } from '../../api/sessions.api'
 import { color, font, size, shadow } from '../../theme/tokens'
 import type { Card, Station } from '../../models'
 import { formatDistanceToNow, differenceInSeconds } from 'date-fns'
@@ -986,19 +986,36 @@ function WorkingPanel({
   const stations  = useStationsStore((s) => s.stations)
   const templates = useProcessesStore((s) => s.lotTemplates)
   const [stopping, setStopping] = useState(false)
+  // The session as the server last returned it: pausing and resuming change
+  // its pausedSec / pausedAt, which the timer has to subtract.
+  const [cur, setCur] = useState<WorkSession>(session)
+  const [choosingReason, setChoosingReason] = useState(false)
+  useEffect(() => { setCur(session) }, [session._id])
 
   // Ensure the ISO string is treated as UTC — Motor/Pydantic may omit the Z suffix.
-  const startedAtStr = session.startedAt
-  const startedAt = new Date(
-    startedAtStr.endsWith('Z') || startedAtStr.includes('+') ? startedAtStr : startedAtStr + 'Z'
-  )
+  const asUtc = (raw: string) => new Date(raw.endsWith('Z') || raw.includes('+') ? raw : raw + 'Z')
+  const startedAt = asUtc(cur.startedAt)
+  const pausedAt  = cur.pausedAt ? asUtc(cur.pausedAt) : null
 
   useEffect(() => {
-    const tick = () => onElapsed(elapsedOffset + Math.max(0, differenceInSeconds(new Date(), startedAt)))
+    // Work time, as the server will record it: stoppages do not count.
+    const tick = () => {
+      const now = new Date()
+      const paused = (cur.pausedSec ?? 0) + (pausedAt ? Math.max(0, differenceInSeconds(now, pausedAt)) : 0)
+      onElapsed(elapsedOffset + Math.max(0, differenceInSeconds(now, startedAt) - paused))
+    }
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [session.startedAt, elapsedOffset])
+  }, [cur.startedAt, cur.pausedAt, cur.pausedSec, elapsedOffset])
+
+  const doPause = async (reason: StoppageReason) => {
+    setChoosingReason(false)
+    try { setCur(await sessionsApi.pause(cur._id, reason)) } catch (e) { console.error('pause failed:', e) }
+  }
+  const doResume = async () => {
+    try { setCur(await sessionsApi.resume(cur._id)) } catch (e) { console.error('resume failed:', e) }
+  }
 
   const station  = stations[stationId]
   const tmpl     = card ? templates[card.lotTemplateId] : null
@@ -1009,13 +1026,18 @@ function WorkingPanel({
   const showCycleArc = useGlobalSettingsStore((g) => g.settings.showCycleArc)
   const [stationCycle, setStationCycle] = useState<number | null>(null)
   useEffect(() => {
-    if (!showCycleArc) { setStationCycle(null); return }
     let alive = true
     sessionsApi.stationStats(stationId)
       .then((st) => { if (alive) setStationCycle(st.cycleTimeSec) })
       .catch(() => { if (alive) setStationCycle(null) })
     return () => { alive = false }
-  }, [showCycleArc, stationId])
+  }, [stationId])
+  // A timer far past what this lot usually takes here is most often a Stop
+  // that was never pressed. Ask, rather than let it run into the next lot:
+  // a forgotten Stop inflates the station's cycle time and can hide the
+  // constraint behind a station that only looks slow.
+  const expected = stationCycle != null && stationCycle > 0 ? stationCycle * Math.max(1, quantity) : null
+  const overrun  = !pausedAt && expected != null && elapsed > Math.max(3 * expected, expected + 300)
 
   const doStop = async () => { setStopping(true); try { await onStop() } finally { setStopping(false) } }
 
@@ -1047,12 +1069,59 @@ function WorkingPanel({
         <div style={{ fontSize: 10, color: color.textDim, marginTop: 8, fontFamily: font.mono, letterSpacing: '0.12em' }}>
           ELAPSED TIME
         </div>
+        {pausedAt && (
+          <div style={{ fontSize: 12, color: color.statusFault, marginTop: 8, fontFamily: font.mono, letterSpacing: '0.1em' }}>
+            PAUSED · {(STOPPAGE_REASONS.find((r) => r.key === cur.pauseReason)?.label ?? 'stopped').toUpperCase()}
+          </div>
+        )}
         {showCycleArc && stationCycle != null && stationCycle > 0 && (
           <div style={{ marginTop: size.sp4 }}>
             <CycleArc elapsedSec={elapsed} expectedSec={stationCycle * Math.max(1, quantity)} />
           </div>
         )}
       </div>
+
+      {overrun && (
+        <div role="alert" style={{
+          maxWidth: 320, padding: `${size.sp3} ${size.sp4}`, borderRadius: size.radius,
+          background: `${color.statusFault}18`, color: color.statusFault, fontSize: 13, lineHeight: 1.5,
+        }}>
+          This lot has been running {Math.round(elapsed / expected!)}× longer than it usually
+          takes here. Still working on it? If it is finished, press Done; if the station is
+          stopped, press Pause.
+        </div>
+      )}
+
+      {/* PAUSE / RESUME */}
+      {pausedAt ? (
+        <button onClick={doResume} style={{
+          width: 200, padding: `${size.sp3} 0`, background: 'none',
+          border: `1px solid ${color.statusRunning}`, borderRadius: size.radiusMd,
+          color: color.statusRunning, fontFamily: font.mono, fontSize: 14, fontWeight: 700,
+          letterSpacing: '0.1em', cursor: 'pointer',
+        }}>RESUME</button>
+      ) : choosingReason ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: size.sp2, justifyContent: 'center', maxWidth: 320 }}>
+          {STOPPAGE_REASONS.map((r) => (
+            <button key={r.key} onClick={() => doPause(r.key)} style={{
+              padding: `${size.sp2} ${size.sp3}`, background: color.bgCard,
+              border: `1px solid ${color.border}`, borderRadius: size.radius,
+              color: color.textPrimary, fontSize: 13, cursor: 'pointer',
+            }}>{r.label}</button>
+          ))}
+          <button onClick={() => setChoosingReason(false)} style={{
+            padding: `${size.sp2} ${size.sp3}`, background: 'none', border: 'none',
+            color: color.textSecondary, fontSize: 13, cursor: 'pointer',
+          }}>Cancel</button>
+        </div>
+      ) : (
+        <button onClick={() => setChoosingReason(true)} title="The station stopped: breakdown, changeover, no material" style={{
+          width: 200, padding: `${size.sp3} 0`, background: 'none',
+          border: `1px solid ${color.border}`, borderRadius: size.radiusMd,
+          color: color.textSecondary, fontFamily: font.mono, fontSize: 14, fontWeight: 700,
+          letterSpacing: '0.1em', cursor: 'pointer',
+        }}>PAUSE</button>
+      )}
 
       {/* Quantity */}
       <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: size.sp2 }}>

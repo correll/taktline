@@ -182,7 +182,7 @@ def _topo(routes: list, nodes: list) -> list:
 # ─── Structural accumulation ──────────────────────────────────────────────────
 
 
-def _per_unit_need(s: Snapshot) -> dict:
+def _per_unit_need(s: Snapshot, exact: bool = False) -> dict:
     """How many pieces each station handles per finished unit, per process.
 
     This is the normalization every rate comparison depends on. On the battery
@@ -223,6 +223,19 @@ def _per_unit_need(s: Snapshot) -> dict:
             branch = outs[n]
             if not branch:
                 need[n] = 1
+                continue
+            if exact:
+                # Rates are normalised by the true share: a station upstream of
+                # a one-to-four split handles a quarter of a piece per finished
+                # unit, not one. Rounded up and floored at one (right for
+                # seeding whole lots), it read four times slower than it is and
+                # could be named the constraint of a perfectly paced line.
+                per = [consumes(r) * need.get(r.unload, 1) / produces(r) for r in branch]
+                if n in choice and len(branch) >= 2:
+                    kept = [p for r, p in zip(branch, per) if r.unload not in storage]
+                    need[n] = sum(kept) if kept else 1
+                else:
+                    need[n] = max(per)
                 continue
             per = [math.ceil(consumes(r) * need.get(r.unload, 1) / produces(r)) for r in branch]
             if n in choice and len(branch) >= 2:
@@ -535,7 +548,7 @@ def _timing_findings(s: Snapshot) -> list:
         return out
 
     by_process = _by_process(s)
-    needs = _per_unit_need(s)
+    needs = _per_unit_need(s, exact=True)
     shelves = {st.id for st in s.stations if st.is_storage}
     floor = {sid: n for sid, n in s.wip.items() if sid not in shelves and n > 0}
     oees = {sid: m.oee for sid, m in worked.items() if m.oee is not None}
@@ -560,7 +573,7 @@ def _timing_findings(s: Snapshot) -> list:
     for pid, routes in by_process.items():
         need = needs.get(pid, {})
         members = {r.load for r in routes} | {r.unload for r in routes}
-        norm = {sid: worked[sid].line_cycle_sec * max(1, need.get(sid, 1))
+        norm = {sid: worked[sid].line_cycle_sec * need.get(sid, 1)
                 for sid in members
                 if sid in worked and worked[sid].line_cycle_sec}
         if not norm:
@@ -603,10 +616,10 @@ def _timing_findings(s: Snapshot) -> list:
             typical = statistics.median(others) if others else 0
             if typical and rest_norm[slowest] > 1.3 * typical:
                 constraint_of[pid] = slowest
-                factor = max(1, need.get(slowest, 1))
+                factor = need.get(slowest, 1)
                 per_unit = (f"A finished unit's worth of work leaves it every "
                             f"{_mmss(rest_norm[slowest])}"
-                            + (f" ({factor} pieces at {_mmss(worked[slowest].line_cycle_sec)}"
+                            + (f" ({factor:g} pieces at {_mmss(worked[slowest].line_cycle_sec)}"
                                f" each)" if factor > 1 else "")
                             + f", against {_mmss(typical)} elsewhere on {pname}.")
                 evidence = []
@@ -688,13 +701,13 @@ def _timing_findings(s: Snapshot) -> list:
         need = needs.get(pid, {})
         members = ({r.load for r in by_process.get(pid, [])}
                    | {r.unload for r in by_process.get(pid, [])})
-        per_unit = {sid: worked[sid].cycle_sec * max(1, need.get(sid, 1))
+        per_unit = {sid: worked[sid].cycle_sec * need.get(sid, 1)
                     for sid in members if sid in worked and worked[sid].cycle_sec}
         over = [(sid, w) for sid, w in per_unit.items() if w > p.desired_takt_sec]
         if over:
             worst = max(over, key=lambda t: t[1])
             sid, w = worst
-            factor = max(1, need.get(sid, 1))
+            factor = need.get(sid, 1)
             benches = math.ceil(w / p.desired_takt_sec)
             oee_note = ""
             if sid in oees and oees[sid] and oees[sid] < 0.97:
@@ -710,7 +723,7 @@ def _timing_findings(s: Snapshot) -> list:
                 detail=f"Takt is {_mmss(p.desired_takt_sec)} — one finished unit must "
                        f"leave that often to meet demand — but each unit needs "
                        f"{_mmss(w)} of work at {names.get(sid, 'this station')}"
-                       + (f" ({factor} pieces at {_mmss(worked[sid].cycle_sec)} each)"
+                       + (f" ({factor:g} pieces at {_mmss(worked[sid].cycle_sec)} each)"
                           if factor > 1 else "")
                        + ". A station whose work content exceeds takt cannot keep up "
                        f"however well it is run. Arithmetic, not opinion: this step "
@@ -761,7 +774,7 @@ def _timing_findings(s: Snapshot) -> list:
     factor_of = {}
     for pid, need in needs.items():
         for sid, k in need.items():
-            factor_of[sid] = max(factor_of.get(sid, 1), k)
+            factor_of[sid] = max(factor_of.get(sid, k), k)
     cycles = {sid: m.cycle_sec * factor_of.get(sid, 1)
               for sid, m in worked.items() if m.cycle_sec}
     if len(cycles) >= 3:
@@ -862,7 +875,7 @@ def _timing_findings(s: Snapshot) -> list:
                 ends.add(n)
         exit_ths = [1.0 / s.metrics[n].line_cycle_sec for n in sorted(ends)
                     if n in s.metrics and s.metrics[n].line_cycle_sec]
-        touch = sum(worked[sid].cycle_sec * max(1, need.get(sid, 1))
+        touch = sum(worked[sid].cycle_sec * need.get(sid, 1)
                     for sid in members if sid in worked and worked[sid].cycle_sec)
         if not exit_ths or touch <= 0:
             continue
@@ -895,7 +908,7 @@ def _timing_findings(s: Snapshot) -> list:
         for m_station, feeds in ins_by.items():
             if len(feeds) < 2:
                 continue
-            feed_norm = {u: worked[u].line_cycle_sec * max(1, need.get(u, 1))
+            feed_norm = {u: worked[u].line_cycle_sec * need.get(u, 1)
                          for u in feeds if u in worked and worked[u].line_cycle_sec}
             if len(feed_norm) < 2:
                 continue

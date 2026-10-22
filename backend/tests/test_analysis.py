@@ -504,6 +504,24 @@ def test_flow_efficiency_is_the_value_stream_headline():
     assert "Little's law" in f.detail
 
 
+def test_a_station_upstream_of_a_split_is_normalised_by_its_true_share():
+    """One bar is cut into four tubes of each kind. A bar leaving every 120 s
+    feeds tubes every 30 s: the line is in step. Rounded up to one piece per
+    finished unit, the bar read four times slower than the tubes and was named
+    the constraint of a perfectly paced line."""
+    stations = [("src", "Saw stock"), ("bar", "Bar"), ("cut", "Cut"),
+                ("ta", "Tube A"), ("tb", "Tube B")]
+    routes = [("src", "bar"), ("bar", "cut"), ("cut", "ta", 4), ("cut", "tb", 4)]
+    snap = line(stations, routes, templates=[("t1", "Bar", "p1", "src")],
+                metrics=timed(src=dict(**BUSY, cycle_sec=60, line_cycle_sec=120),
+                              bar=dict(**BUSY, cycle_sec=60, line_cycle_sec=120),
+                              cut=dict(**BUSY, cycle_sec=10, line_cycle_sec=15),
+                              ta=dict(**BUSY, cycle_sec=20, line_cycle_sec=30),
+                              tb=dict(**BUSY, cycle_sec=20, line_cycle_sec=30)))
+    named = [f for f in analyse(snap).findings if f.rule == "bottleneck"]
+    assert not any("bar" in f.stations for f in named), [f.title for f in named]
+
+
 def test_a_line_that_ends_on_a_shelf_still_reports_its_lead_time():
     """Nothing departs a warehouse, so the exit rate is read where goods
     leave for it. Measured at the shelf itself, every line ending in storage

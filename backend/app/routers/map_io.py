@@ -58,7 +58,10 @@ from .routes import (_check_boundary_placement, _process_edges, _validate_output
 
 router = APIRouter(prefix="/map-io", tags=["map-io"])
 
-MAX_STATIONS, MAX_PROCESSES, MAX_ROUTES, MAX_TEMPLATES = 200, 50, 500, 300
+# MAX_ROUTES was 500, which a high-mix line passes long before anything else:
+# 50 product variants of a dozen steps each is 600 routes. Found by replaying a
+# day of the Bosch production-line data set (24 stations, 50 paths, 598 routes).
+MAX_STATIONS, MAX_PROCESSES, MAX_ROUTES, MAX_TEMPLATES = 200, 50, 2000, 300
 
 _NAME = Field(min_length=1, max_length=120)
 _REF = Field(min_length=1, max_length=64)

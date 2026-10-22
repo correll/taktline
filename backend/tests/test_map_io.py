@@ -233,3 +233,24 @@ def test_the_battery_example_imports_and_runs(actor):
     assert m.status_code == 201, m.text
     made = a.req("GET", f"/cards/{m.json()['createdCardId']}").json()
     assert made["lotTemplateId"] == reman["_id"]
+
+
+def test_a_high_mix_line_with_many_routes_imports(actor):
+    """Fifty product variants of twelve steps each is 600 routes: an ordinary
+    high-mix line, and over the old cap of 500. Each variant is its own process
+    over shared stations, the way either/or routing is modelled."""
+    a = actor(); bootstrap_admin(a)
+    n_st, n_proc, steps = 24, 50, 12
+    stations = [{"ref": f"s{i}", "name": f"S{i}"} for i in range(n_st)]
+    processes = [{"ref": f"p{k}", "name": f"Variant {k}"} for k in range(n_proc)]
+    routes = []
+    for k in range(n_proc):
+        path = sorted({(k * 7 + j * 5) % n_st for j in range(40)})[:steps]
+        routes += [{"process": f"p{k}", "load": f"s{x}", "unload": f"s{y}"}
+                   for x, y in zip(path, path[1:])]
+    assert len(routes) > 500
+    doc = {"kind": "taktline-map", "version": 1, "stations": stations,
+           "processes": processes, "templates": [], "routes": routes}
+    r = a.req("POST", "/map-io/import", doc)
+    assert r.status_code == 200, r.text[:300]
+    assert len(a.req("GET", "/routes/").json()) == len(routes)

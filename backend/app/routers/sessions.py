@@ -10,7 +10,11 @@ from ..db.tables import (
     CardEvent as CardEventRow, GlobalSettings as GlobalSettingsRow, Route as RouteRow,
 )
 from ..deps.auth import CompanyContext, get_active_company
-from ..models.session import WorkSession, SessionCreate, SessionEnd
+from ..models.session import (WorkSession, SessionCreate, SessionEnd, SessionPause,
+                              Stoppage, StoppageCreate)
+from ..db.tables import Stoppage as StoppageRow
+from ..core import work
+from ..core.flow import average_wip
 from ..models.common import utcnow
 from ..core.schedule import default_work_hours, open_seconds, shift_starts
 from ..core.entitlements import works_read_only
@@ -48,7 +52,18 @@ def _to_session(r: SessionRow) -> WorkSession:
         startedAt=r.startedAt,
         endedAt=r.endedAt,
         durationSec=r.durationSec,
+        pausedSec=r.pausedSec or 0.0,
+        pausedAt=r.pausedAt,
+        pauseReason=r.pauseReason,
+        closedBy=r.closedBy,
     )
+
+
+def _to_stoppage(r: StoppageRow) -> Stoppage:
+    return Stoppage(_id=str(r.id), stationId=str(r.stationId),
+                    sessionId=str(r.sessionId) if r.sessionId else None,
+                    operatorId=r.operatorId, reason=r.reason, startedAt=r.startedAt,
+                    endedAt=r.endedAt, durationSec=r.durationSec)
 
 
 async def _get_owned(session: AsyncSession, session_id: str, ctx: CompanyContext) -> SessionRow:
@@ -99,9 +114,7 @@ async def start_session(body: SessionCreate, ctx: CompanyContext = Depends(get_a
         )
     )).scalars().first()
     if existing:
-        now = utcnow()
-        existing.endedAt = now
-        existing.durationSec = (now - existing.startedAt).total_seconds() if existing.startedAt else None
+        await work.close(session, existing, utcnow(), "next_start")
 
     row = SessionRow(
         companyId=ctx.company_id,
@@ -139,13 +152,87 @@ async def end_session(session_id: str, body: SessionEnd,
     row = await _get_owned(session, session_id, ctx)
     if row.endedAt is not None:
         raise HTTPException(400, "Session already closed")
-    ended_at = utcnow()
-    row.endedAt = ended_at
-    row.durationSec = (ended_at - row.startedAt).total_seconds()
-    if body.quantity is not None:
-        row.quantity = body.quantity
-    await session.flush()
+    await work.close(session, row, utcnow(), "operator", quantity=body.quantity)
     return _to_session(row)
+
+
+@router.post("/{session_id}/pause", response_model=WorkSession)
+@works_read_only
+async def pause_session(session_id: str, body: SessionPause,
+                        ctx: CompanyContext = Depends(get_active_company),
+                        session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """Stop the clock without ending the work: the station broke down, is being
+    changed over, or is waiting for material. The pause becomes a stoppage, and
+    the session's work time excludes it."""
+    row = await _get_owned(session, session_id, ctx)
+    if row.endedAt is not None:
+        raise HTTPException(400, "Session already closed")
+    await work.pause(session, row, body.reason, utcnow())
+    return _to_session(row)
+
+
+@router.post("/{session_id}/resume", response_model=WorkSession)
+@works_read_only
+async def resume_session(session_id: str, ctx: CompanyContext = Depends(get_active_company),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    row = await _get_owned(session, session_id, ctx)
+    if row.endedAt is not None:
+        raise HTTPException(400, "Session already closed")
+    await work.resume(session, row, utcnow())
+    return _to_session(row)
+
+
+# ─── Stoppages without a session ─────────────────────────────────────────────
+
+stoppages_router = APIRouter(prefix="/stoppages", tags=["sessions"])
+
+
+@stoppages_router.get("/", response_model=List[Stoppage])
+async def list_stoppages(stationId: Optional[str] = None, open_only: bool = False,
+                         ctx: CompanyContext = Depends(get_active_company),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    stmt = select(StoppageRow).where(StoppageRow.companyId == ctx.company_id)
+    if stationId:
+        sid = parse_uuid(stationId)
+        if sid is None:
+            return []
+        stmt = stmt.where(StoppageRow.stationId == sid)
+    if open_only:
+        stmt = stmt.where(StoppageRow.endedAt.is_(None))
+    rows = (await session.execute(stmt.order_by(StoppageRow.startedAt.desc()).limit(200))).scalars().all()
+    return [_to_stoppage(r) for r in rows]
+
+
+@stoppages_router.post("/", response_model=Stoppage, status_code=201)
+async def start_stoppage(body: StoppageCreate, ctx: CompanyContext = Depends(get_active_company),
+                         session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """A station stopped while nobody was working a lot on it."""
+    station_uuid = require_uuid(body.stationId, "Station not found")
+    station = await session.get(StationRow, station_uuid)
+    if station is None or station.companyId != ctx.company_id:
+        raise HTTPException(404, "Station not found")
+    row = StoppageRow(companyId=ctx.company_id, stationId=station_uuid,
+                      operatorId=body.operatorId, reason=body.reason, startedAt=utcnow())
+    session.add(row)
+    await session.flush()
+    return _to_stoppage(row)
+
+
+@stoppages_router.post("/{stoppage_id}/end", response_model=Stoppage)
+@works_read_only
+async def end_stoppage(stoppage_id: str, ctx: CompanyContext = Depends(get_active_company),
+                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    row = await session.get(StoppageRow, require_uuid(stoppage_id, "Stoppage not found"))
+    if row is None or row.companyId != ctx.company_id:
+        raise HTTPException(404, "Stoppage not found")
+    if row.sessionId is not None:
+        raise HTTPException(400, "This stop belongs to a paused session: resume the session")
+    if row.endedAt is None:
+        now = utcnow()
+        row.endedAt = now
+        row.durationSec = max(0.0, (now - row.startedAt).total_seconds())
+        await session.flush()
+    return _to_stoppage(row)
 
 
 @router.delete("/{session_id}", status_code=204)
@@ -310,7 +397,8 @@ _TREND_WINDOWS = {"1h": timedelta(hours=1), "1d": timedelta(days=1),
 
 
 async def _station_metrics(session, company_id, schedule, tzname, since, until) -> dict:
-    """cycle time, line cycle time and OEE per station over one window.
+    """cycle time, line cycle time, OEE, stoppages and average WIP per station
+    over one window.
 
     Windowed on the *session* rather than pre-aggregated, so the same code
     answers both halves of a trend and the two halves cannot drift apart.
@@ -318,6 +406,7 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
     rows = (await session.execute(
         select(
             SessionRow.stationId,
+            SessionRow.closedBy,
             func.count().label("sessionCount"),
             func.coalesce(func.sum(SessionRow.quantity), 0).label("totalUnits"),
             func.coalesce(func.sum(SessionRow.durationSec), 0.0).label("totalWorking"),
@@ -326,27 +415,74 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
         )
         .where(SessionRow.companyId == company_id, SessionRow.endedAt.isnot(None),
                SessionRow.endedAt >= since, SessionRow.endedAt <= until)
-        .group_by(SessionRow.stationId)
+        .group_by(SessionRow.stationId, SessionRow.closedBy)
+    )).all()
+    stops = (await session.execute(
+        select(StoppageRow.stationId, StoppageRow.reason,
+               func.coalesce(func.sum(StoppageRow.durationSec), 0.0), func.count())
+        .where(StoppageRow.companyId == company_id, StoppageRow.endedAt.isnot(None),
+               StoppageRow.endedAt >= since, StoppageRow.endedAt <= until)
+        .group_by(StoppageRow.stationId, StoppageRow.reason)
     )).all()
     line_cycles = await _line_cycle_times(session, company_id, schedule, tzname,
                                           since=since, until=until)
     warehouses = await _warehouse_ids(session, company_id)
+    # Averaged over at most the departure look-back: long enough to cover a
+    # line's weekly rhythm, short enough that the statistics view (refreshed
+    # every few seconds) never walks a year of history.
+    wip_avg = await average_wip(session, company_id,
+                                max(since, until - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS)),
+                                until, schedule, tzname)
+
+    per: dict = {}
+    for d in rows:
+        a = per.setdefault(str(d.stationId), {"id": d.stationId, "all": [0, 0, 0.0],
+                                              "measured": [0, 0, 0.0],
+                                              "first": d.firstStart, "last": d.lastEnd})
+        a["first"] = min(a["first"], d.firstStart) if a["first"] else d.firstStart
+        a["last"] = max(a["last"], d.lastEnd) if a["last"] else d.lastEnd
+        for key in ("all",) + (("measured",) if d.closedBy != "next_start" else ()):
+            a[key][0] += d.sessionCount
+            a[key][1] += d.totalUnits or 0
+            a[key][2] += d.totalWorking or 0.0
+    stop_by: dict = {}
+    for sid, reason, secs, n in stops:
+        b = stop_by.setdefault(str(sid), {})
+        b[reason] = (b.get(reason, (0.0, 0))[0] + (secs or 0.0), b.get(reason, (0.0, 0))[1] + n)
 
     out: dict = {}
-    for d in rows:
-        units = d.totalUnits or 0
-        working = d.totalWorking or 0.0
-        sid = str(d.stationId)
+    for sid, a in per.items():
+        n_all, units_all, working_all = a["all"]
+        n_m, units_m, working_m = a["measured"]
+        # A session closed by the operator's *next* Start was never stopped:
+        # its end is when they came back, not when the work ended. Cycle time
+        # is read from the sessions that were actually stopped (by the
+        # operator, or by the lot leaving), as long as there are enough of
+        # them to read; a station where nobody ever presses Stop falls back to
+        # everything rather than to nothing.
+        units, working = (units_m, working_m) if n_m >= 3 else (units_all, working_all)
+        st = stop_by.get(sid, {})
+        down = st.get("breakdown", (0.0, 0))
+        co = st.get("changeover", (0.0, 0))
+        other = (st.get("material", (0.0, 0))[0] + st.get("other", (0.0, 0))[0])
         out[sid] = {
             "stationId": sid,
-            "sessionCount": d.sessionCount,
-            "totalUnits": units,
-            "totalWorkingSec": working,
+            "sessionCount": n_all,
+            "totalUnits": units_all,
+            "totalWorkingSec": working_all,
             "cycleTimeSec": (working / units) if units > 0 else None,
             "lineCycleTimeSec": line_cycles.get(sid),
-            "oee": None if d.stationId in warehouses
-                   else _oee(working, d.firstStart, d.lastEnd, schedule, tzname),
-            "isWarehouse": d.stationId in warehouses,
+            "oee": None if a["id"] in warehouses
+                   else _oee(working_all, a["first"], a["last"], schedule, tzname),
+            "isWarehouse": a["id"] in warehouses,
+            "unstoppedSessions": n_all - n_m,
+            "downtimeSec": down[0], "breakdowns": down[1],
+            "changeoverSec": co[0], "changeovers": co[1],
+            "otherStopSec": other,
+            # Uptime as the data box means it: of the time the station was
+            # meant to be working, the share it was not broken down.
+            "uptime": (working_all / (working_all + down[0])) if (working_all + down[0]) > 0 else None,
+            "wipAvg": wip_avg.get(sid),
         }
     # A station can have a measurable exit rate and no work sessions at all —
     # nobody runs a timer at a shipping bench, and an automated cell may never
@@ -361,6 +497,9 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
             "stationId": sid, "sessionCount": 0, "totalUnits": 0, "totalWorkingSec": 0.0,
             "cycleTimeSec": None, "lineCycleTimeSec": line_cycle, "oee": None,
             "isWarehouse": parse_uuid(sid) in warehouses,
+            "unstoppedSessions": 0, "downtimeSec": 0.0, "breakdowns": 0,
+            "changeoverSec": 0.0, "changeovers": 0, "otherStopSec": 0.0, "uptime": None,
+            "wipAvg": wip_avg.get(sid),
         }
     return out
 

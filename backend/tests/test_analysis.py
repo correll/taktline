@@ -542,6 +542,23 @@ def test_flow_efficiency_is_the_value_stream_headline():
     assert "Little's law" in f.detail
 
 
+def test_a_line_paced_by_its_orders_still_names_the_station_with_least_slack():
+    """Every station leaves at the release pace, so no exit interval stands
+    out; the station closest to capacity is the one working or broken down
+    for the largest share of open time (the paper's Acme line, where the
+    exit-rate rule named nothing in every replication)."""
+    stations = [("in", "Stock"), ("w1", "Weld 1"), ("w2", "Weld 2"), ("a1", "Assembly")]
+    routes = [("in", "w1"), ("w1", "w2"), ("w2", "a1")]
+    m = lambda oee, down=0.0: dict(sessions=50, units=1000, working_sec=36000.0 * oee / 0.5,
+                                   cycle_sec=40.0, line_cycle_sec=69.0, oee=oee,
+                                   downtime_sec=down)
+    snap = line(stations, routes, templates=[("t1", "Bracket", "p1", "in")],
+                metrics=timed(**{"in": m(0.1), "w1": m(0.55), "w2": m(0.66, down=0.2 * 72000),
+                                 "a1": m(0.85)}))
+    named = [f for f in analyse(snap).findings if f.rule == "bottleneck"]
+    assert len(named) == 1 and named[0].stations == ["w2"] and named[0].basis == "load"
+
+
 def test_a_station_upstream_of_a_split_is_normalised_by_its_true_share():
     """One bar is cut into four tubes of each kind. A bar leaving every 120 s
     feeds tubes every 30 s: the line is in step. Rounded up to one piece per

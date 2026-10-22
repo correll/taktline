@@ -83,6 +83,9 @@ class StationMetrics:
     oee: Optional[float] = None
     samples: list = field(default_factory=list)   # per-session seconds per piece
     operators: dict = field(default_factory=dict)  # operatorId → mean sec/piece
+    downtime_sec: float = 0.0       # recorded breakdowns
+    changeover_sec: float = 0.0     # recorded changeovers
+    wip_avg: Optional[float] = None  # time-averaged units, rebuilt from the history
 
 
 @dataclass
@@ -654,6 +657,49 @@ def _timing_findings(s: Snapshot) -> list:
                              "perUnitPieces": factor,
                              "evidence": len(evidence)}))
 
+    # ── A line paced by its orders has no slow exit, but it still has a
+    # station closest to its capacity, and that is the one that breaks first
+    # when demand grows or a robot is chosen. Exit intervals cannot show it
+    # (every station leaves at the release pace), so it is read from load: the
+    # share of open time a station is working, broken down or being changed
+    # over. Only when the exit-rate rule above has nothing to say.
+    for pid, routes in by_process.items():
+        if pid in constraint_of:
+            continue
+        members = {r.load for r in routes} | {r.unload for r in routes}
+        load = {}
+        for sid in members:
+            m = worked.get(sid)
+            if m is None or sid in entries or not m.oee or m.oee <= 0 or not m.working_sec:
+                continue
+            open_sec = m.working_sec / m.oee
+            load[sid] = min(1.0, (m.working_sec + m.downtime_sec + m.changeover_sec) / open_sec)
+        if len(load) < 2:
+            continue
+        top = max(load, key=lambda k: load[k])
+        rest = sorted((v for k, v in load.items() if k != top), reverse=True)
+        if load[top] < 0.7:
+            continue
+        constraint_of[pid] = top
+        pname = procs[pid].name if pid in procs else "this line"
+        m = worked[top]
+        parts = [f"working {m.oee * 100:.0f}%"]
+        if m.downtime_sec:
+            parts.append(f"broken down {m.downtime_sec / (m.working_sec / m.oee) * 100:.0f}%")
+        if m.changeover_sec:
+            parts.append(f"in changeover {m.changeover_sec / (m.working_sec / m.oee) * 100:.0f}%")
+        out.append(Finding(
+            rule="bottleneck", severity=WARNING, basis="load",
+            title=f"{names.get(top, '?')} is closest to its capacity",
+            detail=f"{pname} is paced by the work arriving, so every station leaves at the "
+                   f"same rate and none shows up as slow. {names.get(top, 'This station')} is "
+                   f"the one with the least slack: {_english_list(parts)} of open time, "
+                   f"{load[top] * 100:.0f}% in all, against {rest[0] * 100:.0f}% at the next "
+                   "busiest. It is the constraint the line will meet first if demand rises, "
+                   "and the first place where saved time shortens the queue.",
+            stations=[top], process=pid, manual="timing",
+            metrics={"load": round(load[top], 3), "nextLoad": round(rest[0], 3)}))
+
     # ── The gap between doing the work and the work leaving — with the cause.
     # The same gap has two opposite explanations, and WIP tells them apart:
     # pieces queued in front of the station mean the station is the holdup;
@@ -854,11 +900,29 @@ def _timing_findings(s: Snapshot) -> list:
     # single-digit percent — the unit spends its life waiting, and no one
     # working faster changes that. Only cutting WIP does.
     for pid, routes in by_process.items():
-        wip_here = s.wip_process.get(pid, 0)
-        if wip_here < 5:
-            continue
         need = needs.get(pid, {})
         members = {r.load for r in routes} | {r.unload for r in routes}
+        # Little's law holds for averages. Divided into the WIP on the floor at
+        # the moment someone asks, it returns the lead time of that moment, and
+        # a line's WIP swings through the day (the paper's Acme line: 18% low
+        # at shift end). The history gives the average, in finished-unit
+        # equivalents; the live count is the fallback while there is no history.
+        shelves_p = {st.id for st in s.stations if st.is_storage or st.provider}
+        avg = 0.0
+        have_avg = False
+        for sid in members:
+            m = s.metrics.get(sid)
+            if sid in shelves_p or m is None or m.wip_avg is None:
+                continue
+            per = s.wip_station_process.get(sid) or {}
+            total_here = sum(per.values())
+            share = (per.get(pid, 0) / total_here) if total_here else (
+                1.0 if sum(1 for rs in by_process.values() if any(sid in (r.load, r.unload) for r in rs)) == 1 else 0.0)
+            avg += m.wip_avg * share / max(need.get(sid, 1), 1e-9)
+            have_avg = True
+        wip_here = avg if have_avg else s.wip_process.get(pid, 0)
+        if wip_here < 5:
+            continue
         sinks = [n for n in members
                  if not any(r.load == n for r in routes)]
         # A process that ends on a shelf exits through the stations feeding
@@ -889,7 +953,7 @@ def _timing_findings(s: Snapshot) -> list:
             title=f"A unit crosses {pname} in {_mmss(lead)}; only "
                   f"{eff * 100:.0f}% of that is work",
             detail=f"By Little's law — lead time is WIP divided by throughput — the "
-                   f"{_words(wip_here)} units on the floor at today's exit rate mean "
+                   f"{_words(int(round(wip_here)))} units on the floor{' on average' if have_avg else ''} at today's exit rate mean "
                    f"about {_mmss(lead)} from release to finish, of which the work "
                    f"itself is {_mmss(touch)}. The other {(1 - eff) * 100:.0f}% is "
                    "waiting. Most job shops live in single digits here, so this is not "
@@ -897,7 +961,8 @@ def _timing_findings(s: Snapshot) -> list:
                    "in half halves the lead time, and nobody has to work faster.",
             process=pid, waste="Inventory", manual="waste",
             metrics={"leadSec": round(lead, 0), "touchSec": round(touch, 0),
-                     "flowEfficiency": round(eff, 3), "wip": wip_here}))
+                     "flowEfficiency": round(eff, 3), "wip": round(wip_here, 1),
+                     "wipBasis": "average" if have_avg else "live"}))
 
     # ── A merge waits for its slowest feed: matched sets, not full bins.
     for pid, routes in by_process.items():

@@ -514,6 +514,45 @@ class WorkSession(Base):
         DateTime(timezone=True), nullable=True
     )
     durationSec: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Work time excludes stoppages. A timer left running through a breakdown
+    # used to charge the repair to cycle time (the paper's S. Weld 2 read a
+    # fifth over its work content), and nowhere recorded that the station had
+    # been down. Pausing keeps the two apart: durationSec is work only.
+    pausedSec: Mapped[float] = mapped_column(Float, nullable=False, default=0.0,
+                                             server_default=text("0"))
+    pausedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pauseReason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Who ended it: the operator, the lot leaving the station, or the same
+    # operator's next Start. Anything but 'operator' means the Stop was never
+    # pressed, and the end time is the best evidence available, not a reading.
+    closedBy: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class Stoppage(Base):
+    """A station not working: broken down, being changed over, starved of
+    material. Recorded by the operator (Pause on a running session, or a stop
+    with no session at all), because these are the three numbers a value
+    stream map's data box asks for that a work timer cannot give."""
+    __tablename__ = "stoppages"
+    __table_args__ = (
+        CheckConstraint("reason IN ('breakdown', 'changeover', 'material', 'other')",
+                        name="ck_stoppage_reason"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    companyId: Mapped[uuid.UUID] = _company_fk()
+    stationId: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stations.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    sessionId: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"),
+        nullable=True, index=True)
+    operatorId: Mapped[str] = mapped_column(String, nullable=False, default="default")
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    startedAt: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow,
+                                                nullable=False, index=True)
+    endedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    durationSec: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class MapSettings(Base):

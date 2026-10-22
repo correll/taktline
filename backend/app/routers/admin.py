@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core import entitlements
 from ..db.connection import SESSION_SCOPE, get_session
 from ..db.tables import (
+    Stoppage as StoppageRow,
     WorkSession as SessionRow,
     CardEvent as CardEventRow,
     Card as CardRow,
@@ -46,9 +47,15 @@ async def reset_statistics(ctx: CompanyContext = Depends(require_super_admin),
     those, and conflating the two would make "clean up my test data" delete a
     customer's factory.
     """
+    # Stoppages are measured history too: uptime and changeover time are
+    # computed from them, and a reset that kept them would report downtime
+    # against work that no longer exists.
+    stops = await session.execute(
+        delete(StoppageRow).where(StoppageRow.companyId == ctx.company_id))
     sessions = await session.execute(
         delete(SessionRow).where(SessionRow.companyId == ctx.company_id))
     events = await session.execute(
         delete(CardEventRow).where(CardEventRow.companyId == ctx.company_id))
     return {"workSessionsDeleted": sessions.rowcount or 0,
-            "cardEventsDeleted": events.rowcount or 0}
+            "cardEventsDeleted": events.rowcount or 0,
+            "stoppagesDeleted": stops.rowcount or 0}

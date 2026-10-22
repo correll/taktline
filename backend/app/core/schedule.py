@@ -114,3 +114,27 @@ def shift_starts(start_utc: datetime, end_utc: datetime,
             out.append(cur)
         prev_open = is_open
     return out
+
+
+def open_intervals(start_utc: datetime, end_utc: datetime,
+                   schedule: list[list[int]] | None, tzname: str = "UTC") -> list[tuple]:
+    """The open stretches of [start, end] as merged (from, to) UTC pairs.
+
+    Computed once per question and then swept against a step function, so a
+    time average over thousands of events does not walk the calendar once per
+    event."""
+    if not schedule or end_utc <= start_utc:
+        return []
+    tz = _tz(tzname)
+    out: list[list] = []
+    for cur in _quarters(start_utc, end_utc):
+        if not _is_open(schedule, cur.astimezone(tz)):
+            continue
+        a, b = max(cur, start_utc), min(cur + timedelta(minutes=15), end_utc)
+        if b <= a:
+            continue
+        if out and out[-1][1] >= a:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [(a, b) for a, b in out]

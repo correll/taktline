@@ -76,6 +76,8 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
     for w in work:
         if not w.durationSec or not w.quantity or w.quantity < 1:
             continue
+        if w.closedBy == "next_start":   # never stopped: not a reading of the work
+            continue
         sid = str(w.stationId)
         each = w.durationSec / w.quantity
         samples.setdefault(sid, []).append(each)
@@ -93,6 +95,9 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             oee=m.get("oee"),
             samples=samples.get(sid, []),
             operators=ops,
+            downtime_sec=m.get("downtimeSec", 0.0) or 0.0,
+            changeover_sec=m.get("changeoverSec", 0.0) or 0.0,
+            wip_avg=m.get("wipAvg"),
         )
 
     map_row = (await session.execute(

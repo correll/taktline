@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core import tracking
+from ..core import tracking, work
 from ..core.config import settings
 from ..core.ws_events import queue_event
 from ..core.integrations import can_sink
@@ -349,6 +349,8 @@ async def _perform_split(session, company_id, row: CardRow, from_id: str, to_id:
         new_bins[from_id] = {"count": remaining}
     _record_event(session, company_id, source_id, "updated",
                   fromStation=from_id, quantity=quantity, note="split")
+    await work.close_sessions_left_behind(session, company_id, row.id, parse_uuid(from_id),
+                                          max(0, remaining), utcnow())
     if not new_bins:
         await session.delete(row)
         _emit_card_delete(session, company_id, source_id)
@@ -450,6 +452,8 @@ async def _perform_bin_move(session, company_id, row: CardRow, from_id: str, to_
 
     _record_event(session, company_id, card_id, "moved",
                   fromStation=from_id, toStation=to_id, quantity=quantity)
+    await work.close_sessions_left_behind(session, company_id, row.id, parse_uuid(from_id),
+                                          max(0, new_from), utcnow())
     _emit_card_update(session, company_id, row)
     if from_count > 0 and new_from <= 0:
         await plugin_registry.notify_lot_depart(from_id, card_id)
@@ -1012,6 +1016,9 @@ async def handoff_card(card_id: str, body: HandoffBody,
     handed = {"lotNum": row.lotNum, "templateId": str(row.lotTemplateId),
               "fields": dict(row.fields or {})}
 
+    await work.close_sessions_left_behind(session, ctx.company_id, row.id,
+                                          parse_uuid(body.fromStationId),
+                                          max(0, remaining), utcnow())
     if not bins:
         await session.delete(row)
         _emit_card_delete(session, ctx.company_id, card_id)

@@ -56,7 +56,7 @@ export interface PlatformCompany {
   voucherCode: string | null
 }
 
-/** A code that grants a paid plan free for N months (e.g. CAMA2026). */
+/** A code that grants a paid plan free for N months (e.g. EXAMPLE2026). */
 export interface Voucher {
   id: string
   code: string

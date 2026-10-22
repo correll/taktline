@@ -2,6 +2,8 @@
 
 Browser-based digital Kanban / Manufacturing Execution System (MES) that models production flow as a directed graph. Lot-cards travel with physical lots through locations, operators log work at stations via a mobile dashboard, and the system collects real-time OEE and takt-time statistics.
 
+Taktline is free software under the [GNU Affero General Public License v3.0](LICENSE). A hosted version runs at [taktline.com](https://taktline.com); a self-hosted install without a licence file is unmetered (see `backend/app/core/licence.py`).
+
 ---
 
 ## Architecture
@@ -182,3 +184,19 @@ injection round-trips, and rate limiting).
 - **Passive wheel events** — the map canvas attaches its wheel handler with `{ passive: false }` via an imperative `addEventListener` in a `useEffect`. Do not convert it to a React `onWheel` prop; React 17+ registers those as passive, which silently drops `preventDefault` and can cause scroll-induced layout shifts that break the hooks count.
 
 Open http://localhost:3000 → you'll land on the sign-in page. Demo admin: demo-admin@taktline.dev / demo-password-123 (owns "E-Bike Demo Co" with the full 17-station process). Demo member: operator@example.com / operator-pass-1.
+
+---
+
+## License
+
+Copyright (C) 2026 Taktline LLC
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for details.
+
+If you run a modified version of Taktline as a network service, the AGPL requires
+you to offer its users the corresponding source code.

@@ -580,7 +580,7 @@ function UsersSection({ users, isOwner, selfId, onChanged }: {
 
 // ─── Vouchers ─────────────────────────────────────────────────────────────────
 
-/** Codes that grant a paid plan free for N months — e.g. CAMA2026 for an
+/** Codes that grant a paid plan free for N months — e.g. EXAMPLE2026 for an
  *  association's members. Owners mint and retire them; support can read the
  *  list to answer "why is this account on Shop for free". */
 function VouchersSection({ vouchers, isOwner, onChanged }: {
@@ -637,7 +637,7 @@ function VouchersSection({ vouchers, isOwner, onChanged }: {
                       display: 'flex', gap: size.sp2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <label style={voucherLabel}>Code
             <input style={{ ...input, width: 130, fontFamily: font.mono, textTransform: 'uppercase' }}
-                   value={code} onChange={(e) => setCode(e.target.value)} placeholder="CAMA2026" />
+                   value={code} onChange={(e) => setCode(e.target.value)} placeholder="EXAMPLE2026" />
           </label>
           <label style={voucherLabel}>Plan
             <select style={input} value={plan} onChange={(e) => setPlan(e.target.value)}>

@@ -222,7 +222,7 @@ function VoucherForm({ companyId, onRedeemed }: {
         <input
           value={code} onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void redeem() }}
-          placeholder="e.g. CAMA2026"
+          placeholder="e.g. EXAMPLE2026"
           style={{
             flex: '0 1 200px', padding: '7px 10px', fontSize: 13,
             background: color.bgInput, color: color.textPrimary,

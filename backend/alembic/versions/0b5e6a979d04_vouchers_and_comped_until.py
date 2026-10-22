@@ -1,6 +1,6 @@
 """vouchers and comped until
 
-Vouchers: a platform-minted code (e.g. CAMA2026) that grants a paid plan free
+Vouchers: a platform-minted code (e.g. EXAMPLE2026) that grants a paid plan free
 for N months. Redemption stamps the company's subscription row —
 `compedUntil` is the clock the entitlement gate derives "back to Free" from,
 `voucherCode` is attribution. `voucher_redemptions` is the once-per-company

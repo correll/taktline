@@ -58,7 +58,7 @@ export const billingApi = {
   setOnPremise: (companyId: string, enabled: boolean): Promise<Subscription> =>
     client.post(`/billing/${companyId}/on-premise`, { enabled }),
 
-  /** Redeem a voucher code (e.g. CAMA2026): the plan it names, free, for the
+  /** Redeem a voucher code (e.g. EXAMPLE2026): the plan it names, free, for the
    *  months it says. Case-insensitive; a leading # is fine. No card asked. */
   redeemVoucher: (companyId: string, code: string): Promise<Subscription> =>
     client.post(`/billing/${companyId}/voucher`, { code }),

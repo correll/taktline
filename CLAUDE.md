@@ -345,7 +345,7 @@ owner-only, audited, Platform → Companies → *Plan…*) is the mechanism behi
 webhook's `self_serve` guard already keeps a later Stripe event from demoting
 it. A **voucher** (`vouchers` table; minted at Platform → Vouchers, owner-only;
 redeemed at Settings → Billing via `POST /billing/{id}/voucher`, e.g.
-`CAMA2026`) grants a paid plan free for N **calendar** months — codes are
+`EXAMPLE2026`) grants a paid plan free for N **calendar** months — codes are
 matched case-insensitively with a leading `#` stripped, because they get typed
 from flyers. The grant is `compedUntil` on the subscription row and the gate
 *derives* "back to Free" from the clock (state stays `ok`, reason

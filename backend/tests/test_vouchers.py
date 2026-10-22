@@ -1,7 +1,7 @@
 """Vouchers and staff-set plans — the two ways an account gets a paid tier
 without a Stripe checkout.
 
-A voucher (e.g. CAMA2026) is minted by a platform owner and grants a paid plan
+A voucher (e.g. EXAMPLE2026) is minted by a platform owner and grants a paid plan
 free for N calendar months; redeeming stamps the subscription row and the
 entitlement gate derives "back to Free" from the clock. A staff-set plan is the
 mechanism behind "Plant and Enterprise are set on the subscription by staff" —
@@ -247,10 +247,10 @@ def test_a_real_subscription_supersedes_the_clock_but_keeps_attribution(monkeypa
     monkeypatch.setattr(billing_stripe, "shape_of_subscription", lambda obj: (1, False))
     row = Subscription(planCode=plans.SHOP, onPremise=False,
                        compedUntil=utcnow() + timedelta(days=90),
-                       voucherCode="CAMA2026")
+                       voucherCode="EXAMPLE2026")
     _apply_subscription(row, {"id": "sub_1", "status": "active"})
     assert row.compedUntil is None
-    assert row.voucherCode == "CAMA2026"       # how conversions get counted
+    assert row.voucherCode == "EXAMPLE2026"       # how conversions get counted
     assert row.planCode == plans.SHOP and row.stripeStatus == "active"
 
 

@@ -275,6 +275,44 @@ def test_every_shipped_example_gets_a_readable_report(actor, example):
         assert f["basis"] == "topology", "no timing data, so nothing may claim otherwise"
 
 
+def test_finished_goods_on_a_shelf_are_not_work_in_process(actor):
+    """Little's law divides the units on the floor by the exit rate. Units
+    resting on a storage shelf are finished, not in process; counted, the
+    warehouse inflated the lead time of every line that ends in one."""
+    import asyncio
+    import uuid as _uuid
+    from app.core import line_snapshot
+    from app.db.connection import SessionLocal
+
+    a = actor(); bootstrap_admin(a)
+    st = lambda ref, name, store=False: {
+        "ref": ref, "name": name, "description": "",
+        "position": {"x": 100, "y": 100, "width": 72, "height": 72}, "color": None,
+        "icon": "Box", "isStorage": store, "branchMode": None,
+        "integrationProvider": None, "integrationRole": None}
+    doc = {"kind": "taktline-map", "version": 1, "name": "Shelf",
+           "mapSettings": {"unit": "m", "pixelsPerUnit": 10, "stationSizeUnits": 3},
+           "stations": [st("a", "Cut"), st("b", "Pack"), st("s", "Store", True)],
+           "processes": [{"ref": "p", "name": "Line", "description": "", "desiredTaktSec": None}],
+           "templates": [{"ref": "t", "name": "Widget", "description": "", "process": "p",
+                          "startStation": "a", "color": None, "fields": []}],
+           "routes": [{"process": "p", "load": "a", "unload": "b", "quantity": 1, "outputTemplate": None},
+                      {"process": "p", "load": "b", "unload": "s", "quantity": 1, "outputTemplate": None}]}
+    assert a.req("POST", "/map-io/import", doc).status_code == 200
+    ids = {s["name"]: s["_id"] for s in a.req("GET", "/stations/").json()}
+    tmpl = a.req("GET", "/lot-templates/").json()[0]
+    r = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": tmpl["processId"],
+                                  "totalQuantity": 100,
+                                  "bins": {ids["Cut"]: {"count": 5}, ids["Store"]: {"count": 95}}})
+    assert r.status_code == 201, r.text
+
+    async def snap():
+        async with SessionLocal() as session:
+            return await line_snapshot.build(session, _uuid.UUID(a.company))
+    s = asyncio.run(snap())
+    assert s.wip_process == {tmpl["processId"]: 5}
+
+
 def test_a_shipped_example_has_no_fatal_flaw(actor):
     """The examples are what a new user imports to learn from. If the doctor
     calls one broken, either the example or the doctor is wrong."""

@@ -35,6 +35,11 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
     templates = await rows(LotTemplateRow)
     cards = await rows(CardRow)
 
+    # Finished goods resting on a shelf are not work in process. Counted, they
+    # inflated Little's-law lead time with the warehouse: on the paper's Acme
+    # line every lot card's whole quantity read as "on the floor", including
+    # the units already delivered to the customer shelf.
+    off_floor = {str(st.id) for st in stations if st.isStorage or st.integrationProvider}
     wip: dict = {}
     wip_process: dict = {}
     wip_station_process: dict = {}
@@ -44,7 +49,8 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             wip[sid] = wip.get(sid, 0) + n
             if c.processId:
                 pid = str(c.processId)
-                wip_process[pid] = wip_process.get(pid, 0) + n
+                if str(sid) not in off_floor:
+                    wip_process[pid] = wip_process.get(pid, 0) + n
                 per = wip_station_process.setdefault(sid, {})
                 per[pid] = per.get(pid, 0) + n
 

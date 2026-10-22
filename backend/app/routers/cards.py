@@ -145,7 +145,15 @@ async def create_card(body: CardCreate, ctx: CompanyContext = Depends(require_ad
 
     card = _to_card(row)
     card_id = str(row.id)
-    _record_event(session, ctx.company_id, card_id, "created")
+    # Say where the units were born and how many. A bare 'created' made the
+    # audit log unable to say where a lot's units were until it first moved,
+    # so WIP could not be rebuilt from the history alone. No fromStation: a
+    # birth is not a departure, so line cycle time is unaffected.
+    placed = [(sid, b.count) for sid, b in card.bins.items() if b.count > 0]
+    for sid, n in placed:
+        _record_event(session, ctx.company_id, card_id, "created", toStation=sid, quantity=n)
+    if not placed:
+        _record_event(session, ctx.company_id, card_id, "created")
     _emit_card_update(session, ctx.company_id, row)
     for station_id, bin_data in card.bins.items():
         if bin_data.count > 0:

@@ -262,3 +262,23 @@ def test_typed_cells_are_still_typed(actor):
     started, units, dur = ws["A2"], ws["E2"], ws["F2"]
     assert started.is_date, f"start time exported as {started.data_type}"
     assert isinstance(units.value, int) and isinstance(dur.value, (int, float))
+
+
+def test_the_history_alone_can_rebuild_where_units_are(actor):
+    """After a statistics reset, the lot history is all that says how work moved.
+    A bare 'created' event left a lot's units nowhere until their first move,
+    so WIP per station could not be rebuilt from the history. Creation now
+    records where the units were born and how many."""
+    a = actor(); bootstrap_admin(a)
+    one, two, card = _line(a)
+    events = a.req("GET", f"/cards/{card['_id']}/events").json()
+    born = [e for e in events if e["type"] == "created"]
+    assert [(e["toStation"], e["quantity"]) for e in born] == [(one, 6)]
+    assert born[0]["fromStation"] is None          # a birth, not a departure
+    level = {}
+    for e in sorted(events, key=lambda e: e["timestamp"]):
+        if e["type"] in ("created", "moved"):
+            if e.get("fromStation"):
+                level[e["fromStation"]] = level.get(e["fromStation"], 0) - e["quantity"]
+            level[e["toStation"]] = level.get(e["toStation"], 0) + e["quantity"]
+    assert {k: v for k, v in level.items() if v} == {two: 6}

@@ -74,10 +74,12 @@ async def build_model(session, company_id, since: datetime, until: datetime,
                                  SessionRow.endedAt.isnot(None),
                                  SessionRow.endedAt >= since, SessionRow.startedAt <= until)
     )).scalars().all()
-    # One work-rate sample per lot and station: a lot worked across a break
-    # is recorded as two sessions, and treating a two-piece remnant as a lot
-    # of its own adds variance the line never had.
-    per_lot = defaultdict(lambda: [0.0, 0])
+    # One sample per lot and station, of how long the lot OCCUPIED the
+    # station: from its first Start to its last Stop there, in open time,
+    # minus pauses (breakdowns are modelled separately). A lot worked across
+    # a break is two sessions; summing only their work time would let the
+    # model's stations work through every break the real ones took.
+    per_lot = defaultdict(lambda: [None, None, 0.0, 0])
     rates = defaultdict(list)
     spans = defaultdict(list)
     working = defaultdict(float)
@@ -85,10 +87,12 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     for w in work:
         sid = str(w.stationId)
         if w.durationSec and w.quantity and w.quantity > 0 and w.closedBy != "next_start":
-            if w.cardId:
+            if w.cardId and w.startedAt and w.endedAt:
                 acc = per_lot[(sid, w.cardId)]
-                acc[0] += w.durationSec
-                acc[1] += w.quantity
+                acc[0] = w.startedAt if acc[0] is None else min(acc[0], w.startedAt)
+                acc[1] = w.endedAt if acc[1] is None else max(acc[1], w.endedAt)
+                acc[2] += w.pausedSec or 0.0
+                acc[3] += w.quantity
             else:
                 rates[sid].append(w.durationSec / w.quantity)
         working[sid] += w.durationSec or 0.0
@@ -96,8 +100,6 @@ async def build_model(session, company_id, since: datetime, until: datetime,
             spans[sid].append((w.startedAt, w.endedAt))
         if w.cardId:
             lots[sid].add(w.cardId)
-    for (sid, _), (secs, units) in per_lot.items():
-        rates[sid].append(secs / units)
     stops = (await session.execute(
         select(StoppageRow).where(StoppageRow.companyId == company_id,
                                   StoppageRow.endedAt.isnot(None),
@@ -140,6 +142,27 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     for e in events:
         if e.type == "moved" and e.fromStation and e.toStation:
             move_counts[(e.fromStation, e.toStation)] += int(e.quantity or 0)
+
+    # Which value stream each lot belongs to, from the routes its moves took
+    # (a finished or merged lot no longer exists in the cards table).
+    card_proc: dict = {}
+    for e in events:
+        if e.type == "moved" and e.fromStation and e.toStation and e.cardId not in card_proc:
+            ps = route_proc.get((e.fromStation, e.toStation))
+            if ps and len(ps) == 1:
+                card_proc[e.cardId] = next(iter(ps))
+    rates_by = defaultdict(lambda: defaultdict(list))
+    for (sid, card), (first, last, paused, units) in per_lot.items():
+        secs = max(0.0, clock(last) - clock(first) - paused)
+        if units <= 0 or secs <= 0:
+            continue
+        rates[sid].append(secs / units)
+        pid = card_proc.get(str(card))
+        if pid:
+            rates_by[sid][pid].append(secs / units)
+    for sid, stm in model_st.items():
+        stm.rates = rates.get(sid, [])
+        stm.rates_by = {k: v for k, v in rates_by.get(sid, {}).items()}
 
     routing, merges, merge_lot, endpoints, entries = {}, {}, {}, set(), {}
     for pid, rs in by_p.items():

@@ -50,7 +50,11 @@ from typing import Optional
 class StationModel:
     id: str
     name: str
-    rates: list = field(default_factory=list)       # seconds per unit, one per session
+    rates: list = field(default_factory=list)       # seconds per unit, one per lot worked
+    # The same samples by value stream. A shared station does different work
+    # for different products (a paint booth: 300 s a widget, 150 s a bracket),
+    # and drawing a bracket's time for a widget lot is a different line.
+    rates_by: dict = field(default_factory=dict)
     servers: int = 1
     fail_rate: float = 0.0                          # breakdowns per working second
     repairs: list = field(default_factory=list)     # seconds
@@ -145,9 +149,10 @@ class _Sim:
         st = self.m.stations[sid]
         c = self.ch.get(sid)
         rw, rf, rc = self.rng[(sid, "work")], self.rng[(sid, "fail")], self.rng[(sid, "co")]
-        rate = rw.choice(st.rates)                       # drawn even when replaced: keeps streams aligned
+        pool = st.rates_by.get(lot.process) or st.rates
+        rate = rw.choice(pool)                           # drawn even when replaced: keeps streams aligned
         if c is not None and c.cv is not None:
-            mean = statistics.fmean(st.rates)
+            mean = statistics.fmean(pool)
             sd = c.cv / math.sqrt(max(1, lot.qty))
             s2 = math.log(1 + sd * sd)
             rate = mean * math.exp(rw.gauss(-s2 / 2, math.sqrt(s2)))

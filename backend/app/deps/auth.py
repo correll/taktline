@@ -81,6 +81,10 @@ def clear_auth_cookies(response: Response) -> None:
 # nightly sweep (core/sandbox_gc.SANDBOX_TTL_DAYS), so "try it" survives a night.
 SANDBOX_IDLE_TTL = 7 * 24 * 60 * 60
 
+# How stale lastSeenAt may get before a request refreshes it. Small against any
+# idle window, large enough that one login's requests rarely touch the row.
+_TOUCH_EVERY = timedelta(seconds=60)
+
 
 # ── Dependencies ───────────────────────────────────────────────────────────────
 async def get_current_user(
@@ -107,7 +111,21 @@ async def get_current_user(
     if row.expiresAt <= now or idle_deadline <= now:
         await session.delete(row)
         raise HTTPException(401, "Session expired")
-    row.lastSeenAt = now  # sliding idle window
+    # Sliding idle window. Two rules, both about lock order rather than time:
+    #
+    # * Touch at most once a minute. Every request used to write this row, so
+    #   every request from one login queued on one row lock.
+    # * When we do touch it, write it NOW. The session runs with autoflush off,
+    #   so a plain assignment was flushed at the handler's first flush — after
+    #   whatever the handler had locked by then. /cards/{id}/advance locks the
+    #   card FOR UPDATE first and flushed this row second; POST /sessions/
+    #   flushed this row first and then inserted a row whose foreign key waits
+    #   on the card. Two requests from one login took the two locks in opposite
+    #   orders and Postgres failed one with a deadlock (a 500 on the floor).
+    #   Flushing here makes this row the first lock of every request.
+    if now - row.lastSeenAt >= _TOUCH_EVERY:
+        row.lastSeenAt = now
+        await session.flush()
     return user
 
 

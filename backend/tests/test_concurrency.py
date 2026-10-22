@@ -204,3 +204,45 @@ def test_a_webhook_redelivered_at_the_same_instant_releases_once(actor):
               if o["externalRef"] == "MO/00042"]
     assert len(orders) == 1, f"{len(orders)} orders from one reference (codes {codes})"
     assert sorted(codes).count(201) <= 1, f"more than one release reported: {codes}"
+
+
+# ── One login, one lot: a work session starts while the lot moves ───────────
+
+def test_session_start_and_advance_on_one_lot_never_deadlock(actor):
+    """A tablet starts work on a lot at one bench while another part of the same
+    lot is advanced between two others. Both requests come from the same login
+    (a shared station login is common). They used to take the same two row
+    locks in opposite orders: advance locked the card FOR UPDATE and only then
+    flushed the login session's lastSeenAt; a session start flushed lastSeenAt
+    first and then inserted a row whose foreign key waits on the card. Postgres
+    broke the cycle by failing one request with a 500. Found by the paper's
+    experiment player, which fires exactly this mix at shift changes."""
+    a = actor(); bootstrap_admin(a)
+    s1, s2, s3 = _station(a, "Weld"), _station(a, "Assemble"), _station(a, "Test")
+    proc = a.req("POST", "/processes/", {"name": "Brackets"}).json()["_id"]
+    for load, unload in ((s1, s2), (s2, s3)):
+        assert a.req("POST", "/routes/", {"processId": proc, "load": load,
+                                          "unload": unload, "quantity": 1}).status_code == 201
+    tm = a.req("POST", "/lot-templates/", {"name": "Bracket", "processId": proc,
+                                           "startStationId": s1}).json()["_id"]
+    rounds, n = 12, 8
+    card = a.req("POST", "/cards/", {"lotTemplateId": tm, "processId": proc, "lotNum": "L-1",
+                                     "totalQuantity": rounds * n,
+                                     "bins": {s1: {"count": rounds * n}}}).json()["_id"]
+    clients = _race(n, lambda _i: actor())
+    for c in clients:
+        c.tc.cookies.update(a.tc.cookies)
+        c.company = a.company
+
+    def call(i):
+        c = clients[i]
+        if i % 2:
+            return c.req("POST", f"/cards/{card}/advance",
+                         {"fromStationId": s1, "toStationId": s2, "quantity": 1}).status_code
+        return c.req("POST", "/sessions/", {"stationId": s3, "cardId": card,
+                                            "operatorId": f"op{i}", "quantity": 1}).status_code
+
+    codes = [code for _ in range(rounds) for code in _race(n, call)]
+    assert all(code in (200, 201) for code in codes), sorted(set(codes))
+    moved = rounds * (n // 2)
+    assert _units(a).get(s2) == moved          # every advance landed exactly once

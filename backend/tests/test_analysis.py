@@ -143,6 +143,21 @@ def test_one_very_long_move_is_noticed():
     assert f and f.waste == "Transport"
 
 
+def test_two_processes_sharing_the_long_move_do_not_crash_the_report():
+    """Either/or routing is two processes over the same stations, so the same
+    long move appears twice with identical length. max() over (distance,
+    route) then compared the routes and raised TypeError: the whole report
+    was a 500 on exactly the high-mix lines it is most useful for (found by
+    replaying the Bosch production-line data, one process per routing)."""
+    st = [("a", "Cut", {"x": 0, "y": 0}), ("b", "Sew", {"x": 100, "y": 0}),
+          ("c", "Press", {"x": 200, "y": 0}), ("d", "Pack", {"x": 5000, "y": 0})]
+    routes = [(x, y, 1, p) for p in ("p1", "p2") for x, y in (("a", "b"), ("b", "c"), ("c", "d"))]
+    r = analyse(line(st, routes, processes=(("p1", "Route A", None), ("p2", "Route B", None)),
+                     templates=[("t1", "Shirt", "p1", "a"), ("t2", "Shirt B", "p2", "a")], ppu=10.0))
+    f = next((f for f in r.findings if f.rule == "long-transport"), None)
+    assert f and set(f.stations) == {"c", "d"}
+
+
 # ── Timing ──────────────────────────────────────────────────────────────────
 
 def timed(**per_station):

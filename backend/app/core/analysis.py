@@ -466,7 +466,12 @@ def _topology_findings(s: Snapshot) -> list:
             median = statistics.median(d for d, _ in lengths)
             far = [(d, r) for d, r in lengths if median > 0 and d > 3 * median]
             if far:
-                d, r = max(far)
+                # Compare by distance only: two processes sharing one pair of
+                # stations give two routes of identical length, and a plain
+                # max() then compared RouteIn objects and raised TypeError,
+                # taking the whole report down (found replaying the Bosch line,
+                # one process per routing).
+                d, r = max(far, key=lambda x: x[0])
                 out.append(Finding(
                     rule="long-transport", severity=INSIGHT, basis="topology",
                     title="One move is much longer than the rest",

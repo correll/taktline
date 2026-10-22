@@ -848,7 +848,19 @@ def _timing_findings(s: Snapshot) -> list:
         members = {r.load for r in routes} | {r.unload for r in routes}
         sinks = [n for n in members
                  if not any(r.load == n for r in routes)]
-        exit_ths = [1.0 / s.metrics[n].line_cycle_sec for n in sinks
+        # A process that ends on a shelf exits through the stations feeding
+        # it: nothing ever departs a warehouse, so its line cycle time is
+        # null, and measuring there left every line that finishes into
+        # storage without a lead time at all. (Found by the paper's Acme
+        # experiment: the line ends at a Customer warehouse.)
+        storage = {st.id for st in s.stations if st.is_storage}
+        ends: set = set()
+        for n in sinks:
+            if n in storage:
+                ends |= {r.load for r in routes if r.unload == n and r.load not in storage}
+            else:
+                ends.add(n)
+        exit_ths = [1.0 / s.metrics[n].line_cycle_sec for n in sorted(ends)
                     if n in s.metrics and s.metrics[n].line_cycle_sec]
         touch = sum(worked[sid].cycle_sec * max(1, need.get(sid, 1))
                     for sid in members if sid in worked and worked[sid].cycle_sec)

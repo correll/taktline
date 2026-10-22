@@ -504,6 +504,21 @@ def test_flow_efficiency_is_the_value_stream_headline():
     assert "Little's law" in f.detail
 
 
+def test_a_line_that_ends_on_a_shelf_still_reports_its_lead_time():
+    """Nothing departs a warehouse, so the exit rate is read where goods
+    leave for it. Measured at the shelf itself, every line ending in storage
+    reported no lead time."""
+    stations = CHAIN + [("store", "Store", {"is_storage": True})]
+    snap = line(stations, CHAIN_ROUTES + [("pack", "store")], templates=CHAIN_TMPL,
+                metrics=timed(cut=dict(**BUSY, cycle_sec=60),
+                              sew=dict(**BUSY, cycle_sec=60),
+                              pack=dict(**BUSY, cycle_sec=60, line_cycle_sec=60)))
+    snap.wip_process["p1"] = 20
+    f = next((f for f in analyse(snap).findings if f.rule == "flow-efficiency"), None)
+    assert f is not None
+    assert f.metrics["leadSec"] == 1200
+
+
 def test_a_merge_paced_by_its_slowest_feed_is_named():
     stations = [("x", "Frames"), ("y", "Glass"), ("m", "Glazing"), ("e", "Pack")]
     routes = [("x", "m", 1), ("y", "m", 1), ("m", "e", 1)]

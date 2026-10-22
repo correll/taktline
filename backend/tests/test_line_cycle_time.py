@@ -207,3 +207,20 @@ def test_a_trend_window_narrows_the_numbers_and_carries_the_window_before(actor)
         assert a.req("GET", f"/sessions/stats?window={w}").status_code == 200
     bad = a.req("GET", "/sessions/stats?window=1y")
     assert bad.status_code == 400 and "window must be one of" in bad.text
+
+
+# ─── The real implementation, not a mirror ───────────────────────────────────
+
+def test_lots_leaving_together_are_one_departure_of_all_their_pieces():
+    """A truck takes two lots at once: 100 pieces left at 21:30 after the
+    station opened at 06:00. That is 930 open minutes for 100 pieces. Counted
+    as two departures, the second one's interval was zero, was dropped, and
+    its 40 pieces vanished: 930 min / 60 pieces, half again too slow."""
+    from app.routers.sessions import line_cycle_from_departures
+    open_ = FRI_OPEN.replace(hour=6)
+    truck = open_.replace(hour=21, minute=30)
+    out = line_cycle_from_departures([(truck, 60), (truck, 40)], [open_], open_)
+    assert out == 930 * 60 / 100, out
+    # and it still matches the mirror for ordinary, separate departures
+    deps = [(open_ + timedelta(minutes=m), q) for m, q in ((10, 2), (25, 5), (40, 1))]
+    assert line_cycle_from_departures(deps, [open_], open_) == _line_cycle(deps, [open_])

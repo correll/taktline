@@ -256,24 +256,48 @@ async def _line_cycle_times(session, company_id, schedule, tzname,
     out: dict[str, float] = {}
     for station_id, departures in per_station.items():
         floor = first_activity.get(station_id, departures[0][0])
-        station_opens = [o for o in opens if o >= floor]
-        intervals: list[float] = []
-        anchor = None
-        oi = 0
-        for ts, qty in departures:
-            # Re-anchor to the most recent shift opening at or before this
-            # departure: work that could not have been done is not delay.
-            while oi < len(station_opens) and station_opens[oi] <= ts:
-                if anchor is None or station_opens[oi] > anchor:
-                    anchor = station_opens[oi]
-                oi += 1
-            if anchor is not None and ts > anchor:
-                intervals.append((ts - anchor).total_seconds() / qty)
-            # The departure starts the clock for whatever leaves next.
-            anchor = ts
-        if intervals:
-            out[station_id] = sum(intervals) / len(intervals)
+        lct = line_cycle_from_departures(departures, opens, floor)
+        if lct is not None:
+            out[station_id] = lct
     return out
+
+
+def line_cycle_from_departures(departures, opens, floor) -> Optional[float]:
+    """Seconds per piece between one station's departures (the pure core of
+    `_line_cycle_times`, kept separate so it can be tested without a database).
+
+    `departures`: (timestamp, pieces), ascending. `opens`: shift openings,
+    ascending. `floor`: the station's first activity; no opening before it is
+    used as an anchor.
+    """
+    # Lots that leave at the same instant are ONE departure of all their
+    # pieces. Kept apart, the second lot's interval was zero, was skipped, and
+    # its pieces vanished from the rate: a truck taking two lots read as half
+    # the throughput it carried. (Found by the paper's Acme experiment: the
+    # daily truck takes the L and R lots together, and Shipping's line cycle
+    # time read 100 s against a true 68 s.)
+    merged: list = []
+    for ts, qty in departures:
+        if merged and merged[-1][0] == ts:
+            merged[-1] = (ts, merged[-1][1] + qty)
+        else:
+            merged.append((ts, qty))
+    station_opens = [o for o in opens if o >= floor]
+    intervals: list[float] = []
+    anchor = None
+    oi = 0
+    for ts, qty in merged:
+        # Re-anchor to the most recent shift opening at or before this
+        # departure: work that could not have been done is not delay.
+        while oi < len(station_opens) and station_opens[oi] <= ts:
+            if anchor is None or station_opens[oi] > anchor:
+                anchor = station_opens[oi]
+            oi += 1
+        if anchor is not None and ts > anchor:
+            intervals.append((ts - anchor).total_seconds() / qty)
+        # The departure starts the clock for whatever leaves next.
+        anchor = ts
+    return sum(intervals) / len(intervals) if intervals else None
 
 
 # ─── All-stations OEE / cycle-time summary ───────────────────────────────────

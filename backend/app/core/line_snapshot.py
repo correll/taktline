@@ -58,10 +58,13 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
     since = now - timedelta(days=LOOKBACK_DAYS)
     # Imported here rather than at module scope: `routers.sessions` pulls in
     # the router graph, and this module is imported by a background task.
-    from ..routers.sessions import _station_metrics, _work_schedule
+    from ..routers.sessions import (_line_cycle_times_by_process, _station_metrics,
+                                    _work_schedule)
 
     schedule, tzname = await _work_schedule(session, company_id)
     measured = await _station_metrics(session, company_id, schedule, tzname, since, now)
+    lct_by_process = await _line_cycle_times_by_process(session, company_id, schedule, tzname,
+                                                        since, now)
 
     # Per-session seconds per piece, and per-operator means. The aggregate
     # cannot answer "is this repeatable" or "do two people do it differently" —
@@ -123,6 +126,7 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             for t in templates],
         wip=wip,
         wip_process=wip_process,
+        line_cycle_by_process={(k[0], k[1]): v for k, v in lct_by_process.items()},
         wip_station_process=wip_station_process,
         metrics=metrics,
         pixels_per_unit=float(map_row.pixelsPerUnit) if map_row else 0.0,

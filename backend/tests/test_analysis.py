@@ -542,6 +542,26 @@ def test_flow_efficiency_is_the_value_stream_headline():
     assert "Little's law" in f.detail
 
 
+def test_a_shared_station_is_judged_by_each_streams_own_departures():
+    """Paint serves two streams, so over all departures it leaves twice as
+    often as either stream sees. Compared with that, the drill (one stream
+    only) looked like the bracket line's constraint. Per process, both leave at
+    the bracket line's pace, and nothing stands out."""
+    stations = [("stock", "Stock"), ("saw", "Saw"), ("drill", "Drill"), ("paint", "Paint"),
+                ("pack", "Pack")]
+    routes = [("stock", "saw"), ("saw", "drill"), ("drill", "paint"), ("paint", "pack")]
+    m = lambda lc: dict(sessions=20, units=200, working_sec=6000.0, cycle_sec=30.0,
+                        line_cycle_sec=lc, oee=0.5)
+    snap = line(stations, routes, templates=[("t1", "Bracket", "p1", "stock")],
+                metrics=timed(saw=m(60.0), drill=m(120.0), paint=m(60.0), pack=m(60.0)))
+    before = [f for f in analyse(snap).findings if f.rule == "bottleneck" and f.basis == "timing"]
+    assert before and before[0].stations == ["drill"]          # the old reading
+    snap.line_cycle_by_process = {("saw", "p1"): 120.0, ("paint", "p1"): 120.0,
+                                  ("pack", "p1"): 120.0, ("drill", "p1"): 120.0}
+    after = [f for f in analyse(snap).findings if f.rule == "bottleneck" and f.basis == "timing"]
+    assert after == []
+
+
 def test_a_line_paced_by_its_orders_still_names_the_station_with_least_slack():
     """Every station leaves at the release pace, so no exit interval stands
     out; the station closest to capacity is the one working or broken down

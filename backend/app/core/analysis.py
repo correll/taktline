@@ -98,6 +98,8 @@ class Snapshot:
     metrics: dict                   # stationId → StationMetrics
     # units on the floor per process — Little's law is per value stream
     wip_process: dict = field(default_factory=dict)
+    # (stationId, processId) → line cycle time from that process's departures
+    line_cycle_by_process: dict = field(default_factory=dict)
     # stationId → processId → units: the per-line buffer at each station,
     # which is what the runout rule (core/runout.py) divides by the rate
     wip_station_process: dict = field(default_factory=dict)
@@ -576,9 +578,9 @@ def _timing_findings(s: Snapshot) -> list:
     for pid, routes in by_process.items():
         need = needs.get(pid, {})
         members = {r.load for r in routes} | {r.unload for r in routes}
-        norm = {sid: worked[sid].line_cycle_sec * need.get(sid, 1)
-                for sid in members
-                if sid in worked and worked[sid].line_cycle_sec}
+        lct = {sid: s.line_cycle_by_process.get((sid, pid), worked[sid].line_cycle_sec)
+               for sid in members if sid in worked}
+        norm = {sid: v * need.get(sid, 1) for sid, v in lct.items() if v}
         if not norm:
             continue
         pname = procs[pid].name if pid in procs else "this line"
@@ -622,7 +624,7 @@ def _timing_findings(s: Snapshot) -> list:
                 factor = need.get(slowest, 1)
                 per_unit = (f"A finished unit's worth of work leaves it every "
                             f"{_mmss(rest_norm[slowest])}"
-                            + (f" ({factor:g} pieces at {_mmss(worked[slowest].line_cycle_sec)}"
+                            + (f" ({factor:g} pieces at {_mmss(lct[slowest])}"
                                f" each)" if factor > 1 else "")
                             + f", against {_mmss(typical)} elsewhere on {pname}.")
                 evidence = []
@@ -937,8 +939,9 @@ def _timing_findings(s: Snapshot) -> list:
                 ends |= {r.load for r in routes if r.unload == n and r.load not in storage}
             else:
                 ends.add(n)
-        exit_ths = [1.0 / s.metrics[n].line_cycle_sec for n in sorted(ends)
-                    if n in s.metrics and s.metrics[n].line_cycle_sec]
+        lc_end = {n: s.line_cycle_by_process.get((n, pid), s.metrics[n].line_cycle_sec)
+                  for n in ends if n in s.metrics}
+        exit_ths = [1.0 / v for n, v in sorted(lc_end.items()) if v]
         touch = sum(worked[sid].cycle_sec * need.get(sid, 1)
                     for sid in members if sid in worked and worked[sid].cycle_sec)
         if not exit_ths or touch <= 0:
@@ -973,8 +976,9 @@ def _timing_findings(s: Snapshot) -> list:
         for m_station, feeds in ins_by.items():
             if len(feeds) < 2:
                 continue
-            feed_norm = {u: worked[u].line_cycle_sec * need.get(u, 1)
-                         for u in feeds if u in worked and worked[u].line_cycle_sec}
+            feed_lc = {u: s.line_cycle_by_process.get((u, pid), worked[u].line_cycle_sec)
+                       for u in feeds if u in worked}
+            feed_norm = {u: v * need.get(u, 1) for u, v in feed_lc.items() if v}
             if len(feed_norm) < 2:
                 continue
             slow = max(feed_norm, key=lambda k: feed_norm[k])
@@ -1171,9 +1175,16 @@ def _narrative(s: Snapshot, findings: list, readiness: str, coverage: dict) -> l
         shape.append(_plural(len(workers), "work station"))
     if s.processes:
         shape.append(_plural(len(s.processes), "process", "processes"))
-    incoming, outgoing = _degrees(real)
-    merges = [n for n in outgoing.keys() | incoming.keys() if len(incoming.get(n, ())) >= 2]
-    splits = [n for n in outgoing.keys() | incoming.keys() if len(outgoing.get(n, ())) >= 2]
+    # Merges and splits are judged per value stream, as everywhere else: a
+    # station two streams pass through is shared, not a merge, and a station
+    # they leave in different directions is not a split.
+    choice = {st.id for st in s.stations if st.branch_mode == "choice"}
+    merge_set, split_set = set(), set()
+    for routes_p in _by_process(s).values():
+        inc, out_ = _degrees(routes_p)
+        merge_set |= {n for n, v in inc.items() if len(v) >= 2}
+        split_set |= {n for n, v in out_.items() if len(v) >= 2 and n not in choice}
+    merges, splits = sorted(merge_set), sorted(split_set)
     if merges:
         shape.append(_plural(len(merges), "merge"))
     if splits:

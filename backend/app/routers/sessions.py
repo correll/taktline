@@ -349,6 +349,59 @@ async def _line_cycle_times(session, company_id, schedule, tzname,
     return out
 
 
+async def _line_cycle_times_by_process(session, company_id, schedule, tzname,
+                                       since=None, until=None) -> dict:
+    """Line cycle time per (station, process).
+
+    A station shared by two value streams leaves twice as often as either
+    stream sees: its per-piece interval over all departures is not the pace of
+    either line. Compared with a station only one stream uses, it made the
+    single-stream station look like the constraint of a line where it was not
+    (found on the paper's job shop, where Saw, Paint and Pack are shared). Each
+    departure is attributed to the process whose route it took.
+    """
+    if until is None:
+        until = utcnow()
+    if since is None:
+        since = until - timedelta(days=_LINE_CYCLE_LOOKBACK_DAYS)
+    routes = (await session.execute(
+        select(RouteRow.load, RouteRow.unload, RouteRow.processId)
+        .where(RouteRow.companyId == company_id))).all()
+    by_pair: dict = {}
+    by_from: dict = {}
+    for a, b, pid in routes:
+        by_pair.setdefault((str(a), str(b)), set()).add(str(pid))
+        by_from.setdefault(str(a), set()).add(str(pid))
+    rows = (await session.execute(
+        select(CardEventRow.fromStation, CardEventRow.toStation, CardEventRow.timestamp,
+               CardEventRow.quantity)
+        .where(CardEventRow.companyId == company_id,
+               CardEventRow.type.in_(("moved", "created", "deleted")),
+               CardEventRow.fromStation.isnot(None),
+               CardEventRow.timestamp >= since, CardEventRow.timestamp <= until)
+        .order_by(CardEventRow.timestamp.asc()))).all()
+    if not rows:
+        return {}
+    opens = shift_starts(since, until, schedule, tzname)
+    first: dict = {}
+    per: dict = {}
+    for frm, to, ts, qty in rows:
+        frm = str(frm)
+        first.setdefault(frm, ts)
+        pids = by_pair.get((frm, str(to))) if to else None
+        if not pids:
+            pids = by_from.get(frm, set())
+        if len(pids) != 1:
+            continue
+        per.setdefault((frm, next(iter(pids))), []).append((ts, max(1, qty or 1)))
+    out = {}
+    for key, deps in per.items():
+        lct = line_cycle_from_departures(deps, opens, first.get(key[0], deps[0][0]))
+        if lct is not None:
+            out[key] = lct
+    return out
+
+
 def line_cycle_from_departures(departures, opens, floor) -> Optional[float]:
     """Seconds per piece between one station's departures (the pure core of
     `_line_cycle_times`, kept separate so it can be tested without a database).

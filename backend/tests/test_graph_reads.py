@@ -61,6 +61,10 @@ ALLOWED = {
     "core/line_snapshot.py": {
         "build": "hands rows to core.analysis, which filters boundary links itself",
     },
+    "routers/sessions.py": {
+        "_line_cycle_times_by_process": "maps each departure to the process whose route "
+                                        "it took; asks no question about the graph's shape",
+    },
     "core/whatif_data.py": {
         "build_model": "builds the what-if model's process graph; drops every edge "
                        "touching an integration node itself (partners filter) "

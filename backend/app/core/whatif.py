@@ -149,7 +149,10 @@ class _Sim:
         st = self.m.stations[sid]
         c = self.ch.get(sid)
         rw, rf, rc = self.rng[(sid, "work")], self.rng[(sid, "fail")], self.rng[(sid, "co")]
-        pool = st.rates_by.get(lot.process) or st.rates
+        # A stream's own samples when there are enough of them to be a
+        # distribution rather than an anecdote; the station's pool otherwise.
+        own = st.rates_by.get(lot.process)
+        pool = own if own and len(own) >= max(5, 0.2 * len(st.rates) / max(1, len(st.rates_by))) else st.rates
         rate = rw.choice(pool)                           # drawn even when replaced: keeps streams aligned
         if c is not None and c.cv is not None:
             mean = statistics.fmean(pool)

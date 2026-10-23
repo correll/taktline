@@ -500,10 +500,14 @@ class WorkSession(Base):
         ForeignKey("stations.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
+    # No foreign key, deliberately, like card_events.cardId: a session is
+    # history, and history must outlive the lot it was about. With ON DELETE
+    # SET NULL every session on a lot consumed by a merge, shipped or deleted
+    # forgot which lot it was, so a lot's work could no longer be grouped into
+    # visits or attributed to its value stream (the what-if model read one
+    # stray sample as the whole of a station's work).
     cardId: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("cards.id", ondelete="SET NULL"),
-        nullable=True, index=True,
+        UUID(as_uuid=True), nullable=True, index=True,
     )
     operatorId: Mapped[str] = mapped_column(String, nullable=False, default="default")
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

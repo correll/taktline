@@ -533,7 +533,8 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
             "stationId": sid,
             "sessionCount": n_all,
             "totalUnits": units_all,
-            "totalWorkingSec": working_all,
+            "totalWorkingSec": busy,
+            "timerSec": working_all,
             "cycleTimeSec": (working / units) if units > 0 else None,
             "lineCycleTimeSec": line_cycles.get(sid),
             "oee": None if a["id"] in warehouses
@@ -661,9 +662,20 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
         lc = (await _line_cycle_times(session, ctx.company_id, schedule0, tz0)).get(station_id)
         return empty(sid in await _warehouse_ids(session, ctx.company_id), line_cycle=lc)
 
+    # The same rule as the statistics table: timers closed by the next Start
+    # are not readings of the work, and their units are charged at the pace
+    # of the others.
     total_units = sum(r.quantity for r in rows)
-    total_working = sum((r.durationSec or 0) for r in rows)
-    cycle_time = total_working / total_units if total_units > 0 else None
+    timer_sec = sum((r.durationSec or 0) for r in rows)
+    measured = [r for r in rows if r.closedBy != "next_start"]
+    units_m = sum(r.quantity for r in measured)
+    working_m = sum((r.durationSec or 0) for r in measured)
+    if len(measured) >= 3 and units_m > 0:
+        cycle_time = working_m / units_m
+        total_working = working_m + (total_units - units_m) * cycle_time
+    else:
+        cycle_time = timer_sec / total_units if total_units > 0 else None
+        total_working = timer_sec
     starts = [r.startedAt for r in rows if r.startedAt]
     ends = [r.endedAt for r in rows if r.endedAt]
     is_warehouse = sid in await _warehouse_ids(session, ctx.company_id)
@@ -676,7 +688,7 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
 
     return {
         "stationId": station_id, "sessionCount": len(rows), "totalUnits": total_units,
-        "totalWorkingSec": total_working, "cycleTimeSec": cycle_time,
+        "totalWorkingSec": total_working, "timerSec": timer_sec, "cycleTimeSec": cycle_time,
         "lineCycleTimeSec": line_cycle,
         "oee": oee,
         "isWarehouse": is_warehouse,

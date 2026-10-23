@@ -31,7 +31,8 @@ export interface SessionStats {
   stationId:       string
   sessionCount:    number
   totalUnits:      number
-  totalWorkingSec: number
+  totalWorkingSec: number      // work the stopped timers vouch for
+  timerSec?: number            // every timer, as recorded
   /** Seconds of work per unit — what start/stop actually measured. */
   cycleTimeSec:    number | null
   /** Seconds between departures per piece — the station's actual exit rate.

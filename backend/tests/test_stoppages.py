@@ -163,6 +163,9 @@ def test_a_session_closed_by_the_next_start_is_not_a_reading(actor, clock):
     # Nor is it working time: its ten units are charged at 60 s each, so the
     # station worked 3000 of the 7400 s, not all of them.
     assert abs(stats["oee"] - 3000 / 7400) < 1e-6
+    assert stats["totalWorkingSec"] == 3000 and stats["timerSec"] == 7400
+    one = a.req("GET", f"/sessions/stats/{ids['Cut']}").json()
+    assert one["cycleTimeSec"] == 60 and one["totalWorkingSec"] == 3000
 
 
 def test_a_stoppage_counts_only_the_plants_open_time(actor, clock):

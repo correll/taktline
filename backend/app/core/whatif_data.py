@@ -44,6 +44,28 @@ class OpenClock:
         return self.cum[i] + (min(t, b) - a).total_seconds()
 
 
+async def _in_flight_at(session, company_id, t: datetime, outside: set) -> dict:
+    """Per lot card: units standing at `t` at stations other than `outside`,
+    rebuilt backwards from the cards table as `flow.wip_history` does."""
+    from ..db.tables import Card as CardRow
+    from .flow import _deltas
+    level: dict = defaultdict(int)
+    for c in (await session.execute(
+            select(CardRow).where(CardRow.companyId == company_id))).scalars().all():
+        for sid, b in (c.bins or {}).items():
+            level[(str(c.id), str(sid))] += int((b or {}).get("count", 0) or 0)
+    for ev in (await session.execute(
+            select(CardEventRow).where(CardEventRow.companyId == company_id,
+                                       CardEventRow.timestamp >= t))).scalars().all():
+        for sid, d in _deltas(ev):
+            level[(ev.cardId, sid)] -= d
+    out: dict = defaultdict(int)
+    for (card, sid), n in level.items():
+        if sid not in outside and n > 0:
+            out[card] += n
+    return out
+
+
 def _max_concurrency(intervals: list) -> int:
     pts = sorted([(a, 1) for a, _ in intervals] + [(b, -1) for _, b in intervals])
     cur = best = 0
@@ -272,17 +294,30 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     entry_pairs = {(f, t) for (f, t), ps in route_proc.items()
                    if any((p, f) in entries for p in ps)}
     end_any = {n for (_, n) in endpoints}
+    entry_any = {n for (_, n) in entries}
+    # Units already between entry and end when the record begins entered
+    # before it, at a time nothing recorded. They still finish inside it, and
+    # first in, first out they would take the entry times of the lots behind
+    # them, so every lead time after them reads short by the gap. They queue
+    # first, with no entry time, and their own flow is not counted.
+    for card, n in (await _in_flight_at(session, company_id, since, entry_any | end_any)).items():
+        if n > 0:
+            fifo[card].append((None, n))
+
+    def flow(t, src, pid):
+        for t0, k in src:
+            if t0 is not None:
+                flows.append((t - t0, k, pid))
+
     for e in events:
         q = int(e.quantity or 0)
         if e.type == "moved" and e.fromStation and e.toStation:
             if (e.fromStation, e.toStation) in entry_pairs:
                 fifo[e.cardId].append((clock(e.timestamp), q))
             elif e.toStation in end_any and e.fromStation not in end_any:
-                for t0, k in take(e.cardId, q):
-                    flows.append((clock(e.timestamp) - t0, k, card_proc.get(e.cardId)))
+                flow(clock(e.timestamp), take(e.cardId, q), card_proc.get(e.cardId))
         elif e.type == "deleted" and e.fromStation and q and e.fromStation not in end_any:
-            for t0, k in take(e.cardId, q):
-                flows.append((clock(e.timestamp) - t0, k, card_proc.get(e.cardId)))
+            flow(clock(e.timestamp), take(e.cardId, q), card_proc.get(e.cardId))
         elif e.type == "updated" and e.fromStation and q:
             note = e.note or ""
             if note.startswith("merged"):
@@ -295,7 +330,9 @@ async def build_model(session, company_id, since: datetime, until: datetime,
                    else pending_split.get(e.fromStation) if note == "split" else None)
             if src:
                 units = sum(k for _, k in src)
-                fifo[e.cardId].append((sum(t * k for t, k in src) / units, q))
+                # An assembly of any part whose entry is unknown has no known entry.
+                known = all(t is not None for t, _ in src)
+                fifo[e.cardId].append(((sum(t * k for t, k in src) / units) if known else None, q))
     units = sum(k for _, k, _ in flows)
     observed = (sum(d * k for d, k, _ in flows) / units) if units else None
     by_p: dict = defaultdict(lambda: [0.0, 0])

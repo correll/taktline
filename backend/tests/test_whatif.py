@@ -121,6 +121,37 @@ def test_the_model_reproduces_the_lead_time_the_line_had(actor, clock, monkeypat
 
 
 
+def test_units_on_the_floor_when_the_record_begins_do_not_shorten_lead_times(actor, clock, monkeypatch):  # noqa: F811
+    """Half of a lot of twenty enters before the record begins (the history
+    was reset) and finishes inside it. First in, first out, it would take the
+    entry time of the half behind it, and that half's hour would read as
+    half an hour. It queues first with no entry time instead: the lead time
+    is the hour the second half actually took."""
+    a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
+    ids, tmpl = _line(a)
+    card = _lot(a, ids, tmpl, n=20)
+    move = lambda f, t: a.req("POST", f"/cards/{card}/advance", {
+        "fromStationId": ids[f], "toStationId": ids[t], "quantity": 10})
+    move("Cut", "Pack")
+    clock.tick(600)
+    assert a.req("POST", "/admin/reset-statistics", {}).status_code < 400
+    clock.tick(3000)
+    move("Cut", "Pack")                       # the half the record sees enter
+    for _ in range(2):
+        sid = _start(a, ids, card, station="Pack", op="bob")
+        clock.tick(1800)
+        a.req("POST", f"/sessions/{sid}/end", {})
+        move("Pack", "Store")
+    from app.routers import analysis as analysis_router
+    monkeypatch.setattr(analysis_router, "utcnow", clock)
+    r = a.req("POST", "/analysis/what-if", {"scenarios": [
+        {"name": "faster pack", "changes": [{"stationId": ids["Pack"], "speedFactor": 0.5}]}],
+        "replications": 2, "days": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["calibration"]["observedLeadTimeHours"] == pytest.approx(1.0, abs=1e-3)
+
+
 def test_wip_and_spread_follow_littles_law_and_the_variability():
     """Lots of ten every 1200 s through 600 s of work: each unit waits 600 s,
     the spread is zero, and halving the work halves the WIP."""

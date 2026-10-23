@@ -144,6 +144,7 @@ def test_a_lot_that_leaves_closes_the_timer_left_running_on_it(actor, clock):
 
 def test_a_session_closed_by_the_next_start_is_not_a_reading(actor, clock):
     a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
     ids, tmpl = _line(a)
     for _ in range(3):                                  # three honest sessions, 60 s/unit
         sid = _start(a, ids, _lot(a, ids, tmpl))
@@ -159,6 +160,9 @@ def test_a_session_closed_by_the_next_start_is_not_a_reading(actor, clock):
     stats = {r["stationId"]: r for r in a.req("GET", "/sessions/stats").json()}[ids["Cut"]]
     assert stats["cycleTimeSec"] == 60
     assert stats["unstoppedSessions"] == 1
+    # Nor is it working time: its ten units are charged at 60 s each, so the
+    # station worked 3000 of the 7400 s, not all of them.
+    assert abs(stats["oee"] - 3000 / 7400) < 1e-6
 
 
 def test_a_stoppage_counts_only_the_plants_open_time(actor, clock):

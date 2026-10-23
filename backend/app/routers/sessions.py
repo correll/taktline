@@ -519,6 +519,12 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
         # them to read; a station where nobody ever presses Stop falls back to
         # everything rather than to nothing.
         units, working = (units_m, working_m) if n_m >= 3 else (units_all, working_all)
+        # The same holds for how long the station worked, which load and
+        # uptime divide by: a timer that ran on until the next Start would
+        # count a night as work. The units it carried are charged at the pace
+        # of the stopped timers instead.
+        busy = (working_m + (units_all - units_m) * working_m / units_m
+                if n_m >= 3 and units_m > 0 else working_all)
         st = stop_by.get(sid, {})
         down = st.get("breakdown", (0.0, 0))
         co = st.get("changeover", (0.0, 0))
@@ -531,7 +537,7 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
             "cycleTimeSec": (working / units) if units > 0 else None,
             "lineCycleTimeSec": line_cycles.get(sid),
             "oee": None if a["id"] in warehouses
-                   else _oee(working_all, a["first"], a["last"], schedule, tzname),
+                   else _oee(busy, a["first"], a["last"], schedule, tzname),
             "isWarehouse": a["id"] in warehouses,
             "unstoppedSessions": n_all - n_m,
             "downtimeSec": down[0], "breakdowns": down[1],
@@ -539,7 +545,7 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
             "otherStopSec": other,
             # Uptime as the data box means it: of the time the station was
             # meant to be working, the share it was not broken down.
-            "uptime": (working_all / (working_all + down[0])) if (working_all + down[0]) > 0 else None,
+            "uptime": (busy / (busy + down[0])) if (busy + down[0]) > 0 else None,
             "wipAvg": wip_avg.get(sid),
         }
     # A station can have a measurable exit rate and no work sessions at all —

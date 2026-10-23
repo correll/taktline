@@ -562,6 +562,22 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
             "changeoverSec": 0.0, "changeovers": 0, "otherStopSec": 0.0, "uptime": None,
             "wipAvg": wip_avg.get(sid),
         }
+    # And a station where work only waits: no sessions, no departures in the
+    # window, but units standing there. On a slow line that is the queue that
+    # matters most (the paper's Bosch replay: the largest pile of the day sat
+    # where nothing left within it), and leaving it out of the table hid it
+    # from the people and the agents reading it.
+    for sid, avg in wip_avg.items():
+        if sid in out or not avg:
+            continue
+        out[sid] = {
+            "stationId": sid, "sessionCount": 0, "totalUnits": 0, "totalWorkingSec": 0.0,
+            "cycleTimeSec": None, "lineCycleTimeSec": None, "oee": None,
+            "isWarehouse": parse_uuid(sid) in warehouses,
+            "unstoppedSessions": 0, "downtimeSec": 0.0, "breakdowns": 0,
+            "changeoverSec": 0.0, "changeovers": 0, "otherStopSec": 0.0, "uptime": None,
+            "wipAvg": avg,
+        }
     return out
 
 

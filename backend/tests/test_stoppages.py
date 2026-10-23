@@ -203,3 +203,15 @@ def test_average_wip_is_rebuilt_from_the_history(actor, clock):
                                           [[15] * 24 for _ in range(7)], "UTC")
     got = asyncio.run(avg())
     assert abs(got[ids["Cut"]] - 5) < 1e-6 and abs(got[ids["Pack"]] - 5) < 1e-6
+
+
+def test_a_station_where_work_only_waits_is_in_the_statistics(actor, clock):
+    """No sessions and no departures, but units standing there: on a slow
+    line that queue is the one that matters, and it must have a row."""
+    a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
+    ids, tmpl = _line(a)
+    _lot(a, ids, tmpl)
+    clock.tick(3600)
+    rows = {r["stationId"]: r for r in a.req("GET", "/sessions/stats").json()}
+    assert ids["Cut"] in rows and abs(rows[ids["Cut"]]["wipAvg"] - 10) < 1e-6

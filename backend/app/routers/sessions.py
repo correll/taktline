@@ -356,9 +356,8 @@ async def _line_cycle_times_by_process(session, company_id, schedule, tzname,
     A station shared by two value streams leaves twice as often as either
     stream sees: its per-piece interval over all departures is not the pace of
     either line. Compared with a station only one stream uses, it made the
-    single-stream station look like the constraint of a line where it was not
-    (found on the paper's job shop, where Saw, Paint and Pack are shared). Each
-    departure is attributed to the process whose route it took.
+    single-stream station look like the constraint of a line where it was not.
+    Each departure is attributed to the process whose route it took.
     """
     if until is None:
         until = utcnow()
@@ -413,9 +412,7 @@ def line_cycle_from_departures(departures, opens, floor) -> Optional[float]:
     # Lots that leave at the same instant are ONE departure of all their
     # pieces. Kept apart, the second lot's interval was zero, was skipped, and
     # its pieces vanished from the rate: a truck taking two lots read as half
-    # the throughput it carried. (Found by the paper's Acme experiment: the
-    # daily truck takes the L and R lots together, and Shipping's line cycle
-    # time read 100 s against a true 68 s.)
+    # the throughput it carried.
     merged: list = []
     for ts, qty in departures:
         if merged and merged[-1][0] == ts:
@@ -564,9 +561,8 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
         }
     # And a station where work only waits: no sessions, no departures in the
     # window, but units standing there. On a slow line that is the queue that
-    # matters most (the paper's Bosch replay: the largest pile of the day sat
-    # where nothing left within it), and leaving it out of the table hid it
-    # from the people and the agents reading it.
+    # matters most, and leaving it out of the table hid it from the people and
+    # the agents reading it.
     for sid, avg in wip_avg.items():
         if sid in out or not avg:
             continue

@@ -37,9 +37,9 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
     cards = await rows(CardRow)
 
     # Finished goods resting on a shelf are not work in process. Counted, they
-    # inflated Little's-law lead time with the warehouse: on the paper's Acme
-    # line every lot card's whole quantity read as "on the floor", including
-    # the units already delivered to the customer shelf.
+    # inflated Little's-law lead time with the warehouse: a lot card's whole
+    # quantity read as "on the floor", including the units already delivered
+    # to the customer shelf.
     off_floor = {str(st.id) for st in stations if st.isStorage or st.integrationProvider}
     wip: dict = {}
     wip_process: dict = {}

@@ -493,8 +493,8 @@ def _topology_findings(s: Snapshot) -> list:
                 # Compare by distance only: two processes sharing one pair of
                 # stations give two routes of identical length, and a plain
                 # max() then compared RouteIn objects and raised TypeError,
-                # taking the whole report down (found replaying the Bosch line,
-                # one process per routing).
+                # taking the whole report down on a high-mix line with one
+                # process per routing.
                 d, r = max(far, key=lambda x: x[0])
                 out.append(Finding(
                     rule="long-transport", severity=INSIGHT, basis="topology",
@@ -912,8 +912,7 @@ def _timing_findings(s: Snapshot) -> list:
         members = {r.load for r in routes} | {r.unload for r in routes}
         # Little's law holds for averages. Divided into the WIP on the floor at
         # the moment someone asks, it returns the lead time of that moment, and
-        # a line's WIP swings through the day (the paper's Acme line: 18% low
-        # at shift end). The history gives the average, in finished-unit
+        # a line's WIP swings through the day. The history gives the average, in finished-unit
         # equivalents; the live count is the fallback while there is no history.
         shelves_p = {st.id for st in s.stations if st.is_storage or st.provider}
         avg = 0.0
@@ -946,8 +945,7 @@ def _timing_findings(s: Snapshot) -> list:
         # A process that ends on a shelf exits through the stations feeding
         # it: nothing ever departs a warehouse, so its line cycle time is
         # null, and measuring there left every line that finishes into
-        # storage without a lead time at all. (Found by the paper's Acme
-        # experiment: the line ends at a Customer warehouse.)
+        # storage without a lead time at all.
         storage = {st.id for st in s.stations if st.is_storage}
         ends: set = set()
         for n in sinks:

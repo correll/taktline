@@ -147,8 +147,8 @@ def test_two_processes_sharing_the_long_move_do_not_crash_the_report():
     """Either/or routing is two processes over the same stations, so the same
     long move appears twice with identical length. max() over (distance,
     route) then compared the routes and raised TypeError: the whole report
-    was a 500 on exactly the high-mix lines it is most useful for (found by
-    replaying the Bosch production-line data, one process per routing)."""
+    was a 500 on exactly the high-mix lines it is most useful for, where each
+    routing is its own process."""
     st = [("a", "Cut", {"x": 0, "y": 0}), ("b", "Sew", {"x": 100, "y": 0}),
           ("c", "Press", {"x": 200, "y": 0}), ("d", "Pack", {"x": 5000, "y": 0})]
     routes = [(x, y, 1, p) for p in ("p1", "p2") for x, y in (("a", "b"), ("b", "c"), ("c", "d"))]
@@ -565,8 +565,8 @@ def test_a_shared_station_is_judged_by_each_streams_own_departures():
 def test_a_line_paced_by_its_orders_still_names_the_station_with_least_slack():
     """Every station leaves at the release pace, so no exit interval stands
     out; the station closest to capacity is the one working or broken down
-    for the largest share of open time (the paper's Acme line, where the
-    exit-rate rule named nothing in every replication)."""
+    for the largest share of open time; the exit-interval rule names
+    nothing."""
     stations = [("in", "Stock"), ("w1", "Weld 1"), ("w2", "Weld 2"), ("a1", "Assembly")]
     routes = [("in", "w1"), ("w1", "w2"), ("w2", "a1")]
     m = lambda oee, down=0.0: dict(sessions=50, units=1000, working_sec=36000.0 * oee / 0.5,

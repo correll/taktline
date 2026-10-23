@@ -519,9 +519,8 @@ class WorkSession(Base):
     )
     durationSec: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Work time excludes stoppages. A timer left running through a breakdown
-    # used to charge the repair to cycle time (the paper's S. Weld 2 read a
-    # fifth over its work content), and nowhere recorded that the station had
-    # been down. Pausing keeps the two apart: durationSec is work only.
+    # used to charge the repair to cycle time, and nowhere recorded that the
+    # station had been down. Pausing keeps the two apart: durationSec is work only.
     pausedSec: Mapped[float] = mapped_column(Float, nullable=False, default=0.0,
                                              server_default=text("0"))
     pausedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

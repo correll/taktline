@@ -2,8 +2,7 @@
 
 The board shows work in process as it is *now*. Read once a day, that number
 is a count, and a count taken at one moment of a line's daily rhythm misses
-the average by as much as a mapper's clipboard does (the paper's Acme line:
-33-47%). Every unit's arrival and departure is already in the audit log, so the
+the average by as much as a mapper's clipboard does. Every unit's arrival and departure is already in the audit log, so the
 average is recoverable: walk the log backwards from the present, undoing each
 event, and integrate the level over open time.
 

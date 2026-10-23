@@ -215,8 +215,8 @@ def test_session_start_and_advance_on_one_lot_never_deadlock(actor):
     locks in opposite orders: advance locked the card FOR UPDATE and only then
     flushed the login session's lastSeenAt; a session start flushed lastSeenAt
     first and then inserted a row whose foreign key waits on the card. Postgres
-    broke the cycle by failing one request with a 500. Found by the paper's
-    experiment player, which fires exactly this mix at shift changes."""
+    broke the cycle by failing one request with a 500. Shift changes produce
+    exactly this mix."""
     a = actor(); bootstrap_admin(a)
     s1, s2, s3 = _station(a, "Weld"), _station(a, "Assemble"), _station(a, "Test")
     proc = a.req("POST", "/processes/", {"name": "Brackets"}).json()["_id"]

@@ -1,6 +1,6 @@
 """Stoppages, and work timers that tell the truth when operators forget.
 
-Three design decisions, each driven by the paper's Acme experiment:
+Three design decisions:
 
 * A Pause keeps a breakdown out of cycle time and records it as downtime. A
   timer left running through repairs read a fifth over the work content, and

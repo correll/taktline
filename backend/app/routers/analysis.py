@@ -175,8 +175,12 @@ def _present(res: dict, names: dict) -> dict:
     def stations(d):
         return {names.get(k, k): {"busy": round(v["busy"], 3), "down": round(v["down"], 3)}
                 for k, v in d.items()}
+    rnd = lambda x, n=2: None if x is None else round(x, n)
     out = {"unit": "open hours",
            "baseline": {"leadTimeHours": hours(res["baseline"]["leadTimeSec"]),
+                        "leadSpreadHours": hours(res["baseline"].get("leadSpreadSec")),
+                        "leadP90Hours": hours(res["baseline"].get("leadP90Sec")),
+                        "wipUnits": rnd(res["baseline"].get("wip")),
                         "stations": stations(res["baseline"]["stations"])},
            "calibration": {"observedLeadTimeHours": hours(res["calibration"]["observedLeadTimeSec"]),
                            "modelLeadTimeHours": hours(res["calibration"]["modelLeadTimeSec"]),
@@ -190,6 +194,14 @@ def _present(res: dict, names: dict) -> dict:
             "gainHours": hours(r.get("gainSec")),
             "gainCi95Hours": [hours(x) for x in r.get("gainCi95", [])] or None,
             "gainShare": None if r.get("gainShare") is None else round(r["gainShare"], 4),
+            "leadSpreadHours": hours(r.get("leadSpreadSec")),
+            "leadP90Hours": hours(r.get("leadP90Sec")),
+            "wipUnits": rnd(r.get("wip")),
+            "wipReductionUnits": rnd(r.get("wipReduction")),
+            "wipReductionCi95Units": [rnd(x) for x in r.get("wipReductionCi95", [])] or None,
+            "spreadReductionHours": hours(r.get("spreadReductionSec")),
+            "spreadReductionCi95Hours": [hours(x) for x in r.get("spreadReductionSec" + "Ci95", [])] or None,
+            "p90ReductionHours": hours(r.get("p90ReductionSec")),
             "stations": stations(r["stations"])})
     return out
 

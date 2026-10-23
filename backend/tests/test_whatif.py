@@ -119,3 +119,15 @@ def test_the_model_reproduces_the_lead_time_the_line_had(actor, clock, monkeypat
     assert ranked["scenarios"][0]["name"] == "Pack"
 
 
+
+
+def test_wip_and_spread_follow_littles_law_and_the_variability():
+    """Lots of ten every 1200 s through 600 s of work: each unit waits 600 s,
+    the spread is zero, and halving the work halves the WIP."""
+    arr = [ArrivalIn(t=1200.0 * k, qty=10, process="p", station="a") for k in range(20)]
+    m = _chain({"a": 60.0}, arr, 24000)
+    res = run(m, [Scenario("robot", [Change("a", speed=0.5)])], replications=2)
+    b, s = res["baseline"], res["scenarios"][0]
+    assert b["leadSpreadSec"] == pytest.approx(0)
+    assert b["wip"] == pytest.approx(600 * 200 / 24000)
+    assert s["wipReduction"] == pytest.approx(b["wip"] / 2, rel=0.02)

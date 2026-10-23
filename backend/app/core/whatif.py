@@ -268,7 +268,26 @@ class _Sim:
         seen = [(a, b, q) for a, b, q in self.done if b <= span]
         seen_units = sum(q for _, _, q in seen)
         lead_seen = (sum((b - a) * q for a, b, q in seen) / seen_units) if seen_units else None
+        # The spread of individual units' lead times (unit-weighted standard
+        # deviation and 90th percentile): what a customer waiting for one
+        # order feels, and what a change in variability moves even when the
+        # mean barely does. And work in process, by Little's law: the units
+        # in the system, averaged over the period the lots were in it.
+        spread = p90 = wip = None
+        if units:
+            sq = sum(((b - a) - lead) ** 2 * q for a, b, q in self.done)
+            spread = math.sqrt(sq / units)
+            flat = sorted((b - a, q) for a, b, q in self.done)
+            acc, cut = 0, 0.9 * units
+            for d, q in flat:
+                acc += q
+                if acc >= cut:
+                    p90 = d
+                    break
+            end = max(span, max(b for _, b, _ in self.done))
+            wip = sum((b - a) * q for a, b, q in self.done) / end
         return {"lead_sec": lead, "units": units, "lead_seen_sec": lead_seen,
+                "spread_sec": spread, "p90_sec": p90, "wip": wip,
                 "busy": {k: v / span for k, v in self.busy_time.items()},
                 "down": {k: v / span for k, v in self.down_time.items()}}
 
@@ -299,17 +318,30 @@ def run(model: LineModel, scenarios: list, replications: int = 20, seed: int = 1
         lead = [s["lead_sec"] for s in runs if s["lead_sec"] is not None]
         row = {"name": sc.name, **_summary(lead, runs, model)}
         if deltas:
-            m = statistics.fmean(deltas)
-            h = 1.96 * statistics.stdev(deltas) / math.sqrt(len(deltas)) if len(deltas) > 1 else 0.0
-            row.update({"gainSec": m, "gainCi95": [m - h, m + h],
+            m, lo, hi = _mean_ci(deltas)
+            row.update({"gainSec": m, "gainCi95": [lo, hi],
                         "gainShare": m / out["baseline"]["leadTimeSec"]
                         if out["baseline"]["leadTimeSec"] else None})
+        for key, out_key in (("wip", "wipReduction"), ("spread_sec", "spreadReductionSec"),
+                             ("p90_sec", "p90ReductionSec")):
+            d = [b[key] - s_[key] for b, s_ in zip(base_runs, runs)
+                 if b.get(key) is not None and s_.get(key) is not None]
+            if d:
+                m, lo, hi = _mean_ci(d)
+                row[out_key] = m
+                row[out_key + "Ci95"] = [lo, hi]
         out["scenarios"].append(row)
     seen = [b["lead_seen_sec"] for b in base_runs if b["lead_seen_sec"] is not None]
     out["calibration"] = {"observedLeadTimeSec": model.observed_lead_sec,
                           "observedUnits": model.observed_n,
                           "modelLeadTimeSec": statistics.fmean(seen) if seen else None}
     return out
+
+
+def _mean_ci(xs: list) -> tuple:
+    m = statistics.fmean(xs)
+    h = 1.96 * statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) > 1 else 0.0
+    return m, m - h, m + h
 
 
 def _summary(lead: list, runs: list, model: LineModel) -> dict:
@@ -319,8 +351,12 @@ def _summary(lead: list, runs: list, model: LineModel) -> dict:
         for k in model.stations:
             busy[k].append(r["busy"].get(k, 0.0))
             down[k].append(r["down"].get(k, 0.0))
+    mean = lambda key: (statistics.fmean([r[key] for r in runs if r.get(key) is not None])
+                        if any(r.get(key) is not None for r in runs) else None)
     return {"leadTimeSec": statistics.fmean(lead) if lead else None,
             "leadTimeSdSec": statistics.stdev(lead) if len(lead) > 1 else 0.0,
+            "leadSpreadSec": mean("spread_sec"), "leadP90Sec": mean("p90_sec"),
+            "wip": mean("wip"),
             "stations": {k: {"busy": statistics.fmean(busy[k]), "down": statistics.fmean(down[k])}
                          for k in model.stations if model.stations[k].worked}}
 

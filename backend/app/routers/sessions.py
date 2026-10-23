@@ -470,13 +470,21 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
                SessionRow.endedAt >= since, SessionRow.endedAt <= until)
         .group_by(SessionRow.stationId, SessionRow.closedBy)
     )).all()
-    stops = (await session.execute(
-        select(StoppageRow.stationId, StoppageRow.reason,
-               func.coalesce(func.sum(StoppageRow.durationSec), 0.0), func.count())
+    # Stoppages count in OPEN time: a changeover begun just before the shift
+    # ends and closed the next morning took minutes of the plant's time, not
+    # the night it spans on the wall clock.
+    stop_rows = (await session.execute(
+        select(StoppageRow.stationId, StoppageRow.reason, StoppageRow.startedAt,
+               StoppageRow.endedAt)
         .where(StoppageRow.companyId == company_id, StoppageRow.endedAt.isnot(None),
                StoppageRow.endedAt >= since, StoppageRow.endedAt <= until)
-        .group_by(StoppageRow.stationId, StoppageRow.reason)
     )).all()
+    agg: dict = {}
+    for sid_, reason_, a_, b_ in stop_rows:
+        secs = open_seconds(a_, b_, schedule, tzname)
+        cur = agg.get((sid_, reason_), (0.0, 0))
+        agg[(sid_, reason_)] = (cur[0] + secs, cur[1] + 1)
+    stops = [(k[0], k[1], v[0], v[1]) for k, v in agg.items()]
     line_cycles = await _line_cycle_times(session, company_id, schedule, tzname,
                                           since=since, until=until)
     warehouses = await _warehouse_ids(session, company_id)

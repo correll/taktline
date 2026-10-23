@@ -326,9 +326,15 @@ def automation_candidates(model: LineModel, speed: float = 0.75, cv: Optional[fl
                           breakdowns: bool = True, replications: int = 20, seed: int = 1) -> dict:
     """The same robot tried at every station that is worked by hand, ranked by
     how much shorter it makes the lead time."""
+    # Only stations the modelled flow passes through: an entry station's own
+    # work happens before a lot enters the model, so a machine there would
+    # show no gain for a reason that has nothing to do with the machine.
+    reached = {a.station for a in model.arrivals}
+    for opts in model.routing.values():
+        reached |= {to for to, _, _ in opts}
     scen = [Scenario(name=sid, changes=[Change(station=sid, speed=speed, cv=cv,
                                                breakdowns=breakdowns)])
-            for sid, st in sorted(model.stations.items()) if st.worked]
+            for sid, st in sorted(model.stations.items()) if st.worked and sid in reached]
     res = run(model, scen, replications, seed)
     res["scenarios"].sort(key=lambda r: -(r.get("gainSec") or 0))
     return res

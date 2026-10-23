@@ -68,60 +68,93 @@ async def build_model(session, company_id, since: datetime, until: datetime,
 
     clock = OpenClock(open_intervals(since, until, schedule, tzname))
 
-    # ── work: sessions ──
+    # ── the record: lot events, stoppages, sessions ──
+    events = (await session.execute(
+        select(CardEventRow).where(CardEventRow.companyId == company_id,
+                                   CardEventRow.timestamp >= since,
+                                   CardEventRow.timestamp <= until)
+        .order_by(CardEventRow.timestamp.asc())
+    )).scalars().all()
+    stops = (await session.execute(
+        select(StoppageRow).where(StoppageRow.companyId == company_id,
+                                  StoppageRow.endedAt.isnot(None),
+                                  StoppageRow.startedAt >= since, StoppageRow.startedAt <= until)
+    )).scalars().all()
     work = (await session.execute(
         select(SessionRow).where(SessionRow.companyId == company_id,
                                  SessionRow.endedAt.isnot(None),
                                  SessionRow.endedAt >= since, SessionRow.startedAt <= until)
     )).scalars().all()
-    # One sample per lot and station, of how long the lot OCCUPIED the
-    # station: from its first Start to its last Stop there, in open time,
-    # minus pauses (breakdowns are modelled separately). A lot worked across
-    # a break is two sessions; summing only their work time would let the
-    # model's stations work through every break the real ones took.
-    per_lot = defaultdict(lambda: [None, None, 0.0, 0])
+
+    def open_span(a_, b_):
+        return max(0.0, clock(min(b_, until)) - clock(max(a_, since)))
+
+    # Stoppages in OPEN time: a changeover begun at 21:58 and ended the next
+    # morning was eight hours on the wall clock and two minutes of the
+    # plant's time. Sampled as wall time it stalls the model's station
+    # overnight, and a station near its capacity never recovers.
+    repairs, cos = defaultdict(list), defaultdict(list)
+    paused_open = defaultdict(float)
+    for st in stops:
+        d = open_span(st.startedAt, st.endedAt)
+        if st.sessionId is not None:
+            paused_open[st.sessionId] += d
+        if d <= 0:
+            continue
+        if st.reason == "breakdown":
+            repairs[str(st.stationId)].append(d)
+        elif st.reason == "changeover":
+            cos[str(st.stationId)].append(d)
+
+    # When each lot left each station: a lot card may visit a station many
+    # times (a stamping campaign's card passes every bench once per tray), and
+    # each visit, ended by a departure, is one piece of work.
+    deps = defaultdict(list)
+    for e in events:
+        if e.fromStation and e.type in ("moved", "created", "deleted", "updated"):
+            deps[(e.fromStation, e.cardId)].append(e.timestamp)
+
+    # One sample per VISIT of a lot to a station, of how long the lot
+    # occupied it: from the visit's first Start to its last Stop, in open
+    # time, minus its pauses (breakdowns are modelled separately). A lot
+    # worked across a break is two sessions; summing only their work time
+    # would let the model's stations work through every break the real ones
+    # took.
+    per_visit = defaultdict(lambda: [None, None, 0.0, 0])
     rates = defaultdict(list)
     spans = defaultdict(list)
     working = defaultdict(float)
-    lots = defaultdict(set)
     for w in work:
         sid = str(w.stationId)
         if w.durationSec and w.quantity and w.quantity > 0 and w.closedBy != "next_start":
             if w.cardId and w.startedAt and w.endedAt:
-                acc = per_lot[(sid, w.cardId)]
+                dl = deps.get((sid, str(w.cardId)), [])
+                k = bisect.bisect_left(dl, w.endedAt)
+                acc = per_visit[(sid, str(w.cardId), k)]
                 acc[0] = w.startedAt if acc[0] is None else min(acc[0], w.startedAt)
                 acc[1] = w.endedAt if acc[1] is None else max(acc[1], w.endedAt)
-                acc[2] += w.pausedSec or 0.0
+                acc[2] += paused_open.get(w.id, 0.0)
                 acc[3] += w.quantity
             else:
                 rates[sid].append(w.durationSec / w.quantity)
         working[sid] += w.durationSec or 0.0
         if w.startedAt and w.endedAt:
             spans[sid].append((w.startedAt, w.endedAt))
-        if w.cardId:
-            lots[sid].add(w.cardId)
-    stops = (await session.execute(
-        select(StoppageRow).where(StoppageRow.companyId == company_id,
-                                  StoppageRow.endedAt.isnot(None),
-                                  StoppageRow.startedAt >= since, StoppageRow.startedAt <= until)
-    )).scalars().all()
-    repairs, cos = defaultdict(list), defaultdict(list)
-    for st in stops:
-        if st.reason == "breakdown":
-            repairs[str(st.stationId)].append(st.durationSec or 0.0)
-        elif st.reason == "changeover":
-            cos[str(st.stationId)].append(st.durationSec or 0.0)
+    visits = defaultdict(int)
+    for (sid, _, _) in per_visit:
+        visits[sid] += 1
+
     model_st = {}
     for s in stations:
         sid = str(s.id)
         if sid in partners or sid in storage:
             continue
         model_st[sid] = StationModel(
-            id=sid, name=s.name, rates=rates.get(sid, []),
+            id=sid, name=s.name,
             servers=max(1, _max_concurrency(spans.get(sid, []))),
             fail_rate=(len(repairs.get(sid, [])) / working[sid]) if working[sid] > 0 else 0.0,
             repairs=repairs.get(sid, []),
-            co_prob=min(1.0, len(cos.get(sid, [])) / max(1, len(lots.get(sid, ())) or len(rates.get(sid, [])))),
+            co_prob=min(1.0, len(cos.get(sid, [])) / max(1, visits.get(sid, 0) or len(rates.get(sid, [])))),
             changeovers=cos.get(sid, []))
 
     # ── graph ──
@@ -131,13 +164,6 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     route_proc = defaultdict(set)
     for r in routes:
         route_proc[(str(r.load), str(r.unload))].add(str(r.processId))
-
-    events = (await session.execute(
-        select(CardEventRow).where(CardEventRow.companyId == company_id,
-                                   CardEventRow.timestamp >= since,
-                                   CardEventRow.timestamp <= until)
-        .order_by(CardEventRow.timestamp.asc())
-    )).scalars().all()
     move_counts = defaultdict(int)
     for e in events:
         if e.type == "moved" and e.fromStation and e.toStation:
@@ -152,12 +178,12 @@ async def build_model(session, company_id, since: datetime, until: datetime,
             if ps and len(ps) == 1:
                 card_proc[e.cardId] = next(iter(ps))
     rates_by = defaultdict(lambda: defaultdict(list))
-    for (sid, card), (first, last, paused, units) in per_lot.items():
+    for (sid, card, _), (first, last, paused, units) in per_visit.items():
         secs = max(0.0, clock(last) - clock(first) - paused)
         if units <= 0 or secs <= 0:
             continue
         rates[sid].append(secs / units)
-        pid = card_proc.get(str(card))
+        pid = card_proc.get(card)
         if pid:
             rates_by[sid][pid].append(secs / units)
     for sid, stm in model_st.items():

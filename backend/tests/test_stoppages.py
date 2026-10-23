@@ -83,6 +83,7 @@ def _session(a, sid):
 
 def test_a_pause_keeps_a_breakdown_out_of_cycle_time_and_records_it(actor, clock):
     a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
     ids, tmpl = _line(a)
     card = _lot(a, ids, tmpl)
     sid = _start(a, ids, card)
@@ -158,6 +159,23 @@ def test_a_session_closed_by_the_next_start_is_not_a_reading(actor, clock):
     stats = {r["stationId"]: r for r in a.req("GET", "/sessions/stats").json()}[ids["Cut"]]
     assert stats["cycleTimeSec"] == 60
     assert stats["unstoppedSessions"] == 1
+
+
+def test_a_stoppage_counts_only_the_plants_open_time(actor, clock):
+    """A changeover begun just before the shift ends and closed the next
+    morning took minutes of the plant's time, not the night."""
+    a = actor(); bootstrap_admin(a)
+    hours = [[15 if 6 <= h < 22 else 0 for h in range(24)] for _ in range(7)]
+    a.req("PUT", "/global-settings/", {"workHours": hours})
+    ids, tmpl = _line(a)
+    sid = _start(a, ids, _lot(a, ids, tmpl))
+    clock.t = clock.t.replace(hour=21, minute=55)
+    st = a.req("POST", "/stoppages/", {"stationId": ids["Cut"], "reason": "changeover"}).json()
+    clock.t = clock.t + timedelta(hours=8, minutes=10)      # 06:05 next morning
+    a.req("POST", f"/stoppages/{st['_id']}/end")
+    a.req("POST", f"/sessions/{sid}/end", {})
+    stats = {r["stationId"]: r for r in a.req("GET", "/sessions/stats").json()}[ids["Cut"]]
+    assert stats["changeoverSec"] == 600
 
 
 def test_average_wip_is_rebuilt_from_the_history(actor, clock):

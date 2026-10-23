@@ -550,6 +550,75 @@ def _reachable(routes: list, frm: str) -> set:
     return seen
 
 
+def _stream_lead(s: Snapshot, pid: str, routes: list, need: dict):
+    """Lead time of one value stream from the moves alone: each lot's measured
+    flow time where enough have finished, Little's law (average WIP over exit
+    rate) before that. None where the stream holds too little to say."""
+    members = {r.load for r in routes} | {r.unload for r in routes}
+    # Little's law holds for averages. Divided into the WIP on the floor at
+    # the moment someone asks, it returns the lead time of that moment, and
+    # a line's WIP swings through the day. The history gives the average, in finished-unit
+    # equivalents; the live count is the fallback while there is no history.
+    shelves_p = {st.id for st in s.stations if st.is_storage or st.provider}
+    avg = 0.0
+    have_avg = False
+    if s.wip_avg_by_process:
+        # Each stream's own average WIP, from the history: at a shared
+        # station the units of the other stream are not this one's.
+        for sid in members:
+            if sid in shelves_p:
+                continue
+            v = s.wip_avg_by_process.get((sid, pid))
+            if v is not None:
+                avg += v / max(need.get(sid, 1), 1e-9)
+                have_avg = True
+    for sid in (members if not have_avg else ()):
+        m = s.metrics.get(sid)
+        if sid in shelves_p or m is None or m.wip_avg is None:
+            continue
+        per = s.wip_station_process.get(sid) or {}
+        total_here = sum(per.values())
+        share = (per.get(pid, 0) / total_here) if total_here else (
+            1.0 if sum(1 for rs in _by_process(s).values() if any(sid in (r.load, r.unload) for r in rs)) == 1 else 0.0)
+        avg += m.wip_avg * share / max(need.get(sid, 1), 1e-9)
+        have_avg = True
+    wip_here = avg if have_avg else s.wip_process.get(pid, 0)
+    if wip_here < 5:
+        return None
+    sinks = [n for n in members
+             if not any(r.load == n for r in routes)]
+    # A process that ends on a shelf exits through the stations feeding
+    # it: nothing ever departs a warehouse, so its line cycle time is
+    # null, and measuring there left every line that finishes into
+    # storage without a lead time at all.
+    storage = {st.id for st in s.stations if st.is_storage}
+    ends: set = set()
+    for n in sinks:
+        if n in storage:
+            ends |= {r.load for r in routes if r.unload == n and r.load not in storage}
+        else:
+            ends.add(n)
+    # Throughput as Little's law needs it: pieces out per open second over
+    # the period. The reciprocal of line cycle time is a mean of
+    # per-departure ratios, which a once-a-day shipment makes noisy.
+    exit_ths = [s.exit_rate_by_process[(n, pid)] for n in sorted(ends)
+                if s.exit_rate_by_process.get((n, pid))]
+    if not exit_ths:
+        lc_end = {n: s.line_cycle_by_process.get((n, pid), s.metrics[n].line_cycle_sec)
+                  for n in ends if n in s.metrics}
+        exit_ths = [1.0 / v for n, v in sorted(lc_end.items()) if v]
+    if not exit_ths:
+        return None
+    # The lead time the record measured, lot by lot, from release to
+    # finish, where there is one; Little's law where there is not yet.
+    # Little's law is exact for a line, but across a merge it adds up the
+    # feeds' inventory, which flow in parallel, and overstates.
+    obs = s.observed_lead_by_process.get(pid)
+    measured = bool(obs and obs[1] >= 20)
+    lead = obs[0] if measured else wip_here / sum(exit_ths)
+    return {"lead": lead, "wip": wip_here, "have_avg": have_avg, "measured": measured}
+
+
 def _timing_findings(s: Snapshot) -> list:
     names = {st.id: st.name for st in s.stations}
     procs = {p.id: p for p in s.processes}
@@ -910,68 +979,15 @@ def _timing_findings(s: Snapshot) -> list:
     for pid, routes in by_process.items():
         need = needs.get(pid, {})
         members = {r.load for r in routes} | {r.unload for r in routes}
-        # Little's law holds for averages. Divided into the WIP on the floor at
-        # the moment someone asks, it returns the lead time of that moment, and
-        # a line's WIP swings through the day. The history gives the average, in finished-unit
-        # equivalents; the live count is the fallback while there is no history.
-        shelves_p = {st.id for st in s.stations if st.is_storage or st.provider}
-        avg = 0.0
-        have_avg = False
-        if s.wip_avg_by_process:
-            # Each stream's own average WIP, from the history: at a shared
-            # station the units of the other stream are not this one's.
-            for sid in members:
-                if sid in shelves_p:
-                    continue
-                v = s.wip_avg_by_process.get((sid, pid))
-                if v is not None:
-                    avg += v / max(need.get(sid, 1), 1e-9)
-                    have_avg = True
-        for sid in (members if not have_avg else ()):
-            m = s.metrics.get(sid)
-            if sid in shelves_p or m is None or m.wip_avg is None:
-                continue
-            per = s.wip_station_process.get(sid) or {}
-            total_here = sum(per.values())
-            share = (per.get(pid, 0) / total_here) if total_here else (
-                1.0 if sum(1 for rs in by_process.values() if any(sid in (r.load, r.unload) for r in rs)) == 1 else 0.0)
-            avg += m.wip_avg * share / max(need.get(sid, 1), 1e-9)
-            have_avg = True
-        wip_here = avg if have_avg else s.wip_process.get(pid, 0)
-        if wip_here < 5:
+        sl = _stream_lead(s, pid, routes, need)
+        if sl is None:
             continue
-        sinks = [n for n in members
-                 if not any(r.load == n for r in routes)]
-        # A process that ends on a shelf exits through the stations feeding
-        # it: nothing ever departs a warehouse, so its line cycle time is
-        # null, and measuring there left every line that finishes into
-        # storage without a lead time at all.
-        storage = {st.id for st in s.stations if st.is_storage}
-        ends: set = set()
-        for n in sinks:
-            if n in storage:
-                ends |= {r.load for r in routes if r.unload == n and r.load not in storage}
-            else:
-                ends.add(n)
-        # Throughput as Little's law needs it: pieces out per open second over
-        # the period. The reciprocal of line cycle time is a mean of
-        # per-departure ratios, which a once-a-day shipment makes noisy.
-        exit_ths = [s.exit_rate_by_process[(n, pid)] for n in sorted(ends)
-                    if s.exit_rate_by_process.get((n, pid))]
-        if not exit_ths:
-            lc_end = {n: s.line_cycle_by_process.get((n, pid), s.metrics[n].line_cycle_sec)
-                      for n in ends if n in s.metrics}
-            exit_ths = [1.0 / v for n, v in sorted(lc_end.items()) if v]
+        lead, wip_here, have_avg, measured = sl["lead"], sl["wip"], sl["have_avg"], sl["measured"]
+        obs = s.observed_lead_by_process.get(pid)
         touch = sum(worked[sid].cycle_sec * need.get(sid, 1)
                     for sid in members if sid in worked and worked[sid].cycle_sec)
-        if not exit_ths or touch <= 0:
+        if touch <= 0:
             continue
-        # The lead time the record measured, lot by lot, from release to
-        # finish, where there is one; Little's law where there is not yet.
-        # Little's law is exact for a line, but across a merge it adds up the
-        # feeds' inventory, which flow in parallel, and overstates.
-        obs = s.observed_lead_by_process.get(pid)
-        lead = obs[0] if obs and obs[1] >= 20 else wip_here / sum(exit_ths)
         if lead <= touch:
             continue
         eff = touch / lead
@@ -991,7 +1007,7 @@ def _timing_findings(s: Snapshot) -> list:
             metrics={"leadSec": round(lead, 0), "touchSec": round(touch, 0),
                      "flowEfficiency": round(eff, 3), "wip": round(wip_here, 1),
                      "wipBasis": "average" if have_avg else "live",
-                     "leadBasis": "measured" if (obs and obs[1] >= 20) else "littles-law"}))
+                     "leadBasis": "measured" if measured else "littles-law"}))
 
     # ── A merge waits for its slowest feed: matched sets, not full bins.
     for pid, routes in by_process.items():
@@ -1157,12 +1173,43 @@ def _timing_findings(s: Snapshot) -> list:
 _ORDER = {CRITICAL: 0, WARNING: 1, INSIGHT: 2}
 
 
+def _lead_findings(s: Snapshot, done: set) -> list:
+    """Lead time needs only the moves. A line where nobody times the work yet
+    still has one, and it is the number a visibility tool's users ask for
+    first; flow efficiency adds the touch time once there is one."""
+    out = []
+    needs = _per_unit_need(s)
+    procs = {p.id: p for p in s.processes}
+    for pid, routes in _by_process(s).items():
+        if pid in done:
+            continue
+        sl = _stream_lead(s, pid, routes, needs.get(pid, {}))
+        if sl is None:
+            continue
+        pname = procs[pid].name if pid in procs else "this line"
+        out.append(Finding(
+            rule="lead-time", severity=INSIGHT, basis="flow",
+            title=f"A unit crosses {pname} in {_mmss(sl['lead'])}",
+            detail=("Measured from each lot's own moves, from release to finish."
+                    if sl["measured"] else
+                    "By Little's law: the units on the floor on average, divided by "
+                    "the rate at which they leave.")
+                   + " Time the work at the stations and this becomes flow "
+                     "efficiency: how much of that time is work.",
+            process=pid, waste="Inventory", manual="waste",
+            metrics={"leadSec": round(sl["lead"], 0), "wip": round(sl["wip"], 1),
+                     "wipBasis": "average" if sl["have_avg"] else "live",
+                     "leadBasis": "measured" if sl["measured"] else "littles-law"}))
+    return out
+
+
 def analyse(s: Snapshot) -> Report:
     """Read the line and say what is wrong with it."""
     readiness, coverage = _readiness(s)
     findings = _topology_findings(s)
     if readiness != "no-data":
         findings += _timing_findings(s)
+    findings += _lead_findings(s, {f.process for f in findings if f.rule == "flow-efficiency"})
     findings.sort(key=lambda f: (_ORDER.get(f.severity, 9), f.rule))
 
     return Report(

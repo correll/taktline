@@ -72,6 +72,22 @@ def test_it_says_plainly_when_there_is_no_timing_data():
     assert not {"bottleneck", "waiting-gap", "line-imbalance"} & rules(r)
 
 
+def test_moves_alone_give_a_lead_time():
+    """A shop that only moves lots on the board, and times nothing, still has
+    a lead time: each lot's own flow time once twenty units have finished.
+    It must not wait for the first timer, and it must not pretend to know the
+    flow efficiency."""
+    snap = line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL)
+    snap.wip_avg_by_process = {("cut", "p1"): 4.0, ("sew", "p1"): 6.0}
+    snap.exit_rate_by_process = {("pack", "p1"): 1 / 120}
+    snap.observed_lead_by_process = {"p1": (3600.0, 40)}
+    r = analyse(snap)
+    assert r.readiness == "no-data"
+    f = next(f for f in r.findings if f.rule == "lead-time")
+    assert f.metrics["leadSec"] == 3600 and f.metrics["leadBasis"] == "measured"
+    assert "flow-efficiency" not in rules(r)
+
+
 # ── Topology: findable before anyone presses Start ──────────────────────────
 
 def test_an_empty_line_is_reported_as_unconnected():

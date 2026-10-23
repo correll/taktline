@@ -6,7 +6,7 @@ export type Readiness = 'no-data' | 'partial' | 'ready'
 export interface Finding {
   rule: string
   severity: Severity
-  basis: 'topology' | 'timing' | 'load'
+  basis: 'topology' | 'timing' | 'load' | 'flow'
   title: string
   detail: string
   stations: string[]

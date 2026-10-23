@@ -560,6 +560,9 @@ def _stream_lead(s: Snapshot, pid: str, routes: list, need: dict):
     # a line's WIP swings through the day. The history gives the average, in finished-unit
     # equivalents; the live count is the fallback while there is no history.
     shelves_p = {st.id for st in s.stations if st.is_storage or st.provider}
+    # Stock waiting at an entry station has not been released yet: lead time
+    # runs from leaving it, so it is not work in process.
+    shelves_p |= {n for n in members if not any(r.unload == n for r in routes)}
     avg = 0.0
     have_avg = False
     if s.wip_avg_by_process:

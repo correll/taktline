@@ -232,6 +232,34 @@ def test_a_timer_forgotten_at_a_shift_change_is_not_a_second_server(actor, clock
     assert all(abs(r - 60) < 1 for r in cut.rates), cut.rates
 
 
+def test_moves_alone_give_each_lot_its_flow_time(actor, clock):  # noqa: F811
+    """Nobody times anything; lots are only moved. Each still has a flow time
+    from leaving Cut to reaching the store, and it is the one the record
+    shows: 600 s at Pack."""
+    a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
+    ids, tmpl = _line(a)
+    for _ in range(3):
+        card = _lot(a, ids, tmpl)
+        a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Cut"],
+                                                 "toStationId": ids["Pack"], "quantity": 10})
+        clock.tick(600)
+        a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Pack"],
+                                                 "toStationId": ids["Store"], "quantity": 10})
+        clock.tick(300)
+    import asyncio, uuid
+    from app.core import whatif_data
+    from app.db.connection import SessionLocal
+
+    async def lead():
+        async with SessionLocal() as s:
+            m, _ = await whatif_data.build_model(s, uuid.UUID(a.company), clock.t - timedelta(days=1),
+                                                 clock.t, [[15] * 24 for _ in range(7)], "UTC")
+            return m.observed_lead_sec, m.observed_n
+    sec, n = asyncio.run(lead())
+    assert n == 30 and abs(sec - 600) < 1e-6
+
+
 def test_wip_and_spread_follow_littles_law_and_the_variability():
     """Lots of ten every 1200 s through 600 s of work: each unit waits 600 s,
     the spread is zero, and halving the work halves the WIP."""

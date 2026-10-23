@@ -249,6 +249,7 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         stm.rates_by = {k: v for k, v in rates_by.get(sid, {}).items()}
 
     routing, merges, merge_lot, endpoints, entries = {}, {}, {}, set(), {}
+    any_worked = any(st.worked for st in model_st.values())
     for pid, rs in by_p.items():
         outs, ins = defaultdict(list), defaultdict(list)
         for r in rs:
@@ -270,7 +271,10 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         for n in members:
             if not ins.get(n):
                 entries[(pid, n)] = True
-            if n in storage or not outs.get(n) or (
+            # Where nothing is timed yet (a record of moves only), the line ends
+            # where its routes end; trimming unworked tails would make every
+            # station an end and leave no flow to measure.
+            if n in storage or not outs.get(n) or (any_worked and
                     not (n in model_st and model_st[n].worked) and not worked_downstream(n)):
                 endpoints.add((pid, n))
             o = outs.get(n, [])

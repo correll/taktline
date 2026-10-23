@@ -66,8 +66,6 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         select(RouteRow).where(RouteRow.companyId == company_id))).scalars().all()
         if str(r.load) not in partners and str(r.unload) not in partners]
 
-    clock = OpenClock(open_intervals(since, until, schedule, tzname))
-
     # ── the record: lot events, stoppages, sessions ──
     events = (await session.execute(
         select(CardEventRow).where(CardEventRow.companyId == company_id,
@@ -75,6 +73,12 @@ async def build_model(session, company_id, since: datetime, until: datetime,
                                    CardEventRow.timestamp <= until)
         .order_by(CardEventRow.timestamp.asc())
     )).scalars().all()
+    # The model's period is the one the record covers: from the first event
+    # in the window, not the window's nominal start, or averages over it
+    # (WIP, utilisation) are diluted by days nothing was recorded.
+    if events:
+        since = max(since, events[0].timestamp)
+    clock = OpenClock(open_intervals(since, until, schedule, tzname))
     stops = (await session.execute(
         select(StoppageRow).where(StoppageRow.companyId == company_id,
                                   StoppageRow.endedAt.isnot(None),

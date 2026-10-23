@@ -495,11 +495,16 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
     per: dict = {}
     for d in rows:
         a = per.setdefault(str(d.stationId), {"id": d.stationId, "all": [0, 0, 0.0],
-                                              "measured": [0, 0, 0.0],
+                                              "measured": [0, 0, 0.0], "stopped": [0, 0, 0.0],
                                               "first": d.firstStart, "last": d.lastEnd})
         a["first"] = min(a["first"], d.firstStart) if a["first"] else d.firstStart
         a["last"] = max(a["last"], d.lastEnd) if a["last"] else d.lastEnd
-        for key in ("all",) + (("measured",) if d.closedBy != "next_start" else ()):
+        keys = ("all",)
+        if d.closedBy != "next_start":
+            keys += ("measured",)
+        if d.closedBy in (None, "operator"):
+            keys += ("stopped",)
+        for key in keys:
             a[key][0] += d.sessionCount
             a[key][1] += d.totalUnits or 0
             a[key][2] += d.totalWorking or 0.0
@@ -518,6 +523,13 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
         # operator, or by the lot leaving), as long as there are enough of
         # them to read; a station where nobody ever presses Stop falls back to
         # everything rather than to nothing.
+        # A timer the lot's departure closed is better than one left running
+        # until the next Start, but it still ran on while the lot waited to be
+        # moved: an upper bound, not a reading. Timers the operator stopped
+        # come first; the others fill in only where there are too few.
+        n_s, units_s, working_s = a["stopped"]
+        if n_s >= 3:
+            n_m, units_m, working_m = n_s, units_s, working_s
         units, working = (units_m, working_m) if n_m >= 3 else (units_all, working_all)
         # The same holds for how long the station worked, which load and
         # uptime divide by: a timer that ran on until the next Start would
@@ -540,7 +552,7 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
             "oee": None if a["id"] in warehouses
                    else _oee(busy, a["first"], a["last"], schedule, tzname),
             "isWarehouse": a["id"] in warehouses,
-            "unstoppedSessions": n_all - n_m,
+            "unstoppedSessions": n_all - a["stopped"][0],
             "downtimeSec": down[0], "breakdowns": down[1],
             "changeoverSec": co[0], "changeovers": co[1],
             "otherStopSec": other,
@@ -667,7 +679,9 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
     # of the others.
     total_units = sum(r.quantity for r in rows)
     timer_sec = sum((r.durationSec or 0) for r in rows)
-    measured = [r for r in rows if r.closedBy != "next_start"]
+    measured = [r for r in rows if r.closedBy in (None, "operator")]
+    if len(measured) < 3:
+        measured = [r for r in rows if r.closedBy != "next_start"]
     units_m = sum(r.quantity for r in measured)
     working_m = sum((r.durationSec or 0) for r in measured)
     if len(measured) >= 3 and units_m > 0:

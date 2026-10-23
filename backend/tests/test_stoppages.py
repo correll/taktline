@@ -168,6 +168,32 @@ def test_a_session_closed_by_the_next_start_is_not_a_reading(actor, clock):
     assert one["cycleTimeSec"] == 60 and one["totalWorkingSec"] == 3000
 
 
+def test_a_timer_the_move_closed_is_not_read_when_stopped_ones_exist(actor, clock):
+    """Three lots stopped by hand at 60 s a unit; the fourth's Stop is
+    forgotten and the move closes it after the lot waited 1000 s more. The
+    move ends the timer, but cycle time and load are read from the stopped
+    ones, and the forgotten lot's units are charged at their pace."""
+    a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
+    ids, tmpl = _line(a)
+    for _ in range(3):
+        card = _lot(a, ids, tmpl)
+        sid = _start(a, ids, card)
+        clock.tick(600)
+        a.req("POST", f"/sessions/{sid}/end", {})
+        a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Cut"],
+                                                 "toStationId": ids["Pack"], "quantity": 10})
+    card = _lot(a, ids, tmpl)
+    sid = _start(a, ids, card)
+    clock.tick(1600)
+    a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Cut"],
+                                             "toStationId": ids["Pack"], "quantity": 10})
+    assert _session(a, sid)["closedBy"] == "move"
+    stats = {r["stationId"]: r for r in a.req("GET", "/sessions/stats").json()}[ids["Cut"]]
+    assert stats["cycleTimeSec"] == 60 and stats["unstoppedSessions"] == 1
+    assert stats["totalWorkingSec"] == 2400 and abs(stats["oee"] - 2400 / 3400) < 1e-6
+
+
 def test_a_stoppage_counts_only_the_plants_open_time(actor, clock):
     """A changeover begun just before the shift ends and closed the next
     morning took minutes of the plant's time, not the night."""

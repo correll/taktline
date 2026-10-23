@@ -11,7 +11,7 @@ from __future__ import annotations
 import bisect
 import statistics
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
@@ -155,7 +155,12 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         if w.durationSec and w.quantity and w.quantity > 0 and w.closedBy != "next_start":
             if w.cardId and w.startedAt and w.endedAt:
                 dl = deps.get((sid, str(w.cardId)), [])
-                k = bisect.bisect_left(dl, w.endedAt)
+                # A session the lot's departure closed ends a moment after that
+                # departure is recorded; it belongs to the visit the departure
+                # ended, not the next one, or two visits merge into one sample
+                # that spans the wait between them.
+                end = w.endedAt - timedelta(seconds=1) if w.closedBy == "move" else w.endedAt
+                k = bisect.bisect_left(dl, end)
                 acc = per_visit[(sid, str(w.cardId), k)]
                 acc[0] = w.startedAt if acc[0] is None else min(acc[0], w.startedAt)
                 acc[1] = w.endedAt if acc[1] is None else max(acc[1], w.endedAt)

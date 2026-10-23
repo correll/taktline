@@ -152,6 +152,47 @@ def test_units_on_the_floor_when_the_record_begins_do_not_shorten_lead_times(act
     assert r.json()["calibration"]["observedLeadTimeHours"] == pytest.approx(1.0, abs=1e-3)
 
 
+def test_a_timer_the_move_closed_stays_with_its_own_visit(actor, clock, monkeypatch):  # noqa: F811
+    """Ten units of a lot are worked at Pack and moved on with Stop forgotten,
+    so the move closes the timer, a moment after the departure is recorded.
+    Then the other ten arrive and are worked properly. Each visit took 60 s a
+    unit; filed under the second visit, the first timer would merge the two
+    into one sample spanning the wait between them."""
+    from app.routers import cards as cards_router
+    a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
+    ids, tmpl = _line(a)
+    card = _lot(a, ids, tmpl, n=20)
+
+    def ticking():                      # every read of the clock moves it on 1 ms
+        clock.tick(0.001)
+        return clock.t
+    monkeypatch.setattr(cards_router, "utcnow", ticking)
+    move = lambda f, t: a.req("POST", f"/cards/{card}/advance", {
+        "fromStationId": ids[f], "toStationId": ids[t], "quantity": 10})
+    move("Cut", "Pack")
+    _start(a, ids, card, station="Pack", op="bob")
+    clock.tick(600)
+    move("Pack", "Store")               # Stop forgotten: the move closes it
+    clock.tick(3000)
+    move("Cut", "Pack")
+    sid = _start(a, ids, card, station="Pack", op="bob")
+    clock.tick(600)
+    a.req("POST", f"/sessions/{sid}/end", {})
+    move("Pack", "Store")
+    import asyncio, uuid
+    from app.core import whatif_data
+    from app.db.connection import SessionLocal
+
+    async def rates():
+        async with SessionLocal() as s:
+            m, _ = await whatif_data.build_model(s, uuid.UUID(a.company), clock.t - timedelta(days=1),
+                                                 clock.t, [[15] * 24 for _ in range(7)], "UTC")
+            return m.stations[ids["Pack"]].rates
+    got = asyncio.run(rates())
+    assert len(got) == 2 and all(abs(r - 60) < 1 for r in got), got
+
+
 def test_wip_and_spread_follow_littles_law_and_the_variability():
     """Lots of ten every 1200 s through 600 s of work: each unit waits 600 s,
     the spread is zero, and halving the work halves the WIP."""

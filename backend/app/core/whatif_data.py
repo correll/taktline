@@ -66,6 +66,9 @@ async def _in_flight_at(session, company_id, t: datetime, outside: set) -> dict:
     return out
 
 
+MIN_RELIABLE = 5        # stopped timers a station needs before the others are set aside
+
+
 def _max_concurrency(intervals: list) -> int:
     pts = sorted([(a, 1) for a, _ in intervals] + [(b, -1) for _, b in intervals])
     cur = best = 0
@@ -146,13 +149,26 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     # worked across a break is two sessions; summing only their work time
     # would let the model's stations work through every break the real ones
     # took.
+    # Only timers the operator stopped are readings of the work. A timer the
+    # lot's departure closed ran on past the work; one closed by the next
+    # Start ran through whatever came between; and one forgotten at a shift
+    # change overlaps the next shift's timer, which would read as a second
+    # server. Those are used only where a station has nothing better.
+    def reliable(w):
+        return w.closedBy in (None, "operator")
+    n_reliable = defaultdict(int)
+    for w in work:
+        if reliable(w) and w.durationSec and w.quantity and w.quantity > 0:
+            n_reliable[str(w.stationId)] += 1
+
     per_visit = defaultdict(lambda: [None, None, 0.0, 0])
     rates = defaultdict(list)
-    spans = defaultdict(list)
-    working = defaultdict(float)
+    spans, spans_all = defaultdict(list), defaultdict(list)
+    work_ok, units_ok, units_other, working_all = (defaultdict(float) for _ in range(4))
     for w in work:
         sid = str(w.stationId)
-        if w.durationSec and w.quantity and w.quantity > 0 and w.closedBy != "next_start":
+        ok = reliable(w) or (n_reliable[sid] < MIN_RELIABLE and w.closedBy != "next_start")
+        if ok and w.durationSec and w.quantity and w.quantity > 0:
             if w.cardId and w.startedAt and w.endedAt:
                 dl = deps.get((sid, str(w.cardId)), [])
                 # A session the lot's departure closed ends a moment after that
@@ -168,9 +184,20 @@ async def build_model(session, company_id, since: datetime, until: datetime,
                 acc[3] += w.quantity
             else:
                 rates[sid].append(w.durationSec / w.quantity)
-        working[sid] += w.durationSec or 0.0
+        working_all[sid] += w.durationSec or 0.0
+        if reliable(w):
+            work_ok[sid] += w.durationSec or 0.0
+            units_ok[sid] += w.quantity or 0
+            if w.startedAt and w.endedAt:
+                spans[sid].append((w.startedAt, w.endedAt))
+        else:
+            units_other[sid] += w.quantity or 0
         if w.startedAt and w.endedAt:
-            spans[sid].append((w.startedAt, w.endedAt))
+            spans_all[sid].append((w.startedAt, w.endedAt))
+    # Working time, for the breakdown rate per working hour: the stopped
+    # timers, plus the units the others carried at the stopped timers' pace.
+    working = {sid: (work_ok[sid] + units_other[sid] * work_ok[sid] / units_ok[sid])
+               if units_ok[sid] else working_all[sid] for sid in working_all}
     visits = defaultdict(int)
     for (sid, _, _) in per_visit:
         visits[sid] += 1
@@ -182,8 +209,8 @@ async def build_model(session, company_id, since: datetime, until: datetime,
             continue
         model_st[sid] = StationModel(
             id=sid, name=s.name,
-            servers=max(1, _max_concurrency(spans.get(sid, []))),
-            fail_rate=(len(repairs.get(sid, [])) / working[sid]) if working[sid] > 0 else 0.0,
+            servers=max(1, _max_concurrency(spans.get(sid) or spans_all.get(sid, []))),
+            fail_rate=(len(repairs.get(sid, [])) / working[sid]) if working.get(sid, 0) > 0 else 0.0,
             repairs=repairs.get(sid, []),
             co_prob=min(1.0, len(cos.get(sid, [])) / max(1, visits.get(sid, 0) or len(rates.get(sid, [])))),
             changeovers=cos.get(sid, []))

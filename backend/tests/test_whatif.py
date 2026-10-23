@@ -193,6 +193,45 @@ def test_a_timer_the_move_closed_stays_with_its_own_visit(actor, clock, monkeypa
     assert len(got) == 2 and all(abs(r - 60) < 1 for r in got), got
 
 
+def test_a_timer_forgotten_at_a_shift_change_is_not_a_second_server(actor, clock, monkeypatch):  # noqa: F811
+    """Ann forgets to stop her last lot; Bob, on the next shift, starts his
+    own at the same bench while hers still runs, and her timer ends only when
+    the lot leaves. The two timers overlap, but the bench never had two
+    people: the model keeps one server, and her timer is not a reading."""
+    a = actor(); bootstrap_admin(a)
+    a.req("PUT", "/global-settings/", {"workHours": [[15] * 24 for _ in range(7)]})
+    ids, tmpl = _line(a)
+    for _ in range(6):                                  # stopped timers, one at a time
+        card = _lot(a, ids, tmpl)
+        sid = _start(a, ids, card, op="ann")
+        clock.tick(600)
+        a.req("POST", f"/sessions/{sid}/end", {})
+        a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Cut"],
+                                                 "toStationId": ids["Pack"], "quantity": 10})
+    late = _lot(a, ids, tmpl)
+    _start(a, ids, late, op="ann")                      # never stopped
+    clock.tick(600)
+    nxt = _lot(a, ids, tmpl)
+    sid = _start(a, ids, nxt, op="bob")                 # the next shift
+    clock.tick(600)
+    a.req("POST", f"/sessions/{sid}/end", {})
+    for c in (late, nxt):
+        a.req("POST", f"/cards/{c}/advance", {"fromStationId": ids["Cut"],
+                                              "toStationId": ids["Pack"], "quantity": 10})
+    import asyncio, uuid
+    from app.core import whatif_data
+    from app.db.connection import SessionLocal
+
+    async def model():
+        async with SessionLocal() as s:
+            m, _ = await whatif_data.build_model(s, uuid.UUID(a.company), clock.t - timedelta(days=1),
+                                                 clock.t, [[15] * 24 for _ in range(7)], "UTC")
+            return m.stations[ids["Cut"]]
+    cut = asyncio.run(model())
+    assert cut.servers == 1
+    assert all(abs(r - 60) < 1 for r in cut.rates), cut.rates
+
+
 def test_wip_and_spread_follow_littles_law_and_the_variability():
     """Lots of ten every 1200 s through 600 s of work: each unit waits 600 s,
     the spread is zero, and halving the work halves the WIP."""

@@ -89,6 +89,8 @@ class LineModel:
     horizon: float                                   # open seconds in the window
     observed_lead_sec: Optional[float] = None
     observed_n: int = 0
+    # process -> (observed mean lead time in open seconds, units)
+    observed_by_process: dict = field(default_factory=dict)
 
 
 @dataclass

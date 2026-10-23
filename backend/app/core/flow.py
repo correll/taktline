@@ -106,3 +106,60 @@ async def average_wip(session, company_id, since, until, schedule, tzname) -> di
         if v is not None:
             out[sid] = v
     return out
+
+
+async def by_process(session, company_id, since, until, schedule, tzname) -> tuple[dict, dict]:
+    """Per (station, process): average units over open time, and pieces that
+    left per open second. A station two value streams share holds units of
+    both, and a lead time per stream needs each stream's own share and its own
+    exits; the live split at the moment of asking (often an empty floor)
+    says nothing about the average."""
+    from ..db.tables import Route as RouteRow
+    routes = (await session.execute(
+        select(RouteRow.load, RouteRow.unload, RouteRow.processId)
+        .where(RouteRow.companyId == company_id))).all()
+    pair: dict = defaultdict(set)
+    for a, b, pid in routes:
+        pair[(str(a), str(b))].add(str(pid))
+    cards = (await session.execute(
+        select(CardRow).where(CardRow.companyId == company_id))).scalars().all()
+    card_pid = {str(c.id): str(c.processId) for c in cards if c.processId}
+    events = (await session.execute(
+        select(CardEventRow).where(CardEventRow.companyId == company_id,
+                                   CardEventRow.timestamp >= since)
+        .order_by(CardEventRow.timestamp.asc()))).scalars().all()
+    for e in events:            # lots no longer on the floor: from the routes they took
+        if e.cardId not in card_pid and e.type == "moved" and e.fromStation and e.toStation:
+            ps = pair.get((e.fromStation, e.toStation))
+            if ps and len(ps) == 1:
+                card_pid[e.cardId] = next(iter(ps))
+    level = defaultdict(int)
+    for c in cards:
+        for sid, b in (c.bins or {}).items():
+            level[(str(sid), card_pid.get(str(c.id)))] += int((b or {}).get("count", 0) or 0)
+    steps = defaultdict(list)
+    first = None
+    exits = defaultdict(int)
+    for ev in reversed(events):
+        pid = card_pid.get(ev.cardId)
+        if ev.timestamp > until:
+            for sid, d in _deltas(ev):
+                level[(sid, pid)] -= d
+            continue
+        first = ev.timestamp
+        for sid, d in _deltas(ev):
+            steps[(sid, pid)].append((ev.timestamp, level[(sid, pid)]))
+            level[(sid, pid)] -= d
+        if ev.fromStation and ev.type in ("moved", "deleted") and ev.quantity:
+            exits[(ev.fromStation, pid)] += int(ev.quantity)
+    if first is None:
+        return {}, {}
+    ivs = open_intervals(max(since, first), until, schedule, tzname)
+    open_s = sum((b - a).total_seconds() for a, b in ivs)
+    avg = {}
+    for key in set(level) | set(steps):
+        v = time_average(level.get(key, 0), steps.get(key, [])[::-1], ivs)
+        if v is not None and key[1] is not None:
+            avg[key] = v
+    rate = {k: v / open_s for k, v in exits.items() if k[1] is not None and open_s > 0}
+    return avg, rate

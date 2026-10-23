@@ -279,10 +279,10 @@ async def build_model(session, company_id, since: datetime, until: datetime,
                 fifo[e.cardId].append((clock(e.timestamp), q))
             elif e.toStation in end_any and e.fromStation not in end_any:
                 for t0, k in take(e.cardId, q):
-                    flows.append((clock(e.timestamp) - t0, k))
+                    flows.append((clock(e.timestamp) - t0, k, card_proc.get(e.cardId)))
         elif e.type == "deleted" and e.fromStation and q and e.fromStation not in end_any:
             for t0, k in take(e.cardId, q):
-                flows.append((clock(e.timestamp) - t0, k))
+                flows.append((clock(e.timestamp) - t0, k, card_proc.get(e.cardId)))
         elif e.type == "updated" and e.fromStation and q:
             note = e.note or ""
             if note.startswith("merged"):
@@ -296,8 +296,14 @@ async def build_model(session, company_id, since: datetime, until: datetime,
             if src:
                 units = sum(k for _, k in src)
                 fifo[e.cardId].append((sum(t * k for t, k in src) / units, q))
-    units = sum(k for _, k in flows)
-    observed = (sum(d * k for d, k in flows) / units) if units else None
+    units = sum(k for _, k, _ in flows)
+    observed = (sum(d * k for d, k, _ in flows) / units) if units else None
+    by_p: dict = defaultdict(lambda: [0.0, 0])
+    for d, k, pid in flows:
+        if pid:
+            by_p[pid][0] += d * k
+            by_p[pid][1] += k
     return LineModel(stations=model_st, routing=routing, merges=merges, merge_lot=merge_lot,
                      endpoints=endpoints, arrivals=arrivals, horizon=clock.total,
-                     observed_lead_sec=observed, observed_n=units), names
+                     observed_lead_sec=observed, observed_n=units,
+                     observed_by_process={p_: (v[0] / v[1], v[1]) for p_, v in by_p.items() if v[1]}), names

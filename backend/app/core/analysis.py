@@ -100,6 +100,12 @@ class Snapshot:
     wip_process: dict = field(default_factory=dict)
     # (stationId, processId) → line cycle time from that process's departures
     line_cycle_by_process: dict = field(default_factory=dict)
+    # (stationId, processId) → average units over open time, from the history
+    wip_avg_by_process: dict = field(default_factory=dict)
+    # (stationId, processId) → pieces that left per open second
+    exit_rate_by_process: dict = field(default_factory=dict)
+    # processId → (measured mean lead time per unit, open seconds; units)
+    observed_lead_by_process: dict = field(default_factory=dict)
     # stationId → processId → units: the per-line buffer at each station,
     # which is what the runout rule (core/runout.py) divides by the rate
     wip_station_process: dict = field(default_factory=dict)
@@ -912,7 +918,17 @@ def _timing_findings(s: Snapshot) -> list:
         shelves_p = {st.id for st in s.stations if st.is_storage or st.provider}
         avg = 0.0
         have_avg = False
-        for sid in members:
+        if s.wip_avg_by_process:
+            # Each stream's own average WIP, from the history: at a shared
+            # station the units of the other stream are not this one's.
+            for sid in members:
+                if sid in shelves_p:
+                    continue
+                v = s.wip_avg_by_process.get((sid, pid))
+                if v is not None:
+                    avg += v / max(need.get(sid, 1), 1e-9)
+                    have_avg = True
+        for sid in (members if not have_avg else ()):
             m = s.metrics.get(sid)
             if sid in shelves_p or m is None or m.wip_avg is None:
                 continue
@@ -939,14 +955,25 @@ def _timing_findings(s: Snapshot) -> list:
                 ends |= {r.load for r in routes if r.unload == n and r.load not in storage}
             else:
                 ends.add(n)
-        lc_end = {n: s.line_cycle_by_process.get((n, pid), s.metrics[n].line_cycle_sec)
-                  for n in ends if n in s.metrics}
-        exit_ths = [1.0 / v for n, v in sorted(lc_end.items()) if v]
+        # Throughput as Little's law needs it: pieces out per open second over
+        # the period. The reciprocal of line cycle time is a mean of
+        # per-departure ratios, which a once-a-day shipment makes noisy.
+        exit_ths = [s.exit_rate_by_process[(n, pid)] for n in sorted(ends)
+                    if s.exit_rate_by_process.get((n, pid))]
+        if not exit_ths:
+            lc_end = {n: s.line_cycle_by_process.get((n, pid), s.metrics[n].line_cycle_sec)
+                      for n in ends if n in s.metrics}
+            exit_ths = [1.0 / v for n, v in sorted(lc_end.items()) if v]
         touch = sum(worked[sid].cycle_sec * need.get(sid, 1)
                     for sid in members if sid in worked and worked[sid].cycle_sec)
         if not exit_ths or touch <= 0:
             continue
-        lead = wip_here / sum(exit_ths)
+        # The lead time the record measured, lot by lot, from release to
+        # finish, where there is one; Little's law where there is not yet.
+        # Little's law is exact for a line, but across a merge it adds up the
+        # feeds' inventory, which flow in parallel, and overstates.
+        obs = s.observed_lead_by_process.get(pid)
+        lead = obs[0] if obs and obs[1] >= 20 else wip_here / sum(exit_ths)
         if lead <= touch:
             continue
         eff = touch / lead
@@ -965,7 +992,8 @@ def _timing_findings(s: Snapshot) -> list:
             process=pid, waste="Inventory", manual="waste",
             metrics={"leadSec": round(lead, 0), "touchSec": round(touch, 0),
                      "flowEfficiency": round(eff, 3), "wip": round(wip_here, 1),
-                     "wipBasis": "average" if have_avg else "live"}))
+                     "wipBasis": "average" if have_avg else "live",
+                     "leadBasis": "measured" if (obs and obs[1] >= 20) else "littles-law"}))
 
     # ── A merge waits for its slowest feed: matched sets, not full bins.
     for pid, routes in by_process.items():

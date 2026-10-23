@@ -65,6 +65,10 @@ ALLOWED = {
         "_line_cycle_times_by_process": "maps each departure to the process whose route "
                                         "it took; asks no question about the graph's shape",
     },
+    "core/flow.py": {
+        "by_process": "attributes each lot event to the process whose route it took; "
+                      "asks no question about the graph's shape",
+    },
     "core/whatif_data.py": {
         "build_model": "builds the what-if model's process graph; drops every edge "
                        "touching an integration node itself (partners filter) "

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import analysis as engine
+from ..models.common import utcnow
 from ..db.tables import (
     Card as CardRow, LotTemplate as LotTemplateRow, MapSettings as MapSettingsRow,
     Process as ProcessRow, Route as RouteRow, Station as StationRow,
@@ -54,7 +55,7 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
                 per = wip_station_process.setdefault(sid, {})
                 per[pid] = per.get(pid, 0) + n
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     since = now - timedelta(days=LOOKBACK_DAYS)
     # Imported here rather than at module scope: `routers.sessions` pulls in
     # the router graph, and this module is imported by a background task.
@@ -65,6 +66,14 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
     measured = await _station_metrics(session, company_id, schedule, tzname, since, now)
     lct_by_process = await _line_cycle_times_by_process(session, company_id, schedule, tzname,
                                                         since, now)
+    from .flow import by_process as _flow_by_process
+    wip_by_p, exit_by_p = await _flow_by_process(session, company_id, since, now, schedule, tzname)
+    from . import whatif_data as _wd
+    try:
+        _model, _ = await _wd.build_model(session, company_id, since, now, schedule, tzname)
+        observed_by_p = _model.observed_by_process
+    except Exception:                       # the report must not fail over a measurement
+        observed_by_p = {}
 
     # Per-session seconds per piece, and per-operator means. The aggregate
     # cannot answer "is this repeatable" or "do two people do it differently" —
@@ -127,6 +136,9 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
         wip=wip,
         wip_process=wip_process,
         line_cycle_by_process={(k[0], k[1]): v for k, v in lct_by_process.items()},
+        wip_avg_by_process=wip_by_p,
+        exit_rate_by_process=exit_by_p,
+        observed_lead_by_process=observed_by_p,
         wip_station_process=wip_station_process,
         metrics=metrics,
         pixels_per_unit=float(map_row.pixelsPerUnit) if map_row else 0.0,

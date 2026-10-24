@@ -66,6 +66,8 @@ async def _in_flight_at(session, company_id, t: datetime, outside: set) -> dict:
     return out
 
 
+JOIN_SPLIT_STOPPAGES = True   # one breakdown across a session close is one repair
+CHANGEOVER_ON_PRODUCT = True  # changeovers follow a change of product
 MIN_RELIABLE = 5        # stopped timers a station needs before the others are set aside
 
 
@@ -125,15 +127,54 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     repairs, cos = defaultdict(list), defaultdict(list)
     paused_open = defaultdict(float)
     for st in stops:
-        d = open_span(st.startedAt, st.endedAt)
         if st.sessionId is not None:
-            paused_open[st.sessionId] += d
-        if d <= 0:
-            continue
-        if st.reason == "breakdown":
-            repairs[str(st.stationId)].append(d)
-        elif st.reason == "changeover":
-            cos[str(st.stationId)].append(d)
+            paused_open[st.sessionId] += open_span(st.startedAt, st.endedAt)
+    # One breakdown, one repair. Closing a session ends its running pause, so
+    # a machine still down at a break or a shift change is recorded as two
+    # stoppages: one ended when the timer closed, one opened when the next
+    # timer started on a station that was still down. Read as two repairs it
+    # makes outages look more frequent and shorter than they were, and short
+    # outages queue less work behind them than long ones.
+    sess_by_id = {w.id: w for w in work}
+    starts_at = defaultdict(list)
+    for w in work:
+        if w.startedAt:
+            starts_at[str(w.stationId)].append(w.startedAt)
+    for k in starts_at:
+        starts_at[k].sort()
+    near = timedelta(seconds=2)
+
+    def continues(prev, nxt) -> bool:
+        sa, sb = sess_by_id.get(prev.sessionId), sess_by_id.get(nxt.sessionId)
+        if sa is None or sb is None or sa.endedAt is None or sb.startedAt is None:
+            return False
+        if abs(prev.endedAt - sa.endedAt) > near or abs(nxt.startedAt - sb.startedAt) > near:
+            return False
+        if sb.startedAt < sa.endedAt:
+            return False
+        lst = starts_at[str(prev.stationId)]
+        i = bisect.bisect_right(lst, sa.endedAt)
+        return i < len(lst) and lst[i] == sb.startedAt   # the very next timer there
+    by_station = defaultdict(list)
+    for st in stops:
+        if st.reason in ("breakdown", "changeover"):
+            by_station[(str(st.stationId), st.reason)].append(st)
+    for (sid, reason), lst in by_station.items():
+        lst.sort(key=lambda x: x.startedAt)
+        cur, prev = None, None
+        for st in lst:
+            d = open_span(st.startedAt, st.endedAt)
+            if (JOIN_SPLIT_STOPPAGES and reason == "breakdown" and prev is not None and cur is not None
+                    and st.sessionId is not None and prev.sessionId is not None
+                    and continues(prev, st)):
+                cur += d
+            else:
+                if cur is not None and cur > 0:
+                    (repairs if reason == "breakdown" else cos)[sid].append(cur)
+                cur = d
+            prev = st
+        if cur is not None and cur > 0:
+            (repairs if reason == "breakdown" else cos)[sid].append(cur)
 
     # When each lot left each station: a lot card may visit a station many
     # times (a stamping campaign's card passes every bench once per tray), and
@@ -248,6 +289,32 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         stm.rates = rates.get(sid, [])
         stm.rates_by = {k: v for k, v in rates_by.get(sid, {}).items()}
 
+    # What each lot is: its product where the card still exists, else its
+    # value stream. Changeovers follow a change of product, which is when they
+    # happen on a floor (a welder set up for left brackets is changed over for
+    # the first right one); drawn at random per lot instead, they fall where
+    # the line is busiest as often as where it is slack.
+    from ..db.tables import Card as CardRow
+    card_rows = {str(c.id): c for c in (await session.execute(
+        select(CardRow).where(CardRow.companyId == company_id))).scalars().all()}
+
+    def product_of(card):
+        c = card_rows.get(card)
+        if c is not None and c.lotTemplateId is not None:
+            return str(c.lotTemplateId)
+        return card_proc.get(card) or ""
+
+    seq = defaultdict(list)
+    for (sid, card, _), (first, _last, _p, _u) in per_visit.items():
+        if first is not None:
+            seq[sid].append((first, product_of(card)))
+    for sid, stm in model_st.items():
+        vs = [pr for _, pr in sorted(seq.get(sid, []), key=lambda x: x[0])]
+        changes = sum(1 for a_, b_ in zip(vs, vs[1:]) if a_ != b_)
+        if CHANGEOVER_ON_PRODUCT and stm.changeovers and changes and len(set(vs)) >= 2:
+            stm.co_on_change = True
+            stm.co_prob = min(1.0, len(stm.changeovers) / changes)
+
     routing, merges, merge_lot, endpoints, entries = {}, {}, {}, set(), {}
     any_worked = any(st.worked for st in model_st.values())
     for pid, rs in by_p.items():
@@ -304,7 +371,8 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         for pid in route_proc.get((e.fromStation, e.toStation), ()):
             if (pid, e.fromStation) in entries:
                 arrivals.append(ArrivalIn(t=clock(e.timestamp), qty=int(e.quantity or 1),
-                                          process=pid, station=e.toStation, feed=e.fromStation))
+                                          process=pid, station=e.toStation, feed=e.fromStation,
+                                          product=product_of(e.cardId)))
                 break
 
     # ── what the line actually took: entry to endpoint, FIFO per lot ──

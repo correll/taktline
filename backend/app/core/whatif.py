@@ -58,8 +58,11 @@ class StationModel:
     servers: int = 1
     fail_rate: float = 0.0                          # breakdowns per working second
     repairs: list = field(default_factory=list)     # seconds
-    co_prob: float = 0.0                            # changeover per lot
+    co_prob: float = 0.0                            # changeover per lot (or per product change)
     changeovers: list = field(default_factory=list)  # seconds
+    # A changeover happens when the product changes, not at random: with
+    # co_on_change, co_prob is the chance of one at a change of product.
+    co_on_change: bool = False
 
     @property
     def worked(self) -> bool:
@@ -73,6 +76,7 @@ class ArrivalIn:
     process: str
     station: str        # where the lot goes first (downstream of an entry station)
     feed: str = ""      # the entry station it left
+    product: str = ""   # what it is, for changeovers at a change of product
 
 
 @dataclass
@@ -117,6 +121,7 @@ class _Lot:
     entry: float
     station: str = ""
     feed: str = ""
+    product: str = ""
 
 
 class _Sim:
@@ -131,6 +136,7 @@ class _Sim:
         self.down_time = defaultdict(float)
         self.feeds = defaultdict(lambda: defaultdict(deque))   # (p, merge) -> feed -> lots
         self.done: list = []
+        self.last_product: dict = {}
         order = sorted(m.stations)
         # String seeds are hashed deterministically by `random` (unlike hash()),
         # so a scenario is reproducible across processes and restarts.
@@ -169,7 +175,16 @@ class _Sim:
             # hours and so meets fewer of them
             k = _poisson(rf, st.fail_rate * work)
             down += sum(rf.choice(st.repairs) for _ in range(k))
-        if st.changeovers and rc.random() < st.co_prob:
+        if st.co_on_change:
+            prev = self.last_product.get(sid)
+            self.last_product[sid] = lot.product
+            draw = rc.random()                       # drawn every lot: keeps streams aligned
+            changed = prev is not None and lot.product != prev
+            if st.changeovers and changed and draw < st.co_prob:
+                co = rc.choice(st.changeovers)
+                if c is None or c.changeovers:
+                    down += co
+        elif st.changeovers and rc.random() < st.co_prob:
             co = rc.choice(st.changeovers)
             if c is None or c.changeovers:
                 down += co
@@ -207,7 +222,8 @@ class _Sim:
                     want -= take
                     if head.qty == 0:
                         buf[f].popleft()
-            asm = _Lot(qty=q, process=p, entry=entries / max(1, units), station=sid)
+            asm = _Lot(qty=q, process=p, entry=entries / max(1, units), station=sid,
+                       product=f"assembly:{p}:{sid}")
             if self.m.stations.get(sid) and self.m.stations[sid].worked:
                 self.queue[sid].append(asm)
                 self.start(t, sid)
@@ -231,7 +247,7 @@ class _Sim:
         if opts[0][2] == "piece":
             for to, w, _ in opts:
                 self.arrive(t, to, _Lot(qty=max(1, int(round(lot.qty * w))), process=lot.process,
-                                        entry=lot.entry, feed=sid))
+                                        entry=lot.entry, feed=sid, product=lot.product))
             return
         x = self.rng_route.random()
         acc = 0.0
@@ -248,7 +264,8 @@ class _Sim:
         f = self.sc.demand or 1.0
         for a in self.m.arrivals:
             self.push(a.t / f, "arrive", (a.station, _Lot(qty=a.qty, process=a.process,
-                                                          entry=a.t / f, feed=a.feed)))
+                                                          entry=a.t / f, feed=a.feed,
+                                                          product=a.product)))
         guard = 0
         while self.ev and guard < 2_000_000:
             guard += 1

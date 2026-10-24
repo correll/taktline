@@ -69,7 +69,7 @@ def test_it_says_plainly_when_there_is_no_timing_data():
     assert r.readiness == "no-data"
     assert any("timer" in p for p in r.narrative), r.narrative
     # And it must not have invented a bottleneck out of nothing.
-    assert not {"bottleneck", "waiting-gap", "line-imbalance"} & rules(r)
+    assert not {"bottleneck", "line-imbalance"} & rules(r)
 
 
 def test_moves_alone_give_a_lead_time():
@@ -190,16 +190,6 @@ def test_the_constraint_is_named():
         pack=dict(**BUSY, cycle_sec=20, line_cycle_sec=32, oee=0.6))))
     f = next((f for f in r.findings if f.rule == "bottleneck"), None)
     assert f and "Sew" in f.title
-
-
-def test_the_gap_between_working_and_leaving_is_the_waste():
-    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
-        cut=dict(**BUSY, cycle_sec=20, line_cycle_sec=22),
-        sew=dict(**BUSY, cycle_sec=120, line_cycle_sec=580),
-        pack=dict(**BUSY, cycle_sec=20, line_cycle_sec=24))))
-    f = next((f for f in r.findings if f.rule == "waiting-gap"), None)
-    assert f and f.waste == "Waiting"
-    assert f.metrics["gapSec"] > 400
 
 
 def test_a_station_that_cannot_hold_the_takt():
@@ -416,10 +406,6 @@ def test_a_finding_only_links_to_the_manual_when_the_manual_explains_it():
             assert f.manual is None or f.manual in ALLOWED, \
                 f"{f.rule} links to '{f.manual}', which does not explain it"
 
-    # And the links that remain must actually be present where they help.
-    timing = reports[-1]
-    gap = next(f for f in timing.findings if f.rule == "waiting-gap")
-    assert gap.manual == "timing", "the cycle-vs-line-cycle gap IS the timing section"
 
 
 # ── The science upgrades ────────────────────────────────────────────────────
@@ -496,22 +482,6 @@ def test_the_constraint_carries_its_evidence():
     assert "idle waiting" in f.detail
 
 
-def test_the_waiting_gap_tells_queueing_from_starvation():
-    queued = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
-                          wip={"sew": 6},
-                          metrics=timed(sew=dict(**BUSY, cycle_sec=60, line_cycle_sec=200))))
-    f = next(f for f in queued.findings if f.rule == "waiting-gap")
-    assert f.metrics["mode"] == "queueing" and "queue" in f.detail.lower()
-
-    starved = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
-                           metrics=timed(
-                               cut=dict(**BUSY, cycle_sec=30, oee=0.8),
-                               sew=dict(**BUSY, cycle_sec=60, line_cycle_sec=200, oee=0.2),
-                               pack=dict(**BUSY, cycle_sec=30, oee=0.8))))
-    f = next(f for f in starved.findings if f.rule == "waiting-gap")
-    assert f.metrics["mode"] == "starved" and "upstream" in f.detail
-
-
 def test_no_headroom_is_its_own_warning():
     """93% loaded is not 'fits fine' — it is the steep part of the queueing
     curve (Kingman): waiting scales with load/(1−load)."""
@@ -530,9 +500,9 @@ def test_no_headroom_is_its_own_warning():
 
 def test_imbalance_reports_balance_efficiency_and_a_concrete_pairing():
     r = analyse(line(
-        [("a", "Cut"), ("b", "Label"), ("c", "Sew"), ("d", "Pack")],
-        [("a", "b"), ("b", "c"), ("c", "d")],
-        templates=[("t1", "Shirt", "p1", "a")],
+        [("s", "Fabric"), ("a", "Cut"), ("b", "Label"), ("c", "Sew"), ("d", "Pack")],
+        [("s", "a"), ("a", "b"), ("b", "c"), ("c", "d")],
+        templates=[("t1", "Shirt", "p1", "s")],
         metrics=timed(a=dict(**BUSY, cycle_sec=30), b=dict(**BUSY, cycle_sec=20),
                       c=dict(**BUSY, cycle_sec=90), d=dict(**BUSY, cycle_sec=25))))
     f = next(f for f in r.findings if f.rule == "line-imbalance")
@@ -682,3 +652,46 @@ def test_imbalance_weighs_stations_by_pieces_per_unit():
     f = next((f for f in r.findings if f.rule == "line-imbalance"), None)
     assert f and "Prep" in f.detail.split("carries")[0], f.detail if f else "no finding"
     assert f.metrics["slowestSec"] == 160.0
+
+
+def test_an_entry_station_is_not_balanced_against_the_line():
+    """A press stamping into a supermarket at one second a piece is not work
+    anyone could move to an assembler: an entry station runs at the release
+    pace, and the constraint rule leaves it out for the same reason. Among
+    the stations that remain the line is balanced, so nothing fires."""
+    r = analyse(line(
+        [("press", "Press"), ("w1", "Weld 1"), ("w2", "Weld 2"), ("a1", "Assembly")],
+        [("press", "w1"), ("w1", "w2"), ("w2", "a1")],
+        templates=[("t1", "Bracket", "p1", "press")],
+        metrics=timed(press=dict(**BUSY, cycle_sec=1), w1=dict(**BUSY, cycle_sec=39),
+                      w2=dict(**BUSY, cycle_sec=46), a1=dict(**BUSY, cycle_sec=62))))
+    assert "line-imbalance" not in rules(r)
+
+
+def test_wip_concentration_reads_the_average_not_the_moment():
+    """A live count is a snapshot: forty units at Sew right now, on a line
+    whose average at Sew is three, is a moment, not a standing pile."""
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
+                     wip={"cut": 2, "sew": 40, "pack": 1},
+                     metrics=timed(cut=dict(**BUSY, cycle_sec=30, wip_avg=5.0),
+                                   sew=dict(**BUSY, cycle_sec=30, wip_avg=4.0),
+                                   pack=dict(**BUSY, cycle_sec=30, wip_avg=5.0))))
+    assert "wip-concentration" not in rules(r)
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL,
+                     wip={"cut": 2, "sew": 3, "pack": 1},
+                     metrics=timed(cut=dict(**BUSY, cycle_sec=30, wip_avg=2.0),
+                                   sew=dict(**BUSY, cycle_sec=30, wip_avg=30.0),
+                                   pack=dict(**BUSY, cycle_sec=30, wip_avg=1.0))))
+    f = next((f for f in r.findings if f.rule == "wip-concentration"), None)
+    assert f and "Sew" in f.title and f.metrics["basis"] == "average"
+
+
+def test_no_rule_diagnoses_why_a_station_waits():
+    """Units standing at a station may be the lot in hand, and a station idle
+    because it is fast looks just like one starved by its feed; the record
+    cannot tell these apart, so the report does not pretend to."""
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, wip={"sew": 6},
+                     metrics=timed(cut=dict(**BUSY, cycle_sec=30, oee=0.8),
+                                   sew=dict(**BUSY, cycle_sec=60, line_cycle_sec=200, oee=0.2),
+                                   pack=dict(**BUSY, cycle_sec=30, oee=0.8))))
+    assert not {"waiting-gap", "starved-station"} & rules(r)

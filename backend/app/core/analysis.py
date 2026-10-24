@@ -780,46 +780,6 @@ def _timing_findings(s: Snapshot) -> list:
             stations=[top], process=pid, manual="timing",
             metrics={"load": round(load[top], 3), "nextLoad": round(rest[0], 3)}))
 
-    # ── The gap between doing the work and the work leaving — with the cause.
-    # The same gap has two opposite explanations, and WIP tells them apart:
-    # pieces queued in front of the station mean the station is the holdup;
-    # an empty bench with low utilisation means it is starved from upstream.
-    # Sending someone to "fix" a starved station adds capacity where there is
-    # already too much.
-    for sid, m in sorted(worked.items(), key=lambda kv: -(kv[1].line_cycle_sec or 0)):
-        if not m.line_cycle_sec or not m.cycle_sec:
-            continue
-        if m.line_cycle_sec > 1.5 * m.cycle_sec:
-            gap = m.line_cycle_sec - m.cycle_sec
-            queued = floor.get(sid, 0)
-            if queued >= 2:
-                cause = (f"{_words(queued)} units are standing at it, so the gap is "
-                         "queueing: pieces wait for the bench, not the other way round. "
-                         "A faster machine here buys nothing until the queue policy "
-                         "changes — smaller transfer batches, or capacity at whatever "
-                         "feeds the queue faster than it drains.")
-                mode = "queueing"
-            elif m.oee is not None and oee_median and m.oee < oee_median:
-                cause = ("The bench is empty and its utilisation is below the line's "
-                         "median, so the gap is starvation: it is waiting for material, "
-                         "and the problem is upstream of it, not here.")
-                mode = "starved"
-            else:
-                cause = ("The gap is queueing, blocking or transport — not operator "
-                         "pace. A faster machine here buys nothing; find where the "
-                         "piece spends the wait.")
-                mode = "unknown"
-            out.append(Finding(
-                rule="waiting-gap", severity=WARNING, basis="timing",
-                title=f"{names.get(sid, '?')} spends {_mmss(gap)} per piece not working",
-                detail=f"The work takes {_mmss(m.cycle_sec)}, but a piece only leaves "
-                       f"every {_mmss(m.line_cycle_sec)}. {cause}",
-                stations=[sid], waste="Waiting", manual="timing",
-                metrics={"cycleSec": round(m.cycle_sec, 1),
-                         "lineCycleSec": round(m.line_cycle_sec, 1),
-                         "gapSec": round(gap, 1), "mode": mode}))
-            break                    # name the worst one; a list of six is noise
-
     # ── Against the beat the customer sets — in per-unit work, with sizing.
     for pid, p in procs.items():
         if not p.desired_takt_sec:
@@ -901,9 +861,14 @@ def _timing_findings(s: Snapshot) -> list:
     for pid, need in needs.items():
         for sid, k in need.items():
             factor_of[sid] = max(factor_of.get(sid, k), k)
+    # Balancing is about work that could be moved between stations that run
+    # at one pace. An entry station (a press stamping into a supermarket, a
+    # kitting bench) runs at the release pace, often in campaigns, and its
+    # seconds per piece are not work anyone could move to an assembler — the
+    # constraint rule leaves it out for the same reason.
     cycles = {sid: m.cycle_sec * factor_of.get(sid, 1)
-              for sid, m in worked.items() if m.cycle_sec}
-    if len(cycles) >= 3:
+              for sid, m in worked.items() if m.cycle_sec and sid not in entries}
+    if len(cycles) >= 2:
         fastest = min(cycles, key=lambda k: cycles[k])
         slowest = max(cycles, key=lambda k: cycles[k])
         ratio = cycles[slowest] / cycles[fastest] if cycles[fastest] else 0
@@ -949,29 +914,36 @@ def _timing_findings(s: Snapshot) -> list:
                          "fastestSec": round(cycles[fastest], 1),
                          "balanceEfficiency": round(eff, 2)}))
 
-    # ── Where the work-in-process actually is, right now.
-    if sum(floor.values()) >= 8 and floor:
-        worst = max(floor, key=lambda k: floor[k])
-        share = floor[worst] / max(1, sum(floor.values()))
-        if share >= 0.4 and len(floor) >= 2:
+    # ── Where the work-in-process is — on average over open time, not now.
+    # A live count is a snapshot, and reads a momentary pile as a standing
+    # one; the history-rebuilt average is what Little's law turns into lead
+    # time. The live count stands in only before there is any history.
+    avg_floor = {sid: m.wip_avg for sid, m in s.metrics.items()
+                 if sid not in shelves and m.wip_avg is not None and m.wip_avg > 0}
+    pile = avg_floor or floor
+    if sum(pile.values()) >= 8 and pile:
+        worst = max(pile, key=lambda k: pile[k])
+        share = pile[worst] / max(1, sum(pile.values()))
+        if share >= 0.4 and len(pile) >= 2:
             drain = ""
             if worst in worked and worked[worst].cycle_sec:
-                wait = floor[worst] * worked[worst].cycle_sec
+                wait = pile[worst] * worked[worst].cycle_sec
                 drain = (f" Even working flat out, the last unit in that queue waits "
                          f"{_mmss(wait)} before its turn.")
             out.append(Finding(
                 rule="wip-concentration", severity=WARNING, basis="timing",
                 title=f"{int(share * 100)}% of the work in process is at "
                       f"{names.get(worst, '?')}",
-                detail=f"{_words(floor[worst]).capitalize()} of "
-                       f"{_words(sum(floor.values()))} units on the floor are waiting "
+                detail=f"{_words(int(round(pile[worst]))).capitalize()} of "
+                       f"{_words(int(round(sum(pile.values()))))} units on the floor"
+                       f"{' on average' if avg_floor else ''} are waiting "
                        f"at {names.get(worst, 'one station')}. WIP piling up in front of "
                        "a station is the signature of a bottleneck, and by Little's law "
                        "it is also lead time: halve the queue and you halve how long an "
                        f"order takes to cross the shop.{drain}",
                 stations=[worst], waste="Inventory", manual="waste",
-                metrics={"units": floor[worst], "floorUnits": sum(floor.values()),
-                         "share": round(share, 2)}))
+                metrics={"units": round(pile[worst], 1), "floorUnits": round(sum(pile.values()), 1),
+                         "share": round(share, 2), "basis": "average" if avg_floor else "live"}))
 
     # ── Lead time and flow efficiency: the value-stream headline.
     # Little's law (lead time = WIP ÷ throughput) applied per value stream,
@@ -1147,27 +1119,6 @@ def _timing_findings(s: Snapshot) -> list:
                 metrics={"fastestSec": round(vals[0], 1), "slowestSec": round(vals[-1], 1)}))
             break
 
-    # ── A station idle while the line is busy is starved, not lazy.
-    if oee_median is not None:
-        low = min(oees, key=lambda k: oees[k])
-        if oee_median > 0.25 and oees[low] < oee_median / 2:
-            tie = ""
-            for pid, cstation in constraint_of.items():
-                if low in _reachable(by_process.get(pid, []), cstation):
-                    tie = (f" It sits downstream of {names.get(cstation, 'the constraint')}, "
-                           "which is consistent with the constraint setting the pace — "
-                           "fixing that feeds this.")
-                    break
-            out.append(Finding(
-                rule="starved-station", severity=INSIGHT, basis="timing",
-                title=f"{names.get(low, '?')} is idle most of the time",
-                detail=f"It runs {oees[low] * 100:.0f}% of open hours against a line "
-                       f"median of {oee_median * 100:.0f}%. A station that is idle while "
-                       "the rest of the line is busy is usually starved by something "
-                       "upstream rather than slow itself — look at what feeds it before "
-                       f"adding capacity here.{tie}",
-                stations=[low], waste="Waiting", manual="statistics",
-                metrics={"oee": round(oees[low], 3), "medianOee": round(oee_median, 3)}))
     return out
 
 

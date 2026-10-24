@@ -16,7 +16,7 @@ from ..db.tables import Stoppage as StoppageRow
 from ..core import work
 from ..core.flow import average_wip
 from ..models.common import utcnow
-from ..core.schedule import default_work_hours, open_seconds, shift_starts
+from ..core.schedule import Schedule, default_work_hours, open_seconds, shift_starts
 from ..core.entitlements import works_read_only
 
 
@@ -25,8 +25,8 @@ async def _work_schedule(session, company_id):
     gs = (await session.execute(
         select(GlobalSettingsRow).where(GlobalSettingsRow.companyId == company_id)
     )).scalars().first()
-    schedule = gs.workHours if (gs and gs.workHours) else default_work_hours()
-    return schedule, (gs.timezone if gs else "UTC")
+    grid = gs.workHours if (gs and gs.workHours) else default_work_hours()
+    return Schedule(grid, (gs.breaks if gs else None) or []), (gs.timezone if gs else "UTC")
 
 
 def _oee(total_working: float, start, end, schedule, tzname) -> Optional[float]:

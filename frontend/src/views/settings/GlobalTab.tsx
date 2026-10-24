@@ -15,6 +15,7 @@ export default function GlobalTab() {
   const { settings, loading, fetch, update } = useGlobalSettingsStore()
   const [timezone, setTimezone] = useState(settings.timezone)
   const [grid,     setGrid]     = useState<number[][]>(() => validGrid(settings.workHours))
+  const [breaks,   setBreaks]   = useState<number[][]>(settings.breaks ?? [])
   const [taktArc,  setCycleArc]  = useState(settings.showCycleArc)
   const [tracking, setTracking]  = useState(settings.orderTracking)
   const [trackSteps, setTrackSteps] = useState(settings.orderTrackingSteps)
@@ -25,6 +26,7 @@ export default function GlobalTab() {
   useEffect(() => { fetch() }, [])
   useEffect(() => { setTimezone(settings.timezone) }, [settings.timezone])
   useEffect(() => { setGrid(validGrid(settings.workHours)) }, [settings.workHours])
+  useEffect(() => { setBreaks(settings.breaks ?? []) }, [settings.breaks])
   useEffect(() => { setCycleArc(settings.showCycleArc) }, [settings.showCycleArc])
   useEffect(() => { setTracking(settings.orderTracking) }, [settings.orderTracking])
   useEffect(() => { setTrackSteps(settings.orderTrackingSteps) }, [settings.orderTrackingSteps])
@@ -33,7 +35,7 @@ export default function GlobalTab() {
   const handleSave = async () => {
     setError(null); setSaved(false)
     try {
-      await update({ timezone, workHours: grid, showCycleArc: taktArc,
+      await update({ timezone, workHours: grid, breaks, showCycleArc: taktArc,
                      orderTracking: tracking, orderTrackingSteps: trackSteps,
                      supportedLanguages: langs })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
@@ -176,6 +178,34 @@ export default function GlobalTab() {
           </div>
         </div>
 
+        {/* Breaks */}
+        <div>
+          <FieldLabel>BREAKS</FieldLabel>
+          <p style={{ fontSize: 11.5, color: color.textDim, margin: '4px 0 10px', lineHeight: 1.5, maxWidth: 620 }}>
+            The breaks your shifts take, the same every working day. <b style={{ color: color.textSecondary }}>They
+            are neither available time nor work</b>: OEE leaves them out, a timer left running over one does not
+            count it, and the what-if model's line stops for them as yours does. Minutes matter here, so they are
+            entered as times rather than painted on the grid above.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: size.sp2 }}>
+            {breaks.map((b, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: size.sp2 }}>
+                <input type="time" value={hhmm(b[0])} disabled={loading} style={{ ...inputStyle, width: 110 }}
+                       onChange={(e) => setBreaks(breaks.map((x, j) => j === i ? [minutes(e.target.value), x[1]] : x))} />
+                <span style={{ fontSize: 12, color: color.textDim }}>to</span>
+                <input type="time" value={hhmm(b[1])} disabled={loading} style={{ ...inputStyle, width: 110 }}
+                       onChange={(e) => setBreaks(breaks.map((x, j) => j === i ? [x[0], minutes(e.target.value)] : x))} />
+                <button style={miniBtn} onClick={() => setBreaks(breaks.filter((_, j) => j !== i))}>Remove</button>
+                {b[1] <= b[0] && <span style={{ fontSize: 11, color: color.statusFault }}>ends before it starts</span>}
+              </div>
+            ))}
+            <div>
+              <button style={miniBtn} disabled={breaks.length >= 12}
+                      onClick={() => setBreaks([...breaks, [12 * 60, 12 * 60 + 30]])}>Add a break</button>
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: size.sp3 }}>
           <button onClick={handleSave} disabled={loading} style={primaryBtn(loading)}>Save</button>
           {saved && <span style={{ fontSize: 11, color: color.statusRunning, fontFamily: font.mono }}>✓ Saved</span>}
@@ -184,6 +214,12 @@ export default function GlobalTab() {
       </div>
     </div>
   )
+}
+
+const hhmm = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+const minutes = (v: string) => {
+  const [h, m] = v.split(':').map((x) => parseInt(x, 10))
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0)
 }
 
 // Each cell is a 4-bit quarter mask (bit i = the i-th 15-min quarter, bit 0 = :00–:15).

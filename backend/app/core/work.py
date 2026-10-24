@@ -5,10 +5,13 @@ Shared by the sessions router (operator actions) and the cards router (a move
 is the strongest evidence there is that work on a lot has ended), so the two
 cannot disagree about what a session's work time is.
 
-Work time is elapsed time minus stoppages. A timer that runs through a
-breakdown charges the repair to cycle time and records nowhere that the
-station was down; a Pause keeps the two apart, and the stoppage it opens is
-what uptime and changeover time are computed from.
+Work time is elapsed time minus stoppages and the plant's breaks. A timer
+that runs through a breakdown charges the repair to cycle time and records
+nowhere that the station was down; a Pause keeps the two apart, and the
+stoppage it opens is what uptime and changeover time are computed from. A
+timer left running over the tea break is the same mistake in a milder form,
+and the breaks are known in advance, so they are taken off without anyone
+having to press anything.
 """
 from __future__ import annotations
 
@@ -16,7 +19,8 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from ..db.tables import Stoppage as StoppageRow, WorkSession as SessionRow
+from ..db.tables import GlobalSettings as GlobalSettingsRow, Stoppage as StoppageRow, WorkSession as SessionRow
+from .schedule import Schedule, break_overlap_seconds, default_work_hours
 
 REASONS = ("breakdown", "changeover", "material", "other")
 
@@ -66,11 +70,28 @@ async def close(session, row: SessionRow, now: datetime, closed_by: str,
     await resume(session, row, now)
     row.endedAt = now
     elapsed = (now - row.startedAt).total_seconds() if row.startedAt else 0.0
-    row.durationSec = max(0.0, elapsed - (row.pausedSec or 0.0))
+    row.durationSec = max(0.0, elapsed - (row.pausedSec or 0.0)
+                          - await _break_seconds(session, row, now))
     row.closedBy = closed_by
     if quantity is not None:
         row.quantity = quantity
     await session.flush()
+
+
+async def _break_seconds(session, row: SessionRow, now: datetime) -> float:
+    """Break time inside the session that was not already paused."""
+    if not row.startedAt:
+        return 0.0
+    gs = (await session.execute(
+        select(GlobalSettingsRow).where(GlobalSettingsRow.companyId == row.companyId)
+    )).scalars().first()
+    if gs is None or not gs.breaks:
+        return 0.0
+    sched = Schedule(gs.workHours or default_work_hours(), gs.breaks)
+    paused = [(st.startedAt, st.endedAt or now) for st in (await session.execute(
+        select(StoppageRow).where(StoppageRow.sessionId == row.id))).scalars().all()
+        if st.startedAt]
+    return break_overlap_seconds(row.startedAt, now, sched, gs.timezone or "UTC", also_off=paused)
 
 
 async def close_sessions_left_behind(session, company_id, card_uuid, station_uuid,

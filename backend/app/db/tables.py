@@ -598,6 +598,11 @@ class GlobalSettings(Base):
     # 7×24 grid of 0/1 (day 0 = Monday) — the hours the plant is meant to run.
     # Drives OEE (working time ÷ open time). Defaults to Mon–Fri 9–5.
     workHours: Mapped[list] = mapped_column(JSONB, nullable=False, default=_default_work_hours)
+    # Breaks, minutes of the local day [[start, end], ...], the same every day:
+    # taken out of open time (core/schedule.Schedule), so they are neither
+    # available time nor work.
+    breaks: Mapped[list] = mapped_column(JSONB, nullable=False, default=list,
+                                         server_default=text("'[]'::jsonb"))
     # Show the operator a progress arc against the *station's* measured cycle time.
     # Off by default and per company on purpose: pace feedback shown to the
     # person doing the work is the line between useful and surveillance, so

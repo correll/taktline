@@ -14,10 +14,117 @@ early bits — ``0b1110`` opens at ``:15``) *or* end early (drop the late bits �
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 FULL_HOUR = 0b1111   # all four quarters open
+MAX_BREAKS = 12
+
+
+class Schedule(list):
+    """The 7×24 quarter grid, carrying the plant's breaks with it.
+
+    Breaks are minutes of the local day, ``[[start, end], ...]``, the same on
+    every day. They are not representable in the grid — a ten-minute tea
+    break does not fall on quarter boundaries — and they matter: available
+    time is the shift *less* its breaks (Rother and Shook's data box), so a
+    break counted as open time charges idle minutes to every station's OEE,
+    and a lot that waits through one appears to have been worked.
+
+    A list subclass so that every function here, and every caller that
+    passes the grid along, keeps working unchanged; the breaks travel with it.
+    """
+
+    def __init__(self, grid, breaks=()):
+        super().__init__(grid)
+        self.breaks = normalise_breaks(breaks)
+
+
+def normalise_breaks(breaks) -> list:
+    out = []
+    for b in breaks or ():
+        try:
+            a, z = int(b[0]), int(b[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if 0 <= a < z <= 24 * 60:
+            out.append([a, z])
+    out.sort()
+    merged: list = []
+    for a, z in out:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], z)
+        else:
+            merged.append([a, z])
+    return merged[:MAX_BREAKS]
+
+
+def _breaks_of(schedule) -> list:
+    return getattr(schedule, "breaks", None) or []
+
+
+def break_spans(start_utc: datetime, end_utc: datetime, schedule, tzname: str = "UTC") -> list:
+    """The breaks that fall inside [start, end], as UTC pairs, clipped."""
+    brk = _breaks_of(schedule)
+    if not brk or end_utc <= start_utc:
+        return []
+    tz = _tz(tzname)
+    d0 = (start_utc.astimezone(tz) - timedelta(days=1)).date()
+    d1 = (end_utc.astimezone(tz) + timedelta(days=1)).date()
+    out = []
+    d = d0
+    while d <= d1:
+        for a, z in brk:
+            la = datetime.combine(d, time(0), tzinfo=tz) + timedelta(minutes=a)
+            lz = datetime.combine(d, time(0), tzinfo=tz) + timedelta(minutes=z)
+            ua, uz = max(la.astimezone(timezone.utc), start_utc), min(lz.astimezone(timezone.utc), end_utc)
+            if uz > ua:
+                out.append((ua, uz))
+        d += timedelta(days=1)
+    return out
+
+
+def _subtract(intervals: list, holes: list) -> list:
+    """Interval difference of two sorted lists of (a, b) pairs."""
+    if not holes:
+        return intervals
+    holes = sorted(holes)
+    out = []
+    for a, b in intervals:
+        cur = a
+        for ha, hb in holes:
+            if hb <= cur or ha >= b:
+                continue
+            if ha > cur:
+                out.append((cur, ha))
+            cur = max(cur, hb)
+            if cur >= b:
+                break
+        if cur < b:
+            out.append((cur, b))
+    return out
+
+
+def break_overlap_seconds(start_utc, end_utc, schedule, tzname: str = "UTC",
+                          also_off: list | None = None) -> float:
+    """Seconds of [start, end] that fall in a break during open hours, not
+    counting time already in ``also_off`` (pauses), so nothing is taken off
+    twice."""
+    if start_utc is None or end_utc is None or end_utc <= start_utc:
+        return 0.0
+    spans = break_spans(start_utc, end_utc, schedule, tzname)
+    if not spans:
+        return 0.0
+    opened = _open_intervals_grid(start_utc, end_utc, schedule, tzname)
+    inb = []
+    for a, b in spans:
+        for oa, ob in opened:
+            lo, hi = max(a, oa), min(b, ob)
+            if hi > lo:
+                inb.append((lo, hi))
+    if also_off:
+        inb = _subtract(sorted(inb), sorted(also_off))
+    return sum((b - a).total_seconds() for a, b in inb)
 
 
 def default_work_hours() -> list[list[int]]:
@@ -75,6 +182,9 @@ def open_seconds(start_utc: datetime | None, end_utc: datetime | None,
     """Seconds within [start, end] that fall inside open work hours."""
     if not schedule or start_utc is None or end_utc is None or end_utc <= start_utc:
         return 0.0
+    if _breaks_of(schedule):
+        return sum((b - a).total_seconds()
+                   for a, b in open_intervals(start_utc, end_utc, schedule, tzname))
     tz = _tz(tzname)
     total = 0.0
     for cur in _quarters(start_utc, end_utc):
@@ -118,11 +228,18 @@ def shift_starts(start_utc: datetime, end_utc: datetime,
 
 def open_intervals(start_utc: datetime, end_utc: datetime,
                    schedule: list[list[int]] | None, tzname: str = "UTC") -> list[tuple]:
-    """The open stretches of [start, end] as merged (from, to) UTC pairs.
+    """The open stretches of [start, end] as merged (from, to) UTC pairs,
+    breaks taken out.
 
     Computed once per question and then swept against a step function, so a
     time average over thousands of events does not walk the calendar once per
     event."""
+    grid = _open_intervals_grid(start_utc, end_utc, schedule, tzname)
+    return _subtract(grid, break_spans(start_utc, end_utc, schedule, tzname))
+
+
+def _open_intervals_grid(start_utc: datetime, end_utc: datetime,
+                         schedule: list[list[int]] | None, tzname: str = "UTC") -> list[tuple]:
     if not schedule or end_utc <= start_utc:
         return []
     tz = _tz(tzname)

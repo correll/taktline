@@ -5,6 +5,10 @@ export interface GlobalSettingsData {
   // 7×24 grid; each cell is a 4-bit quarter mask (0–15), bit i = the i-th 15-min
   // quarter of the hour (bit 0 = :00–:15 … bit 3 = :45–:00). Day 0 = Monday.
   workHours: number[][]
+  /** Breaks as minutes of the local day, [[start, end], ...], the same every
+   *  day. Neither available time nor work: OEE leaves them out and a timer
+   *  left running over one does not count it. */
+  breaks?: number[][]
   /** Show operators a progress arc against their station's expected cycle time.
    *  Off unless a company turns it on — see the Operator view for why. */
   showCycleArc: boolean

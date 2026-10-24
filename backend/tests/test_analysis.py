@@ -632,7 +632,7 @@ def test_uneven_work_tells_special_cause_from_common_cause():
         sew=dict(**BUSY, cycle_sec=30, samples=[10, 11, 10, 9, 300, 10, 320, 10]))))
     f = next(f for f in spiky.findings if f.rule == "uneven-work")
     assert f.metrics["shape"] == "spikes"
-    assert "special-cause" in f.detail
+    assert "assignable cause" in f.detail
 
     spread = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
         sew=dict(**BUSY, cycle_sec=30, samples=[5, 60, 15, 75, 10, 65, 20, 70]))))
@@ -695,3 +695,34 @@ def test_no_rule_diagnoses_why_a_station_waits():
                                    sew=dict(**BUSY, cycle_sec=60, line_cycle_sec=200, oee=0.2),
                                    pack=dict(**BUSY, cycle_sec=30, oee=0.8))))
     assert not {"waiting-gap", "starved-station"} & rules(r)
+
+
+def test_a_station_making_two_products_is_not_uneven():
+    """Two products with different work contents at one station look erratic
+    when pooled; judged per product they are steady."""
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+        sew=dict(**BUSY, cycle_sec=30, samples=[10, 11, 10, 60, 62, 61, 10, 59, 11, 60, 10, 61],
+                 samples_by={"t1": [10, 11, 10, 10, 11, 10], "t2": [60, 62, 61, 59, 60, 61]}))))
+    assert "uneven-work" not in rules(r)
+
+
+def test_a_broad_spread_is_chance_variation_even_with_outliers():
+    """A wide, skewed spread throws up lots three times the median too; with
+    no steady majority they are not assignable causes."""
+    xs = [20, 35, 50, 80, 25, 120, 40, 200, 30, 60, 45, 150]
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+        sew=dict(**BUSY, cycle_sec=60, samples=xs))))
+    f = next(f for f in r.findings if f.rule == "uneven-work")
+    assert f.metrics["shape"] == "spread"
+
+
+def test_an_exit_interval_names_the_constraint_only_with_the_load_behind_it():
+    """Where work arrives in bursts a lightly loaded station can show long
+    gaps between departures; the constraint is the station with least
+    capacity against demand, so its load must agree."""
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+        cut=dict(**BUSY, cycle_sec=20, line_cycle_sec=30, oee=0.85),
+        sew=dict(**BUSY, cycle_sec=25, line_cycle_sec=60, oee=0.2),
+        pack=dict(**BUSY, cycle_sec=20, line_cycle_sec=32, oee=0.5))))
+    named = [f for f in r.findings if f.rule == "bottleneck"]
+    assert not any("Sew" in f.title for f in named)

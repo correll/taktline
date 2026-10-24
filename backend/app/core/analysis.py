@@ -82,6 +82,7 @@ class StationMetrics:
     line_cycle_sec: Optional[float] = None   # interval between departures, per piece
     oee: Optional[float] = None
     samples: list = field(default_factory=list)   # per-session seconds per piece
+    samples_by: dict = field(default_factory=dict)  # the same, by product (template id)
     operators: dict = field(default_factory=dict)  # operatorId → mean sec/piece
     downtime_sec: float = 0.0       # recorded breakdowns
     changeover_sec: float = 0.0     # recorded changeovers
@@ -697,7 +698,22 @@ def _timing_findings(s: Snapshot) -> list:
             slowest = max(rest_norm, key=lambda k: rest_norm[k])
             others = sorted(v for k, v in rest_norm.items() if k != slowest)
             typical = statistics.median(others) if others else 0
-            if typical and rest_norm[slowest] > 1.3 * typical:
+            # An exit interval that stands out names the constraint only if
+            # the station's load agrees: the constraint is the resource with
+            # least capacity against demand, and where work arrives in bursts
+            # a lightly loaded station can show long gaps between departures
+            # simply because nothing arrived. Without load data the interval
+            # stands alone.
+            def _load(sid_):
+                m_ = worked.get(sid_)
+                if m_ is None or not m_.oee or m_.oee <= 0 or not m_.working_sec:
+                    return None
+                return (m_.working_sec + m_.downtime_sec + m_.changeover_sec) / (m_.working_sec / m_.oee)
+            loads_ = {k: _load(k) for k in rest_norm}
+            known = [v for v in loads_.values() if v is not None]
+            corroborated = (loads_.get(slowest) is None or not known
+                            or loads_[slowest] >= 0.9 * max(known))
+            if typical and rest_norm[slowest] > 1.3 * typical and corroborated:
                 constraint_of[pid] = slowest
                 factor = need.get(slowest, 1)
                 per_unit = (f"A finished unit's worth of work leaves it every "
@@ -1055,47 +1071,59 @@ def _timing_findings(s: Snapshot) -> list:
     #    events. A wide spread everywhere is a common cause (no standard
     #    work): write the method down. Shewhart's distinction, and chasing
     #    the wrong one demoralises people without moving the number.
+    tname = {t.id: t.name for t in s.templates}
+    done_uneven = False
     for sid, m in worked.items():
-        if len(m.samples) < 6:
-            continue
-        mean = statistics.fmean(m.samples)
-        med = statistics.median(m.samples)
-        if mean <= 0 or med <= 0:
-            continue
-        cv = statistics.pstdev(m.samples) / mean
-        if cv >= 0.6:
-            spiky = mean / med >= 1.25 and max(m.samples) >= 3 * med
+        groups = {k: v for k, v in (m.samples_by or {}).items() if len(v) >= 6} or \
+                 ({"?": m.samples} if len(m.samples) >= 6 else {})
+        for prod, xs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+            mean = statistics.fmean(xs)
+            med = statistics.median(xs)
+            if mean <= 0 or med <= 0:
+                continue
+            cv = statistics.pstdev(xs) / mean
+            if cv < 0.6:
+                continue
+            # Shewhart: assignable causes are a few points outside the limits
+            # of an otherwise stable process. Outlying lots (three times the
+            # median or more) count as assignable only if they are a minority
+            # and the remaining lots are themselves steady; a broad, skewed
+            # spread throws up outliers too, and is chance variation.
+            out_ = [x for x in xs if x >= 3 * med]
+            rest = [x for x in xs if x < 3 * med]
+            steady = (len(rest) >= 3 and statistics.fmean(rest) > 0
+                      and statistics.pstdev(rest) / statistics.fmean(rest) < 0.3)
+            spiky = bool(out_) and len(out_) <= 0.25 * len(xs) and steady
+            what = f" for {tname[prod]}" if prod in tname else ""
             if spiky:
-                n_spikes = sum(1 for x in m.samples if x >= 3 * med)
                 shape = "spikes"
-                diagnosis = (f"Most cycles cluster near {_mmss(med)}, but "
-                             f"{_words(n_spikes)} of {_words(len(m.samples))} blew "
-                             f"out to {_mmss(max(m.samples))} or thereabouts. That "
-                             "pattern is special-cause: something interrupts the work "
-                             "— a tool hunt, missing material, rework — rather than "
-                             "the work itself varying. Averages hide it; go and see "
-                             "what happened on those particular cycles.")
+                diagnosis = (f"Most lots{what} take close to {_mmss(med)} a piece, but "
+                             f"{_words(len(out_))} of {_words(len(xs))} took three times as long or "
+                             "more. That pattern is an assignable cause: something interrupts "
+                             "the work on those lots (a missing tool, material, rework) rather "
+                             "than the work itself varying. Go and see what happened to them.")
             else:
                 shape = "spread"
-                diagnosis = ("The spread is broad across all cycles rather than a few "
-                             "bad ones — common-cause variation, which usually means "
-                             "the step is really several different jobs, or that there "
-                             "is no standard way of doing it. Write the best method "
-                             "down and teach it; exhorting people to be consistent "
-                             "without a standard moves nothing.")
+                diagnosis = (f"The spread{what} is broad across lots rather than a few bad ones: "
+                             "chance variation in the work itself, which usually means the step "
+                             "is several different jobs or that there is no standard way of "
+                             "doing it. Write the best method down and teach it.")
             out.append(Finding(
                 rule="uneven-work", severity=INSIGHT, basis="timing",
                 title=f"The work at {names.get(sid, '?')} is not repeatable",
-                detail=f"Cycle times there range from {_mmss(min(m.samples))} to "
-                       f"{_mmss(max(m.samples))} around a mean of {_mmss(mean)}. "
+                detail=f"Times per piece{what} range from {_mmss(min(xs))} to "
+                       f"{_mmss(max(xs))} around a mean of {_mmss(mean)}. "
                        f"{diagnosis} Unevenness is the waste that hides the others: "
                        "no bottleneck, takt or average can be trusted until the same "
                        "job takes about the same time twice.",
                 stations=[sid],
                 metrics={"cv": round(cv, 2), "meanSec": round(mean, 1),
                          "medianSec": round(med, 1), "shape": shape,
-                         "minSec": round(min(m.samples), 1),
-                         "maxSec": round(max(m.samples), 1)}))
+                         "minSec": round(min(xs), 1), "maxSec": round(max(xs), 1),
+                         "product": tname.get(prod)}))
+            done_uneven = True
+            break
+        if done_uneven:
             break
 
     # ── Two people, one bench, very different times.

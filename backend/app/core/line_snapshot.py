@@ -84,7 +84,10 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             SessionRow.endedAt.isnot(None),
             SessionRow.startedAt >= since))).scalars().all()
     samples: dict = {}
+    samples_by: dict = {}
     per_operator: dict = {}
+    tmpl_of = {str(c.id): str(c.lotTemplateId) for c in (await session.execute(
+        select(CardRow).where(CardRow.companyId == company_id))).scalars().all() if c.lotTemplateId}
     for w in work:
         if not w.durationSec or not w.quantity or w.quantity < 1:
             continue
@@ -93,6 +96,9 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
         sid = str(w.stationId)
         each = w.durationSec / w.quantity
         samples.setdefault(sid, []).append(each)
+        # by product too: a station that makes two products with different
+        # work contents is not uneven, and pooled its times look as if it were
+        samples_by.setdefault(sid, {}).setdefault(tmpl_of.get(str(w.cardId), "?"), []).append(each)
         per_operator.setdefault(sid, {}).setdefault(w.operatorId or "—", []).append(each)
 
     metrics = {}
@@ -106,6 +112,7 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             line_cycle_sec=m.get("lineCycleTimeSec"),
             oee=m.get("oee"),
             samples=samples.get(sid, []),
+            samples_by=samples_by.get(sid, {}),
             operators=ops,
             downtime_sec=m.get("downtimeSec", 0.0) or 0.0,
             changeover_sec=m.get("changeoverSec", 0.0) or 0.0,

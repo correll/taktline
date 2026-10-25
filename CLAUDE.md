@@ -160,6 +160,40 @@ random parts and the station factors are normalised against the loaded line, so
 `--cycle 5` still means about five seconds on this floor rather than five
 times whatever the station names happened to hash to.
 
+## A second opinion on the what-if answers (`backend/review_whatif.py`)
+
+The line doctor's rules and the what-if model are heuristics, right to the
+extent that the line resembles the idealisation each encodes. An experienced
+engineer discounts an answer when the record shows the line works otherwise --
+a station that never has room downstream, two machines never busy at once. The
+reviewer asks a language model to take that role: for every what-if question it
+states the probability that the answer is wrong for this line, and one
+sentence of why.
+
+    .venv/bin/python review_whatif.py --email you@... --company "My line" --auto
+    .venv/bin/python review_whatif.py --email you@... --scenarios q.json --out review.json
+    .venv/bin/python review_whatif.py --email you@... --auto --dry-run   # print the input, send nothing
+
+It is **the only part of Taktline that sends the plant's record to a third
+party**, so it is a separate tool that nothing in the app calls. It signs in as
+a member over the public API, like `simulate_line.py`, and calls Claude through
+the Claude Code command line with the caller's own credentials -- headless,
+with every tool and customisation disabled, from an empty directory. The input
+is the line's stations and routes, the statistics, the line doctor's findings,
+the what-if answers with the model's fit check, and evidence from the last 30
+days of sessions and moves (how often station pairs work at once against
+independent working, how long lots queue, how long finished lots wait before
+moving on). Never operator ids, lot codes, order data or tracking links.
+
+The instructions are the ones evaluated in the paper and are pinned by
+`PROMPT_SHA256`; the tool refuses to run if they change, and
+`tests/test_review_whatif.py` fails. What the evaluation found belongs in the
+user's expectations: the reviewer knows things no threshold encodes (answers
+about more demand near saturation are fragile) but weighs the model's visible
+misfit less well than the fit check the what-if panel already shows, so read
+the two together. The export's Work sessions sheet carries the lot id in its
+last column so a session can be matched to its lot's moves.
+
 # Engineering conventions
 
 ## Persistence layer (PostgreSQL + SQLAlchemy async)

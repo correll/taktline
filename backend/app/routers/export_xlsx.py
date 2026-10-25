@@ -170,8 +170,10 @@ async def export_workbook(window: Optional[str] = None,
 
     # ── 3. Work sessions — what the timers recorded ─────────────────────────
     ws = wb.create_sheet("Work sessions")
+    # The lot id comes last: a lot code is a human reference and need not be
+    # unique, and matching a session to the lot's moves needs the id.
     _append(ws, ["Started (UTC)", "Ended (UTC)", "Station", "Operator", "Units",
-               "Duration (s)", "Seconds per piece", "Lot code", "Product"])
+               "Duration (s)", "Seconds per piece", "Lot code", "Product", "Lot id"])
     rows = (await session.execute(
         select(SessionRow).where(SessionRow.companyId == ctx.company_id)
         .order_by(SessionRow.startedAt.asc()).limit(_MAX_ROWS))).scalars().all()
@@ -185,8 +187,9 @@ async def export_workbook(window: Optional[str] = None,
             r.operatorId, r.quantity, round(r.durationSec, 1) if r.durationSec else None,
             round(r.durationSec / r.quantity, 2) if r.durationSec and r.quantity else None,
             card.lotNum if card else "", tmpl.name if tmpl else "",
+            str(r.cardId) if r.cardId else "",
         ])
-    finish(ws, [21, 21, 22, 14, 8, 13, 18, 14, 22])
+    finish(ws, [21, 21, 22, 14, 8, 13, 18, 14, 22, 38])
 
     # ── 4. Lot history — every movement, the audit trail ────────────────────
     ws = wb.create_sheet("Lot history")

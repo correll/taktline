@@ -260,6 +260,43 @@ def test_moves_alone_give_each_lot_its_flow_time(actor, clock):  # noqa: F811
     assert n == 30 and abs(sec - 600) < 1e-6
 
 
+
+def test_each_lot_is_counted_in_its_own_value_stream_where_streams_share_every_route(actor, clock):  # noqa: F811
+    """Two value streams drawn over the same benches: no route belongs to one
+    of them alone, so the routes a lot took cannot say which stream it is in.
+    The lot card can, and its flow time must be counted there; otherwise the
+    stream reports no measured lead time at all, however many lots finished."""
+    a = actor(); bootstrap_admin(a)
+    hours = [[15] * 24 for _ in range(7)]
+    a.req("PUT", "/global-settings/", {"workHours": hours})
+    ids, tmpl = _line(a)
+    proc2 = a.req("POST", "/processes/", {"name": "Second line"}).json()["_id"]
+    for load, unload in (("Cut", "Pack"), ("Pack", "Store")):
+        r = a.req("POST", "/routes/", {"processId": proc2, "load": ids[load],
+                                       "unload": ids[unload], "quantity": 1})
+        assert r.status_code in (200, 201), r.text
+    for _ in range(3):
+        card = _lot(a, ids, tmpl)
+        a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Cut"],
+                                                 "toStationId": ids["Pack"], "quantity": 10})
+        clock.tick(600)
+        a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Pack"],
+                                                 "toStationId": ids["Store"], "quantity": 10})
+        clock.tick(300)
+    import asyncio, uuid
+    from app.core import whatif_data
+    from app.db.connection import SessionLocal
+
+    async def by_process():
+        async with SessionLocal() as s:
+            m, _ = await whatif_data.build_model(s, uuid.UUID(a.company), clock.t - timedelta(days=1),
+                                                 clock.t, hours, "UTC")
+            return m.observed_by_process
+    obs = asyncio.run(by_process())
+    assert set(obs) == {tmpl["processId"]}
+    sec, n = obs[tmpl["processId"]]
+    assert n == 30 and abs(sec - 600) < 1e-6
+
 def test_wip_and_spread_follow_littles_law_and_the_variability():
     """Lots of ten every 1200 s through 600 s of work: each unit waits 600 s,
     the spread is zero, and halving the work halves the WIP."""

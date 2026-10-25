@@ -268,9 +268,15 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         if e.type == "moved" and e.fromStation and e.toStation:
             move_counts[(e.fromStation, e.toStation)] += int(e.quantity or 0)
 
-    # Which value stream each lot belongs to, from the routes its moves took
-    # (a finished or merged lot no longer exists in the cards table).
-    card_proc: dict = {}
+    # Which value stream each lot belongs to: the lot card says so while it
+    # exists; a lot merged away or deleted is placed by the routes its moves
+    # took. Routes alone cannot place a lot whose streams share every route
+    # it used, and a stream whose lots were all placed that way reported no
+    # measured lead time however many of them finished.
+    from ..db.tables import Card as CardRow
+    card_rows = {str(c.id): c for c in (await session.execute(
+        select(CardRow).where(CardRow.companyId == company_id))).scalars().all()}
+    card_proc: dict = {k: str(c.processId) for k, c in card_rows.items() if c.processId}
     for e in events:
         if e.type == "moved" and e.fromStation and e.toStation and e.cardId not in card_proc:
             ps = route_proc.get((e.fromStation, e.toStation))
@@ -294,10 +300,6 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     # happen on a floor (a welder set up for left brackets is changed over for
     # the first right one); drawn at random per lot instead, they fall where
     # the line is busiest as often as where it is slack.
-    from ..db.tables import Card as CardRow
-    card_rows = {str(c.id): c for c in (await session.execute(
-        select(CardRow).where(CardRow.companyId == company_id))).scalars().all()}
-
     def product_of(card):
         c = card_rows.get(card)
         if c is not None and c.lotTemplateId is not None:

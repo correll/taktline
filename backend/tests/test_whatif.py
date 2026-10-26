@@ -297,6 +297,53 @@ def test_each_lot_is_counted_in_its_own_value_stream_where_streams_share_every_r
     sec, n = obs[tmpl["processId"]]
     assert n == 30 and abs(sec - 600) < 1e-6
 
+
+def test_an_arrival_enters_the_value_stream_its_card_names(actor, clock):  # noqa: F811
+    """Two value streams leave the same release queue by the same route and
+    part later. An arrival placed by its route alone went to whichever stream
+    came first, and every lot of the other was routed through stations it never
+    visits; the lot card names its stream."""
+    from tests.test_stoppages import _station
+    a = actor(); bootstrap_admin(a)
+    hours = [[15] * 24 for _ in range(7)]
+    a.req("PUT", "/global-settings/", {"workHours": hours})
+    doc = {"kind": "taktline-map", "version": 1, "name": "Shared release",
+           "mapSettings": {"unit": "m", "pixelsPerUnit": 10, "stationSizeUnits": 3},
+           "stations": [_station("q", "Release"), _station("a", "Cut"), _station("b", "Pack"),
+                        _station("s", "Store", True)],
+           "processes": [{"ref": "p1", "name": "Long", "description": "", "desiredTaktSec": None},
+                         {"ref": "p2", "name": "Short", "description": "", "desiredTaktSec": None}],
+           "templates": [{"ref": "t1", "name": "Long part", "description": "", "process": "p1",
+                          "startStation": "q", "color": None, "fields": []},
+                         {"ref": "t2", "name": "Short part", "description": "", "process": "p2",
+                          "startStation": "q", "color": None, "fields": []}],
+           "routes": [{"process": "p1", "load": "q", "unload": "a", "quantity": 1, "outputTemplate": None},
+                      {"process": "p1", "load": "a", "unload": "b", "quantity": 1, "outputTemplate": None},
+                      {"process": "p1", "load": "b", "unload": "s", "quantity": 1, "outputTemplate": None},
+                      {"process": "p2", "load": "q", "unload": "a", "quantity": 1, "outputTemplate": None},
+                      {"process": "p2", "load": "a", "unload": "s", "quantity": 1, "outputTemplate": None}]}
+    assert a.req("POST", "/map-io/import", doc).status_code == 200
+    ids = {s["name"]: s["_id"] for s in a.req("GET", "/stations/").json()}
+    tm = {t["name"]: t for t in a.req("GET", "/lot-templates/").json()}
+    for name in ("Long part", "Short part", "Short part"):
+        t = tm[name]
+        card = a.req("POST", "/cards/", {"lotTemplateId": t["_id"], "processId": t["processId"],
+                                         "totalQuantity": 1, "bins": {ids["Release"]: {"count": 1}}}).json()["_id"]
+        a.req("POST", f"/cards/{card}/advance", {"fromStationId": ids["Release"],
+                                                 "toStationId": ids["Cut"], "quantity": 1})
+        clock.tick(60)
+    import asyncio, uuid
+    from app.core import whatif_data
+    from app.db.connection import SessionLocal
+
+    async def arrivals():
+        async with SessionLocal() as s:
+            m, _ = await whatif_data.build_model(s, uuid.UUID(a.company), clock.t - timedelta(days=1),
+                                                 clock.t, hours, "UTC")
+            return [x.process for x in m.arrivals]
+    got = asyncio.run(arrivals())
+    assert sorted(got) == sorted([tm["Long part"]["processId"]] + [tm["Short part"]["processId"]] * 2)
+
 def test_wip_and_spread_follow_littles_law_and_the_variability():
     """Lots of ten every 1200 s through 600 s of work: each unit waits 600 s,
     the spread is zero, and halving the work halves the WIP."""

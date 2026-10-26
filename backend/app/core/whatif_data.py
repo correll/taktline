@@ -370,7 +370,13 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     for e in events:
         if e.type != "moved" or not e.fromStation or not e.toStation:
             continue
-        for pid in route_proc.get((e.fromStation, e.toStation), ()):
+        # Several value streams may leave one release queue by the same route;
+        # the lot card names the one this lot is in. By the route alone the
+        # arrival went to whichever stream came first, and every lot of the
+        # others was routed through stations it never visits.
+        cands = route_proc.get((e.fromStation, e.toStation), ())
+        own = card_proc.get(e.cardId)
+        for pid in ([own] if own in cands else []) + sorted(p_ for p_ in cands if p_ != own):
             if (pid, e.fromStation) in entries:
                 arrivals.append(ArrivalIn(t=clock(e.timestamp), qty=int(e.quantity or 1),
                                           process=pid, station=e.toStation, feed=e.fromStation,

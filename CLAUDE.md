@@ -75,7 +75,7 @@ Statistics: the process collects timing based on lot and per product on each sta
 
 The gap between cycle time and line cycle time is the waste, in seconds: work that takes 2 minutes but only ships every 9 is queueing, blocking or transport, and speeding up the operator wins nothing. The Statistics table shows both side by side and tints line cycle time amber when it exceeds cycle time by >50%.
 
-Also collected: Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. open work time, number of transport events when lot cards travel from one location to another and overall transport in meters. 
+Also collected: Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. open work time — **the crew's** open work time (`sessions.crew_open_seconds`): working time adds up across operators, so where several people work at one station at once it is measured against open time times the operators present, read from the record (each signs in on their own device; an operator counts as present from their first Start to their last Stop within each opening, so a handover at one bench is one operator, not two). Against open time alone every crew station read 100% all day, and the line doctor's load corroboration could not tell the busiest crew from a bench idling half the shift; a station worked by one person at a time is measured exactly as before. Also: number of transport events when lot cards travel from one location to another and overall transport in meters. 
 
 ## Taking the statistics away, and starting them over
 

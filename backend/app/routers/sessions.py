@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+import bisect
 from datetime import timedelta, timezone
 from typing import List, Optional
 from sqlalchemy import select, func, or_
@@ -16,7 +17,7 @@ from ..db.tables import Stoppage as StoppageRow
 from ..core import work
 from ..core.flow import average_wip
 from ..models.common import utcnow
-from ..core.schedule import Schedule, default_work_hours, open_seconds, shift_starts
+from ..core.schedule import Schedule, default_work_hours, open_intervals, open_seconds, shift_starts
 from ..core.entitlements import works_read_only
 
 
@@ -29,12 +30,66 @@ async def _work_schedule(session, company_id):
     return Schedule(grid, (gs.breaks if gs else None) or []), (gs.timezone if gs else "UTC")
 
 
-def _oee(total_working: float, start, end, schedule, tzname) -> Optional[float]:
-    """Working time ÷ open work time in [start, end]; falls back to raw elapsed
-    time when the schedule leaves no open hours in the window."""
+def crew_open_seconds(sessions, start, end, schedule, tzname) -> float:
+    """Open seconds in [start, end] weighted by how many operators were at the
+    station at once, and at least one.
+
+    `sessions`: (startedAt, endedAt, operatorId) at one station. Working time
+    adds up across operators — two people at one bench for an hour worked two
+    hours — so the time it is measured against must count them too, or a
+    station worked by a crew reads 100% busy all day and cannot be told from
+    its neighbours. The crew is read from the record, since each operator
+    signs in on their own device: within each stretch between the plant's
+    openings, an operator counts as present from their first Start to their
+    last Stop there, idle gaps included. Shifts handed over at one bench
+    (Ann until two, Bob after) count one operator, not two, and a station
+    worked by one person at a time is measured exactly as before.
+    """
+    if not start or not end or end <= start:
+        return 0.0
+    opens = open_intervals(start, end, schedule, tzname)
+    if not opens:
+        return 0.0
+    cum = [0.0]
+    for x, y in opens:
+        cum.append(cum[-1] + (y - x).total_seconds())
+    froms = [x for x, _ in opens]
+
+    def open_upto(t):                       # open seconds in [start, t]
+        k = bisect.bisect_right(froms, t) - 1
+        if k < 0:
+            return 0.0
+        x, y = opens[k]
+        return cum[k] + (min(t, y) - x).total_seconds()
+
+    bounds = [start] + [o for o in shift_starts(start, end, schedule, tzname) if start < o < end] + [end]
+    spans: list = [{} for _ in bounds[1:]]   # per stretch: operator -> (first Start, last Stop)
+    for s0, s1, op in sessions:
+        if s0 is None or s1 is None or s1 <= start or s0 >= end:
+            continue
+        i0 = max(0, bisect.bisect_right(bounds, s0) - 1)
+        i1 = min(len(spans) - 1, bisect.bisect_left(bounds, s1) - 1)
+        for k in range(i0, i1 + 1):
+            lo, hi = max(s0, bounds[k]), min(s1, bounds[k + 1])
+            cur = spans[k].get(op)
+            spans[k][op] = (min(cur[0], lo), max(cur[1], hi)) if cur else (lo, hi)
+    total = 0.0
+    for (a, b), span in zip(zip(bounds, bounds[1:]), spans):
+        steps = sorted([(lo, 1) for lo, _ in span.values()] + [(hi, -1) for _, hi in span.values()])
+        t, n = a, 0
+        for at, d in steps + [(b, 0)]:
+            total += (open_upto(at) - open_upto(t)) * max(1, n)
+            t, n = at, n + d
+    return total
+
+
+def _oee(total_working: float, start, end, schedule, tzname, crew_seconds: float = 0.0) -> Optional[float]:
+    """Working time ÷ the crew's open work time in [start, end]
+    (`crew_open_seconds`); falls back to open time, then to raw elapsed time,
+    when the record or the schedule leaves nothing to divide by."""
     if not start or not end:
         return None
-    denom = open_seconds(start, end, schedule, tzname)
+    denom = crew_seconds or open_seconds(start, end, schedule, tzname)
     if denom <= 0:
         denom = (end - start).total_seconds()
     return min(1.0, total_working / denom) if denom > 0 else None
@@ -467,6 +522,13 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
                SessionRow.endedAt >= since, SessionRow.endedAt <= until)
         .group_by(SessionRow.stationId, SessionRow.closedBy)
     )).all()
+    crew_rows: dict = {}
+    for sid_, a_, b_, op_ in (await session.execute(
+        select(SessionRow.stationId, SessionRow.startedAt, SessionRow.endedAt, SessionRow.operatorId)
+        .where(SessionRow.companyId == company_id, SessionRow.endedAt.isnot(None),
+               SessionRow.endedAt >= since, SessionRow.endedAt <= until)
+    )).all():
+        crew_rows.setdefault(str(sid_), []).append((a_, b_, op_))
     # Stoppages count in OPEN time: a changeover begun just before the shift
     # ends and closed the next morning took minutes of the plant's time, not
     # the night it spans on the wall clock.
@@ -550,7 +612,9 @@ async def _station_metrics(session, company_id, schedule, tzname, since, until) 
             "cycleTimeSec": (working / units) if units > 0 else None,
             "lineCycleTimeSec": line_cycles.get(sid),
             "oee": None if a["id"] in warehouses
-                   else _oee(busy, a["first"], a["last"], schedule, tzname),
+                   else _oee(busy, a["first"], a["last"], schedule, tzname,
+                             crew_open_seconds(crew_rows.get(sid, []), a["first"], a["last"],
+                                               schedule, tzname)),
             "isWarehouse": a["id"] in warehouses,
             "unstoppedSessions": n_all - a["stopped"][0],
             "downtimeSec": down[0], "breakdowns": down[1],
@@ -696,7 +760,9 @@ async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(g
     schedule, tzname = await _work_schedule(session, ctx.company_id)
     line_cycle = (await _line_cycle_times(session, ctx.company_id, schedule, tzname)).get(station_id)
     if starts and ends and not is_warehouse:
-        oee = _oee(total_working, min(starts), max(ends), schedule, tzname)
+        crew = crew_open_seconds([(r.startedAt, r.endedAt, r.operatorId) for r in rows],
+                                 min(starts), max(ends), schedule, tzname)
+        oee = _oee(total_working, min(starts), max(ends), schedule, tzname, crew)
     else:
         oee = None   # a warehouse stores rather than runs
 

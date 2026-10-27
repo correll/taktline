@@ -1,4 +1,6 @@
 import { client } from './client'
+import { operatorId } from '../domain/operatorIdentity'
+import { useAuthStore } from '../store/auth.store'
 
 export interface WorkSession {
   _id:         string
@@ -75,8 +77,10 @@ export const sessionsApi = {
 
   openSessions: (): Promise<WorkSession[]> => client.get('/sessions/open'),
 
+  /** Starts a work session signed by this person on this device unless the
+   *  caller names an operator (see domain/operatorIdentity). */
   start: (body: { stationId: string; cardId?: string | null; operatorId?: string; quantity?: number }): Promise<WorkSession> =>
-    client.post('/sessions/', body),
+    client.post('/sessions/', { ...body, operatorId: body.operatorId ?? operatorId(useAuthStore.getState().user?.id) }),
 
   end: (id: string, quantity?: number): Promise<WorkSession> =>
     client.post(`/sessions/${id}/end`, { quantity }),

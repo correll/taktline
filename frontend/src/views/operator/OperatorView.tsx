@@ -16,6 +16,8 @@ import LotCard, { lotLabel } from '../../components/lots/LotCard'
 import CycleArc from '../../components/operator/CycleArc'
 import { integrationProvider } from '../../domain/integrations'
 import { useGlobalSettingsStore } from '../../store/globalSettings.store'
+import { useAuthStore } from '../../store/auth.store'
+import { operatorId } from '../../domain/operatorIdentity'
 const ScanSheet = React.lazy(() => import('../../components/scan/ScanSheet'))
 
 // Returns the total seconds from the most recent closed session for a card at a station.
@@ -165,7 +167,12 @@ export default function OperatorView() {
     setSelectedCard(null)
     // 1. Resume any in-progress (open) session at this station.
     try {
-      const sessions = await sessionsApi.list(id, true)
+      // Only this operator's own session: another tablet at the same bench
+      // may have one open too, and taking it over would stop their timer.
+      // ('default' is a session started without naming an operator.)
+      const me = operatorId(useAuthStore.getState().user?.id)
+      const sessions = (await sessionsApi.list(id, true))
+        .filter((x) => x.operatorId === me || x.operatorId === 'default')
       if (sessions.length > 0) {
         const s = sessions[0]
         setCard(s.cardId ? (cards[s.cardId] ?? null) : null)

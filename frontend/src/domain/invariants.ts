@@ -63,10 +63,10 @@ export function assertSessionDuration(durationSec: number | null | undefined): v
   }
 }
 
-// OEE is a ratio and must stay in [0, 1].
+// Utilisation (field `oee`) is a ratio and must stay in [0, 1].
 export function assertOEE(oee: number | null | undefined): void {
   if (oee != null) {
-    assert(oee >= 0 && oee <= 1, `OEE must be in [0, 1] (got ${oee})`)
+    assert(oee >= 0 && oee <= 1, `utilisation (oee) must be in [0, 1] (got ${oee})`)
   }
 }
 

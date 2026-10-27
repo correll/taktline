@@ -100,7 +100,7 @@ Not optional — assembly areas are dim, tablets glare, and operators work night
 ## 3. Heatmap ramp
 
 Station busyness gets its own hue so it never reads as an alarm. This matters
-semantically: a high-OEE bottleneck and a starved station are opposite problems,
+semantically: a high-utilisation bottleneck and a starved station are opposite problems,
 and warm colors for both makes them indistinguishable at a glance.
 
 ```css

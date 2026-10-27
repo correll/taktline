@@ -216,7 +216,7 @@ function ControlScene() {
   const y = (v: number) => 150 - (v - 20) * 1.6
   return (
     <Frame>
-      <text x={0} y={14} style={label}>OEE, ONE POINT PER DAY</text>
+      <text x={0} y={14} style={label}>UTILISATION, ONE POINT PER DAY</text>
       <line x1={14} y1={y(70)} x2={466} y2={y(70)} stroke={color.border} strokeDasharray="4 4" />
       <line x1={14} y1={y(50)} x2={466} y2={y(50)} stroke={color.border} strokeDasharray="4 4" />
       <text x={468} y={y(70) + 4} style={{ ...label, textAnchor: 'end' as const }}></text>

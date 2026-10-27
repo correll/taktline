@@ -17,7 +17,7 @@
  */
 
 export type ConceptAnimation =
-  | 'queue'        // a station filling as utilization rises
+  | 'queue'        // a station filling as utilisation rises
   | 'wip'          // lots on a line, halved, lead time halving with them
   | 'balance'      // work-content bars against the slowest
   | 'flow'         // a lead-time bar with a sliver of value-added
@@ -112,7 +112,7 @@ export const CONCEPTS: Concept[] = [
     body:
       'Shewhart\'s split: common-cause variation is inherent to the system and can only be reduced ' +
       'by changing the system; special-cause variation has a findable external origin. Inside the ' +
-      'limits, do not react. A station bouncing between 58% and 66% OEE has a system to improve; ' +
+      'limits, do not react. A station bouncing between 58% and 66% utilisation has a system to improve; ' +
       'one that drops to 30% on Tuesdays has an event to find.',
     animation: 'control',
   },

@@ -239,7 +239,7 @@ export function integrationProvider(id: string | null | undefined): IntegrationP
 
 /** True for a station that represents the business boundary rather than a
  *  place work happens. Such a station is kept out of the heatmap, out of the
- *  accumulation warnings and out of OEE/takt — nobody stands at an ERP. */
+ *  accumulation warnings and out of utilisation/takt — nobody stands at an ERP. */
 export function isIntegrationStation(s: { integrationProvider?: string | null }): boolean {
   return !!s.integrationProvider
 }

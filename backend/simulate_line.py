@@ -6,7 +6,7 @@ Operator view does — log in, pick a station, start a work session, wait out th
 cycle, stop, then advance / merge / hand off. Every card movement therefore
 broadcasts on the websocket, so an open browser shows the lots moving in real
 time, and the sessions it records feed the real cycle-time, line-cycle-time and
-OEE statistics.
+utilisation statistics.
 
     # zero-config: fresh company, the shipped battery line, 8 tablets, 1 hour
     .venv/bin/python simulate_line.py

@@ -4,7 +4,7 @@ import { color, font } from '../../theme/tokens'
 /** Which way a measurement moved against the window before it.
  *
  *  `lowerIsBetter` decides the colour, and some measurements have no answer to
- *  that question: OEE is the standing example — a rising OEE can mean the
+ *  that question: utilisation is the standing example — a rising utilisation can mean the
  *  station is working more, or that a bottleneck is queueing work in front of
  *  it, and the manual says in as many words not to optimise it. Where "better"
  *  is genuinely ambiguous the arrow is drawn in plain ink: the direction is a

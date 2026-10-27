@@ -27,7 +27,7 @@ export interface Station {
   integrationProvider: string | null
   integrationRole: 'source' | 'sink' | 'both' | null
   /** Storage rather than work — finished goods rest here by design, so it is
-   *  kept out of the heatmap, reports no OEE, and is never flagged for
+   *  kept out of the heatmap, reports no utilisation, and is never flagged for
    *  accumulating. A property of the station, not a shape in the graph: a
    *  final test bench is a leaf that very much does work. */
   isStorage: boolean

@@ -16,7 +16,7 @@ import { color, font, size, shadow } from '../../theme/tokens'
  *    cycle time        → distribution. The mean lies here most.
  *    line cycle time   → run chart. It IS a temporal quantity.
  *    sessions / units  → by hour of day, against the configured work hours.
- *    OEE               → the same by-hour view: OEE is working time over OPEN
+ *    utilisation       → the same by-hour view: utilisation is working time over OPEN
  *                        time, so where the work fell relative to the schedule
  *                        is the explanation, not a second ratio.
  */
@@ -271,7 +271,7 @@ function ByHour({ rows, open, tz }: {
         <Note>
           {outsideUnits} unit{outsideUnits === 1 ? ' was' : 's were'} worked outside the hours
           this company is configured as open ({open.length ? `${open[0]}:00–${open[open.length - 1] + 1}:00` : 'none set'}).
-          OEE divides working time by OPEN time, so work in the shaded hours does not count
+          Utilisation divides working time by OPEN time, so work in the shaded hours does not count
           towards it — either the schedule is wrong or the shift is.
         </Note>
       )}

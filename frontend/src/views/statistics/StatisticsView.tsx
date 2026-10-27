@@ -260,10 +260,10 @@ export default function StatisticsView() {
             )}
           </Panel>
 
-          {/* Cycle-time / OEE by station */}
+          {/* Cycle-time / utilisation by station */}
           <Panel label={trendWindow
-                  ? `CYCLE TIME, LINE CYCLE TIME & OEE — ${TREND_WINDOWS[trendWindow].toUpperCase()}`
-                  : 'CYCLE TIME, LINE CYCLE TIME & OEE BY STATION'} metric="cycleTable" wide>
+                  ? `CYCLE TIME, LINE CYCLE TIME & UTILISATION — ${TREND_WINDOWS[trendWindow].toUpperCase()}`
+                  : 'CYCLE TIME, LINE CYCLE TIME & UTILISATION BY STATION'} metric="cycleTable" wide>
             {stationList.length === 0 ? (
               <Empty />
             ) : (
@@ -406,7 +406,7 @@ function CycleOeeTable({
           <tr style={{ borderBottom: `1px solid ${color.border}` }}>
             {([['Station', undefined], ['Sessions', 'sessions'], ['Units', 'units'],
                ['Working time', 'workingTime'], ['Cycle time', 'cycleTime'],
-               ['Line cycle time', 'lineCycleTime'], ['OEE', 'oee'], ['Uptime', undefined],
+               ['Line cycle time', 'lineCycleTime'], ['Utilisation', 'oee'], ['Uptime', undefined],
                ['Avg WIP', undefined]] as const).map(([h, metric]) => (
               <th key={h} style={{
                 ...colStyle,
@@ -434,7 +434,7 @@ function CycleOeeTable({
                 ? `${(st.cycleTimeSec / 60).toFixed(1)} min`
                 : `${st.cycleTimeSec.toFixed(1)} s`
               : '—'
-            // A warehouse stores rather than runs, so it reports no OEE by
+            // A warehouse stores rather than runs, so it reports no utilisation by
             // design — say so instead of showing a bare dash.
             const oee = st?.isWarehouse
               ? 'warehouse'
@@ -454,10 +454,10 @@ function CycleOeeTable({
             const starved = st?.lineCycleTimeSec != null && st?.cycleTimeSec != null
               && st.cycleTimeSec > 0 && st.lineCycleTimeSec > st.cycleTimeSec * 1.5
             const workMin = st ? `${(st.totalWorkingSec / 60).toFixed(0)} min` : '—'
-            // OEE is never tinted good or bad, because it is neither. A high
-            // OEE usually means a bottleneck with work queueing in front of
+            // Utilisation is never tinted good or bad, because it is neither. A high
+            // utilisation usually means a bottleneck with work queueing in front of
             // it; a low one means the station is starved from upstream. Only
-            // the constraint's OEE is worth raising, and a colour cannot know
+            // the constraint's utilisation is worth raising, and a colour cannot know
             // which station that is — so it reads as plain ink and the
             // tooltip carries the judgement.
             const oeeColor = st?.oee != null ? color.textPrimary : color.textDim
@@ -500,7 +500,7 @@ function CycleOeeTable({
                   <Drill on={st?.oee != null} onClick={() => onDrill(s._id, 'activity')}>
                     {oee}
                   </Drill>
-                  {/* No lowerIsBetter: a rising OEE can be a station working
+                  {/* No lowerIsBetter: a rising utilisation can be a station working
                       more OR a bottleneck queueing work in front of it, so the
                       arrow states the direction and passes on the verdict. */}
                   {trendWindow && !st?.isWarehouse
@@ -676,7 +676,7 @@ function StatsFileMenu({ window: trendWindow, onWiped }: {
             </div>
             <div style={{ fontSize: 12.5, color: color.textSecondary, lineHeight: 1.6 }}>
               This deletes every <b>work session</b> and every <b>lot movement</b> ever
-              recorded — so cycle time, line cycle time, OEE and each lot’s history start
+              recorded — so cycle time, line cycle time, utilisation and each lot’s history start
               from nothing. It cannot be undone.
               <br /><br />
               Your stations, routes, products, the lots on the floor and your production

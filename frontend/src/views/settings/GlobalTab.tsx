@@ -161,7 +161,7 @@ export default function GlobalTab() {
         <div>
           <FieldLabel>WORK HOURS</FieldLabel>
           <p style={{ fontSize: 11.5, color: color.textDim, margin: '4px 0 10px', lineHeight: 1.5, maxWidth: 620 }}>
-            The hours your plant is meant to be running. <b style={{ color: color.textSecondary }}>OEE is measured
+            The hours your plant is meant to be running. <b style={{ color: color.textSecondary }}>Utilisation is measured
             against these</b> (working time ÷ open time), so nights and weekends don't count against you.
             <b style={{ color: color.textSecondary }}> Click a cell</b> to trim its open window in 15-minute steps —
             first the start (opens :15, :30, :45), then the end (closes :45, :30, :15) — for shifts that begin or
@@ -183,7 +183,7 @@ export default function GlobalTab() {
           <FieldLabel>BREAKS</FieldLabel>
           <p style={{ fontSize: 11.5, color: color.textDim, margin: '4px 0 10px', lineHeight: 1.5, maxWidth: 620 }}>
             The breaks your shifts take, the same every working day. <b style={{ color: color.textSecondary }}>They
-            are neither available time nor work</b>: OEE leaves them out, a timer left running over one does not
+            are neither available time nor work</b>: utilisation leaves them out, a timer left running over one does not
             count it, and the what-if model's line stops for them as yours does. Minutes matter here, so they are
             entered as times rather than painted on the grid above.
           </p>

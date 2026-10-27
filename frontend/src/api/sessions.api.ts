@@ -39,7 +39,7 @@ export interface SessionStats {
    *  Null until there are two departures to measure between. */
   lineCycleTimeSec: number | null
   oee:             number | null
-  isWarehouse?:    boolean          // storage, not a work station — no OEE
+  isWarehouse?:    boolean          // storage, not a work station — no utilisation
   /** Set when a trend window was asked for: the same metrics over the window
    *  immediately before this one, so the client can show which way each number
    *  is moving. Null when the station has no history that far back. */

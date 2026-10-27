@@ -72,7 +72,7 @@ export default function MapStationEditModal({ stationId, onClose }: { stationId:
           <span style={{ fontSize: 11.5, color: color.textDim, lineHeight: 1.5 }}>
             <b style={{ color: color.textSecondary }}>Storage, not work</b> — finished goods rest
             here by design. Kept out of the heatmap (which it would otherwise flatten), reports no
-            OEE or cycle time, and never flagged for accumulating. Leave this off for anywhere work
+            utilisation or cycle time, and never flagged for accumulating. Leave this off for anywhere work
             actually happens, including the last station on a line.
           </span>
         </label>

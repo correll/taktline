@@ -1,5 +1,5 @@
-"""Work-hours schedule + open-time math, used to make OEE relative to the hours a
-plant is actually meant to be running (not calendar time).
+"""Work-hours schedule + open-time math, used to make utilisation relative to the
+hours a plant is actually meant to be running (not calendar time).
 
 A schedule is a 7×24 grid: ``schedule[day][hour]`` holds a 4-bit **quarter mask**
 for that clock hour — bit ``i`` (``1 << i``) marks the 15-minute quarter
@@ -28,7 +28,7 @@ class Schedule(list):
     every day. They are not representable in the grid — a ten-minute tea
     break does not fall on quarter boundaries — and they matter: available
     time is the shift *less* its breaks (Rother and Shook's data box), so a
-    break counted as open time charges idle minutes to every station's OEE,
+    break counted as open time charges idle minutes to every station's utilisation,
     and a lot that waits through one appears to have been worked.
 
     A list subclass so that every function here, and every caller that
@@ -157,9 +157,9 @@ def _quarters(start_utc: datetime, end_utc: datetime):
     advance a *local* datetime by an hour at a time, which counts 24 local
     hours whatever actually elapsed: an open day was reported as 24 h on the
     Sunday the clocks go forward (23 real hours) and as 24 h on the Sunday they
-    go back (25). The first understates OEE and the second can push it over
+    go back (25). The first understates utilisation and the second can push it over
     100%, twice a year, for every customer not on UTC whose line runs a
-    weekend shift — and OEE is a ratio, so an hour of phantom denominator is
+    weekend shift — and utilisation is a ratio, so an hour of phantom denominator is
     not a rounding error.
 
     Every real-world UTC offset is a multiple of 15 minutes, so a local quarter

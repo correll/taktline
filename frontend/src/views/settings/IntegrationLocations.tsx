@@ -117,7 +117,7 @@ export default function IntegrationLocations() {
         one finished product, which is why the link follows the product, not the material.) A link
         <i>to</i> a partner is a handoff: the finished lot waits at your own station until someone
         sends it. Because these links carry no material they are ignored by merges, splits, pulls and
-        the cycle check — and bound stations stay out of the heatmap, OEE and takt.
+        the cycle check — and bound stations stay out of the heatmap, utilisation and takt.
       </p>
 
       {bound.length > 0 && (

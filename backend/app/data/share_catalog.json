@@ -125,7 +125,7 @@
     {
       "id": "overproduction-maximize-machine-utilization-overproduction",
       "category": "Overproduction",
-      "text": "“Maximize machine utilization” is how overproduction sneaks in: a machine kept busy beyond the pace of customer demand isn’t productive, it’s converting money into inventory. Machines exist to serve demand’s beat, not the other way around."
+      "text": "“Maximize machine utilisation” is how overproduction sneaks in: a machine kept busy beyond the pace of customer demand isn’t productive, it’s converting money into inventory. Machines exist to serve demand’s beat, not the other way around."
     },
     {
       "id": "defects-later-defect-found-more",
@@ -254,23 +254,23 @@
     },
     {
       "id": "oee-oee-overall-equipment-effectiveness",
-      "category": "OEE",
-      "text": "OEE — Overall Equipment Effectiveness, actual output ÷ theoretical maximum — means nothing as a single number, because “theoretical maximum” is defined differently everywhere. It’s the change that talks: a sudden drop says “look here” — downtime, starvation, or quality."
+      "category": "Utilisation",
+      "text": "Utilisation is the share of the crew’s open work time a station spends working; idle, breakdowns and changeovers count against it. It is not OEE, which also needs ideal cycle times and scrap counts. As a single number it means little — it’s the change that talks: a sudden drop says “look here” — downtime, starvation, or a stop for quality."
     },
     {
       "id": "oee-very-high-oee-station",
-      "category": "OEE",
-      "text": "A very high OEE (a station running near its maximum output) is a warning, not a trophy: a station at capacity has no slack, so work queues in front of it — you’re looking at your bottleneck."
+      "category": "Utilisation",
+      "text": "A very high utilisation (a station working nearly all of its open time) is a warning, not a trophy: a station at capacity has no slack, so work queues in front of it — you’re looking at your bottleneck."
     },
     {
       "id": "oee-station-only-run-upstream",
-      "category": "OEE",
-      "text": "A station can only run when its upstream neighbor feeds it — so a low OEE downstream usually indicts the station before it, not the idle one. Never judge equipment effectiveness in isolation; read the whole line."
+      "category": "Utilisation",
+      "text": "A station can only run when its upstream neighbor feeds it — so a low utilisation downstream usually indicts the station before it, not the idle one. Never judge a station’s utilisation in isolation; read the whole line."
     },
     {
       "id": "oee-don-t-set-oee",
-      "category": "OEE",
-      "text": "Don’t set OEE as a target: people will hit it by keeping machines busy making parts nobody ordered — utilization up, overproduction up. Use OEE to locate problems, and optimize toward customer value instead."
+      "category": "Utilisation",
+      "text": "Don’t set utilisation as a target: people will hit it by keeping machines busy making parts nobody ordered — utilisation up, overproduction up. Use it to locate problems, and optimize toward customer value instead."
     },
     {
       "id": "digital-lean-digitize-whole-process-before",
@@ -290,7 +290,7 @@
     {
       "id": "digital-lean-real-time-data-turns",
       "category": "Digital lean",
-      "text": "Real-time data turns weeks of clipboard studies into hours: watch cycle time, OEE, and the heatmap respond the same day you change something."
+      "text": "Real-time data turns weeks of clipboard studies into hours: watch cycle time, utilisation, and the heatmap respond the same day you change something."
     },
     {
       "id": "5s-5s-sort-set-order",
@@ -390,7 +390,7 @@
     {
       "id": "quality-goodhart-s-law-measure",
       "category": "Quality",
-      "text": "Goodhart’s law: when a measure becomes a target, it stops measuring — people optimize the number, not the thing it stood for. Chase OEE and you get overproduction; chase ship-dates alone and you get defects. Reward improvement of the system, not the number."
+      "text": "Goodhart’s law: when a measure becomes a target, it stops measuring — people optimize the number, not the thing it stood for. Chase utilisation and you get overproduction; chase ship-dates alone and you get defects. Reward improvement of the system, not the number."
     },
     {
       "id": "layout-trace-one-product-s",
@@ -445,7 +445,7 @@
     {
       "id": "taktline-mount-tablet-operator-view",
       "category": "Taktline",
-      "text": "Mount a tablet with the Operator view at each station. Timing happens as a side effect of working — and your takt and OEE statistics build themselves."
+      "text": "Mount a tablet with the Operator view at each station. Timing happens as a side effect of working — and your takt and utilisation statistics build themselves."
     },
     {
       "id": "taktline-print-lot-labels-scan",
@@ -455,7 +455,7 @@
     {
       "id": "taktline-set-real-work-hours",
       "category": "Taktline",
-      "text": "Set your real work hours in Settings → Global. OEE measured against a 24/7 clock punishes you for sleeping — measure against the hours you actually run."
+      "text": "Set your real work hours in Settings → Global. Utilisation measured against a 24/7 clock punishes you for sleeping — measure against the hours you actually run."
     },
     {
       "id": "taktline-lot-code-traceability-thread",
@@ -522,7 +522,7 @@
       "title": "Common cause and special cause",
       "claim": "Adjusting a process for every wobble makes it worse. Most \"corrective action\" is tampering.",
       "formula": null,
-      "body": "Shewhart's split: common-cause variation is inherent to the system and can only be reduced by changing the system; special-cause variation has a findable external origin. Inside the limits, do not react. A station bouncing between 58% and 66% OEE has a system to improve; one that drops to 30% on Tuesdays has an event to find."
+      "body": "Shewhart's split: common-cause variation is inherent to the system and can only be reduced by changing the system; special-cause variation has a findable external origin. Inside the limits, do not react. A station bouncing between 58% and 66% utilisation has a system to improve; one that drops to 30% on Tuesdays has an event to find."
     },
     {
       "id": "matched-sets",

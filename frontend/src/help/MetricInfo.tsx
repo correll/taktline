@@ -6,8 +6,8 @@ import { color, font, size, shadow } from '../theme/tokens'
 /** What every number on the Statistics page means, in one place.
  *
  *  A measurement nobody can define is a measurement nobody should act on —
- *  and these are exactly the ones that get acted on wrongly (chasing OEE,
- *  reading cycle time as takt). Each entry says what it IS, how it is
+ *  and these are exactly the ones that get acted on wrongly (chasing
+ *  utilisation, reading cycle time as takt). Each entry says what it IS, how it is
  *  computed, and — the part a bare definition leaves out — how to READ it:
  *  what a high or low value should make you do.
  *
@@ -94,14 +94,14 @@ export const METRICS: Record<string, MetricDef> = {
     how: 'It also narrows the numbers themselves to that window, so "past day" '
         + 'means today\u2019s cycle time, not the all-time average.',
     read: 'The arrow judges only where better is unambiguous: down is green on '
-        + 'cycle and line cycle time because faster is faster. OEE\u2019s arrow '
-        + 'stays neutral — a rising OEE can be a station working more, or a '
+        + 'cycle and line cycle time because faster is faster. Utilisation\u2019s '
+        + 'arrow stays neutral — a rising utilisation can be a station working more, or a '
         + 'bottleneck queueing work in front of it. A move under 5% reads as '
         + 'sideways, so noise does not flip it every refresh.',
     section: 'statistics',
   },
   cycleTable: {
-    title: 'Cycle time, line cycle time & OEE',
+    title: 'Cycle time, line cycle time & utilisation',
     what: 'The timing table. Each row is a station; the gap between cycle time '
         + 'and line cycle time is where the waste is.',
     read: 'Work that takes 2 minutes but only ships every 9 is queueing, '
@@ -123,7 +123,7 @@ export const METRICS: Record<string, MetricDef> = {
   workingTime: {
     title: 'Working time',
     what: 'Total time the timer ran at this station.',
-    how: 'The sum of every session duration — the numerator of OEE.',
+    how: 'The sum of every session duration — the numerator of utilisation.',
   },
   cycleTime: {
     title: 'Cycle time',
@@ -146,16 +146,19 @@ export const METRICS: Record<string, MetricDef> = {
     section: 'timing',
   },
   oee: {
-    title: 'OEE',
-    what: 'Overall equipment effectiveness: the share of open work time this '
-        + 'station was actually running.',
-    how: 'Working time ÷ scheduled work time, using the work hours you '
-        + 'configured — so nights and weekends do not distort it. Warehouses '
-        + 'report none: shelf time is not utilisation.',
-    read: 'Never optimise OEE for its own sake. A very high OEE usually means '
+    title: 'Utilisation',
+    what: 'The share of the crew\u2019s open work time this station spent '
+        + 'working; idle, breakdowns and changeovers count against it. It is '
+        + 'not OEE, which also needs ideal cycle times and scrap counts that '
+        + 'Taktline does not record.',
+    how: 'Working time ÷ open time, using the work hours you configured — so '
+        + 'nights and weekends do not distort it — and counted per operator '
+        + 'present, so a crew of two is measured against twice the hours. '
+        + 'Warehouses report none: shelf time is not utilisation.',
+    read: 'Never optimise utilisation for its own sake. A very high value usually means '
         + 'a bottleneck with work queueing in front of it; a very low one '
         + 'means the station is starved by a constraint upstream. Only the '
-        + 'bottleneck’s OEE is worth raising.',
+        + 'bottleneck’s utilisation is worth raising.',
     section: 'statistics',
   },
 }

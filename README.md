@@ -1,6 +1,6 @@
 # Taktline
 
-Browser-based digital Kanban / Manufacturing Execution System (MES) that models production flow as a directed graph. Lot-cards travel with physical lots through locations, operators log work at stations via a mobile dashboard, and the system collects real-time OEE and takt-time statistics.
+Browser-based digital Kanban / Manufacturing Execution System (MES) that models production flow as a directed graph. Lot-cards travel with physical lots through locations, operators log work at stations via a mobile dashboard, and the system collects real-time utilisation and takt-time statistics.
 
 Taktline is free software under the [GNU Affero General Public License v3.0](LICENSE). A hosted version runs at [taktline.com](https://taktline.com); a self-hosted install without a licence file is unmetered (see `backend/app/core/licence.py`).
 
@@ -31,7 +31,7 @@ taktline/
             ├── lots/           Kanban view — columns per location, topological order
             ├── dashboard/      Location selector (portrait / phone / iPad mode)
             ├── operator/       Single-station timer view with session recording
-            ├── statistics/     OEE and takt-time per station
+            ├── statistics/     utilisation and takt-time per station
             └── settings/       Map config, processes/routes, stations, templates
 └── connectors/     ERP integration services (anti-corruption layer)
     └── odoo/       Odoo ↔ Taktline connector: MOs → /orders (pull); completion → mark MO done
@@ -50,7 +50,7 @@ Taktline `POST /orders` (which releases a pull) and drain the completion
 | **Process** | A named collection of routes forming a DAG. Multiple processes can coexist. |
 | **Lot template** | Per-product card template. `startStationId` pins it to a source node (queue origin). |
 | **Lot card (Card)** | Travels with a lot of physical products. Carries `totalQuantity` units distributed across `bins` (one bin per current location). Bin totals ≤ `totalQuantity` is a hard invariant. |
-| **Session** | An operator's work timer at a station. Records `durationSec` and `quantity` processed; feeds OEE and takt-time aggregation. |
+| **Session** | An operator's work timer at a station. Records `durationSec` and `quantity` processed; feeds utilisation and takt-time aggregation. |
 | **Queue / source node** | A location with no incoming routes — the origin point where new lot cards are injected. |
 | **Merge node** | A location with 2+ incoming routes — where precursor lots are consumed and a new assembly lot card is created. |
 | **User** | An authenticated account (email + argon2 password hash, email-verified). |
@@ -88,7 +88,7 @@ All domain endpoints require an authenticated session and an `X-Company-Id` head
 | `/sessions` | Work session start/end + per-station stats |
 | `/map_settings` | Floor plan URL, pixels-per-unit, unit calibration |
 | `/global_settings` | App-wide settings |
-| `/stats` | OEE and takt-time aggregation |
+| `/stats` | Utilisation and takt-time aggregation |
 | `/uploads` | Static file serving for uploaded floor plan images |
 | `/ws/events` | WebSocket broadcast channel |
 

@@ -22,7 +22,7 @@ from ..core.entitlements import works_read_only
 
 
 async def _work_schedule(session, company_id):
-    """(schedule, timezone) for the company — for OEE's open-time denominator."""
+    """(schedule, timezone) for the company — for utilisation's open-time denominator."""
     gs = (await session.execute(
         select(GlobalSettingsRow).where(GlobalSettingsRow.companyId == company_id)
     )).scalars().first()
@@ -200,7 +200,7 @@ async def get_open_sessions(ctx: CompanyContext = Depends(get_active_company),
 @router.post("/{session_id}/end", response_model=WorkSession)
 @works_read_only   # An operator must be able to close a session they already
                    # opened. Refusing leaves `endedAt IS NULL` rows that corrupt
-                   # the cycle-time and OEE numbers we are still showing them.
+                   # the cycle-time and utilisation numbers we are still showing them.
 async def end_session(session_id: str, body: SessionEnd,
                       ctx: CompanyContext = Depends(get_active_company),
                       session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
@@ -299,10 +299,11 @@ async def delete_session(session_id: str, ctx: CompanyContext = Depends(get_acti
 
 
 async def _warehouse_ids(session, company_id) -> set:
-    """Locations where nothing is *worked on*, so OEE and cycle time would be
-    meaningless: storage (finished goods rest there by design, and its OEE
-    would measure shelf time) and any location bound to an integration partner,
-    which is the boundary of the business rather than a place someone stands.
+    """Locations where nothing is *worked on*, so utilisation and cycle time
+    would be meaningless: storage (finished goods rest there by design, and
+    its utilisation would measure shelf time) and any location bound to an
+    integration partner, which is the boundary of the business rather than a
+    place someone stands.
 
     Storage is now a property of the location, not a shape in the graph. It
     used to be inferred as "receives routes but sends none", which quietly
@@ -492,7 +493,7 @@ def line_cycle_from_departures(departures, opens, floor) -> Optional[float]:
     return sum(intervals) / len(intervals) if intervals else None
 
 
-# ─── All-stations OEE / cycle-time summary ───────────────────────────────────
+# ─── All-stations utilisation / cycle-time summary ───────────────────────────
 
 # Trend windows the Statistics view offers. A trend is this window against the
 # one immediately before it, which is the only comparison that answers "is it
@@ -502,7 +503,7 @@ _TREND_WINDOWS = {"1h": timedelta(hours=1), "1d": timedelta(days=1),
 
 
 async def _station_metrics(session, company_id, schedule, tzname, since, until) -> dict:
-    """cycle time, line cycle time, OEE, stoppages and average WIP per station
+    """cycle time, line cycle time, utilisation (`oee`), stoppages and average WIP per station
     over one window.
 
     Windowed on the *session* rather than pre-aggregated, so the same code
@@ -701,7 +702,7 @@ async def all_station_stats(window: Optional[str] = None,
     return results
 
 
-# ─── Per-station OEE and cycle time ──────────────────────────────────────────
+# ─── Per-station utilisation and cycle time ──────────────────────────────────
 
 @router.get("/stats/{station_id}")
 async def station_session_stats(station_id: str, ctx: CompanyContext = Depends(get_active_company),

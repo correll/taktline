@@ -197,7 +197,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'operator-run',
     title: 'Run the line',
-    body: 'Pick a station, select a lot, set how many pieces you’re working on, and press Start to run the timer; press Stop when done. Then advance the lot to the next station along the route — carry it all the way through Testing into the Warehouse, where it lands as a finished good. That timing is what powers the takt-time and OEE you’ll see in Statistics. Press Next to wrap up.',
+    body: 'Pick a station, select a lot, set how many pieces you’re working on, and press Start to run the timer; press Stop when done. Then advance the lot to the next station along the route — carry it all the way through Testing into the Warehouse, where it lands as a finished good. That timing is what powers the takt-time and utilisation you’ll see in Statistics. Press Next to wrap up.',
   },
   {
     // Introduced before the wrap-up on purpose: the user has just built a line

@@ -22,7 +22,7 @@ class Station(TimestampedModel):
     # Where work enters/leaves the business. None on an ordinary work location.
     integrationProvider: Optional[str] = None   # 'odoo' | 'shopify' | 'shipstation' | …
     integrationRole: Optional[str] = None       # 'source' | 'sink' | 'both'
-    # Storage, not work: excluded from the heatmap, OEE and accumulation warnings.
+    # Storage, not work: excluded from the heatmap, utilisation and accumulation warnings.
     isStorage: bool = False
     supplierUrl: Optional[str] = None
     # What multiple outgoing routes mean here: 'split' (default) fans a lot out

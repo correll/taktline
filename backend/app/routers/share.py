@@ -185,8 +185,8 @@ _METRICS = [
      "We cut the time between finished pieces by {pct}%"),
     ("cycle", "Cycle time", False,
      "We cut the work time per product by {pct}%"),
-    ("oee", "OEE", True,
-     "We raised OEE by {pct}%"),
+    ("oee", "Utilisation", True,
+     "We raised utilisation by {pct}%"),
 ]
 
 _LABEL = {"1h": "hour", "1d": "day", "1w": "week", "1m": "30 days"}

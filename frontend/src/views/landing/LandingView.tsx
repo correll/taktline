@@ -439,7 +439,7 @@ const STEPS = [
   {
     Icon: TrendingUp,
     title: 'Start maximizing your flow',
-    body: 'Check the board each morning instead of walking the floor asking. The heatmap, cycle time and OEE show where work piles up — and what each job really cost you.',
+    body: 'Check the board each morning instead of walking the floor asking. The heatmap, cycle time and utilisation show where work piles up — and what each job really cost you.',
   },
 ]
 
@@ -662,7 +662,7 @@ const FEATURES = [
   { Icon: Receipt,   title: 'Know what a job really costs',
     body: 'Every lot carries its own timing, so you quote from what the work actually took — not a guess. Nobody argues you down on price when you have the numbers.' },
   { Icon: Gauge,     title: 'And yes — it finds the bottleneck',
-    body: 'A violet heatmap shows where work piles up, with cycle time and OEE per station. Usually a one-time revelation; then it just keeps you honest.' },
+    body: 'A violet heatmap shows where work piles up, with cycle time and utilisation per station. Usually a one-time revelation; then it just keeps you honest.' },
 ]
 
 function Features() {
@@ -784,7 +784,7 @@ const TIERS = [
     name: 'Free', price: '$0', per: 'up to 7 stations',
     line: 'A real line, not a demo. No card, no expiry — and never deleted.',
     points: ['The live board and floor plan', 'The operator dashboard, on any tablet',
-             'Cycle time, line cycle time and OEE', 'Unlimited operators',
+             'Cycle time, line cycle time and utilisation', 'Unlimited operators',
              'Come back in six months and it is still here'],
   },
   {

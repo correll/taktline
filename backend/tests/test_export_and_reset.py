@@ -60,13 +60,13 @@ def test_the_workbook_opens_and_carries_every_table(actor):
     st = wb["Stations"]
     assert [c.value for c in st[1]] == [
         "Station", "Process(es)", "Storage", "Sessions", "Units", "Working time (s)",
-        "Cycle time (s/piece)", "Line cycle time (s/piece)", "OEE"]
+        "Cycle time (s/piece)", "Line cycle time (s/piece)", "Utilisation"]
     by_name = {r[0]: r for r in st.iter_rows(min_row=2, values_only=True)}
     assert by_name["Cutting"][3] == 1                 # one session
     assert by_name["Cutting"][4] == 6                 # six units
     # Cycle time must be a NUMBER, not "0.1 s" — the receiver charts it.
     assert isinstance(by_name["Cutting"][6], (int, float))
-    # OEE is stored as a fraction and *formatted* as a percentage, so the cell
+    # Utilisation is stored as a fraction and *formatted* as a percentage, so the cell
     # is still arithmetic. A string "9.1%" would be useless in a pivot table.
     oee_cell = st.cell(row=[r[0] for r in st.iter_rows(min_row=2, values_only=True)]
                        .index("Cutting") + 2, column=9)

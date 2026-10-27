@@ -133,7 +133,9 @@ async def export_workbook(window: Optional[str] = None,
         [],
         ["All timestamps in this workbook are UTC."],
         ["Durations are in seconds. Cycle time and line cycle time are per piece."],
-        ["OEE is a fraction of open work time, formatted as a percentage."],
+        ["Utilisation is the share of the crew's open work time spent working: a "
+         "fraction, formatted as a percentage. It is not OEE, which also needs "
+         "ideal cycle times and scrap counts that Taktline does not record."],
     ]:
         _append(ws, row)
     ws["A1"].font = Font(bold=True, size=14)
@@ -144,7 +146,7 @@ async def export_workbook(window: Optional[str] = None,
     ws = wb.create_sheet("Stations")
     _append(ws, ["Station", "Process(es)", "Storage", "Sessions", "Units",
                "Working time (s)", "Cycle time (s/piece)",
-               "Line cycle time (s/piece)", "OEE"])
+               "Line cycle time (s/piece)", "Utilisation"])
     proc_of_station: dict = {}
     for t in templates.values():
         if t.startStationId and t.processId:

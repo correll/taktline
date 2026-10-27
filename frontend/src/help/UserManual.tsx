@@ -120,7 +120,7 @@ function BasicsChapter() {
         <LI><B>Lot card</B> — travels with a physical lot; holds a total quantity of products
           distributed across <B>bins</B> (one per current station).</LI>
         <LI><B>Work session</B> — an operator's timer at a station; feeds the <B>cycle-time</B> and
-          <B> OEE</B> statistics.</LI>
+          <B> utilisation</B> statistics.</LI>
       </ul>
 
       <FigureMerge />
@@ -173,7 +173,7 @@ function BasicsChapter() {
          Operators can log time and advance lots along defined routes, but not reconfigure the line.</P>
       <H3>Statistics</H3>
       <P>The <B>Statistics</B> view aggregates each station's <B>cycle time</B> (average working time
-         per product), <B>line cycle time</B> (how often a product actually leaves), <B>OEE</B>,
+         per product), <B>line cycle time</B> (how often a product actually leaves), <B>utilisation</B>,
          throughput, and transport. This is where the timing your operators capture turns into
          insight — the <i>Lean method</i> chapter explains how to read it.</P>
 
@@ -247,7 +247,7 @@ function LeanChapter() {
         <LI><B>O · Over-processing</B> — steps the customer never asked for: treating all variants
           identically because routing them is hard, polishing what no one sees.</LI>
         <LI><B>O · Overproduction</B> — making more, or sooner, than is actually ordered. Often
-          caused by chasing utilization metrics; the pull system is its antidote.</LI>
+          caused by chasing utilisation metrics; the pull system is its antidote.</LI>
         <LI><B>D · Defects</B> — broken or off-spec parts and the rework they trigger. Defects
           compound: the later one is found, the more added value is thrown away with it. WIP
           makes this worse — a systematic defect fills the whole buffer before it's caught.</LI>
@@ -328,10 +328,13 @@ function LeanChapter() {
           cycle time beside it, the station is waiting rather than working, and the fix is upstream
           or in transport — not in the operator's hands (wastes <B>W</B>, <B>T</B> and
           <B> I</B>).</LI>
-        <LI><B>OEE</B> (measured against your configured <B>work hours</B>, so nights and weekends
-          don't distort it) — a very high OEE means the station is a bottleneck with work queueing;
-          a very low one means it's starved by an upstream constraint. Never optimize OEE for its
-          own sake — chasing utilization <i>creates</i> overproduction (waste <B>O</B>).</LI>
+        <LI><B>Utilisation</B> — the share of the crew's open work time spent working; idle,
+          breakdowns and changeovers count against it. It is measured against your configured
+          <B>work hours</B>, so nights and weekends don't distort it. It is not OEE, which also
+          needs ideal cycle times and scrap counts that Taktline does not record. A very high
+          utilisation means the station is a bottleneck with work queueing; a very low one means
+          it's starved by an upstream constraint. Never optimize it for its own sake — chasing
+          utilisation <i>creates</i> overproduction (waste <B>O</B>).</LI>
         <LI><B>Lot history</B> — every card records when it arrived, who worked it, and how long.
           That's Little's law made measurable: WIP, production rate, and lead time from live data,
           not estimates.</LI>
@@ -359,7 +362,7 @@ function LeanChapter() {
       <ul>
         <LI>Model your process <B>as it runs today</B> — resist redesigning it on day one. After a
           week of real data the bottleneck is usually not where everyone believed it was.</LI>
-        <LI>Make one small change at a time (<i>kata</i>), then watch the heatmap, takt and OEE
+        <LI>Make one small change at a time (<i>kata</i>), then watch the heatmap, takt and utilisation
           respond. The statistics are your before/after evidence.</LI>
         <LI>Use the Floor plan view on a tablet during <B>genba walks</B> — the live picture in hand,
           at the actual place.</LI>
@@ -487,7 +490,8 @@ function ToolkitChapter() {
       <P>
         The machine's operator is its first mechanic: cleaning, tightening and lubricating daily,
         noticing the new noise a fitter would meet a week later as a breakdown. TPM's measure is
-        OEE, and its point is that availability is earned in advance — an unplanned stop at the
+        OEE (Taktline's utilisation shows only its availability side; it records no ideal cycle
+        times or scrap), and its point is that availability is earned in advance — an unplanned stop at the
         constraint costs the whole line's output (see <i>Theory of constraints</i>), so the hour of
         planned maintenance that prevents it is the cheapest hour on the floor.
       </P>
@@ -564,7 +568,7 @@ function ScienceChapter() {
       <Eq>
         <V>W<Sub>q</Sub></V>
         <span>≈</span>
-        <Term label="utilization">
+        <Term label="utilisation">
           <Frac num={<V>ρ</V>} den={<span>1 − <V>ρ</V></span>} />
         </Term>
         <Times />
@@ -580,15 +584,15 @@ function ScienceChapter() {
       <P>
         The queueing result (also called the VUT equation) that explains why busy factories are
         slow ones. <V>W<Sub>q</Sub></V> is how long a product waits before its work;{' '}
-        <V>t<Sub>e</Sub></V> is the work time per product; <V>ρ</V> is utilization;{' '}
+        <V>t<Sub>e</Sub></V> is the work time per product; <V>ρ</V> is utilisation;{' '}
         <V>c<Sub>a</Sub></V> and <V>c<Sub>s</Sub></V> measure how irregular the arrivals and the
         work times are (spread ÷ mean).
       </P>
       <P>
-        The utilization term is <B>hyperbolic</B>. At 80% a product waits about 4× its work time;
-        at 90%, 9×; at 95%, 19×. Push a station toward full utilization and queue time runs away —
+        The utilisation term is <B>hyperbolic</B>. At 80% a product waits about 4× its work time;
+        at 90%, 9×; at 95%, 19×. Push a station toward full utilisation and queue time runs away —
         smoothly, with no warning knee. The variability term multiplies the same queue at the same
-        utilization: irregular arrivals or irregular work times inflate the wait even on a
+        utilisation: irregular arrivals or irregular work times inflate the wait even on a
         half-loaded station. So there are <B>two independent levers</B> — load and variability —
         and "keep everyone busy" attacks neither. It is the policy the formula punishes hardest.
       </P>
@@ -635,7 +639,7 @@ function ScienceChapter() {
       <P>
         Reacting to common-cause noise is <B>tampering</B>, and Deming's funnel experiment showed
         it reliably makes variance <i>worse</i> — adjusting a process for every wobble adds your
-        adjustments to its noise. A station whose OEE bounces between 58% and 66% has one kind of
+        adjustments to its noise. A station whose utilisation bounces between 58% and 66% has one kind of
         problem (a system to improve); a station that drops to 30% on Tuesdays has a different one
         (an event to find). Taktline's line doctor makes exactly this split when it reads cycle
         times: a broad spread means no standard; a few extreme spikes mean something interrupts
@@ -682,7 +686,7 @@ function ScienceChapter() {
         an hour lost at the constraint is an hour lost for the whole line, and an hour saved
         anywhere else is a mirage. Taktline's line doctor names the constraint from measured exit
         rates — normalized so stations that handle many products per finished unit are compared
-        fairly — and checks the queue, utilization and downstream starvation agree before it
+        fairly — and checks the queue, utilisation and downstream starvation agree before it
         points.
       </P>
 

@@ -478,7 +478,9 @@ async def list_orders(p: McpPrincipal, args: dict) -> dict:
         "Measured timing per station. `cycleTimeSec` is how long the work takes "
         "per unit; `lineCycleTimeSec` is how often a unit actually leaves. The "
         "gap between them is queueing, blocking or transport — speeding up the "
-        "operator wins nothing there. `oee` is working time over open time; null "
+        "operator wins nothing there. `oee` is utilisation: the share of the "
+        "crew's open work time spent working. Call it utilisation, not OEE — "
+        "Taktline records no ideal cycle times or scrap, which OEE needs. Null "
         "means nobody ran a timer, which is not the same as zero."),
     input_schema={
         "type": "object",

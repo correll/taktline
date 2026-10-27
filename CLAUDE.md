@@ -57,7 +57,7 @@ Edge weight: a weight only means something where the graph branches. On a **merg
 
 Accumulation warning: the map compares, per process and per cycle, how many units the weights deliver to a location against how many the next step consumes. Where more arrives than leaves — loc1 --(x3)--> loc2 --> loc4 delivers three but the merge takes one — the map names the location and the surplus so the extra can be routed to a warehouse. Merge stations (their inputs are consumed there) and warehouses (meant to fill up) are never flagged.
 
-Warehouses / storage: a location **declared** as storage (`station.isStorage`, a checkbox on the location). Finished goods rest there by design, so it is excluded from the heatmap (including its scale, which it would otherwise flatten), from accumulation warnings, and reports no OEE — shelf time is not utilisation. Cycle time and throughput are still measured.
+Warehouses / storage: a location **declared** as storage (`station.isStorage`, a checkbox on the location). Finished goods rest there by design, so it is excluded from the heatmap (including its scale, which it would otherwise flatten), from accumulation warnings, and reports no utilisation — shelf time is not work. Cycle time and throughput are still measured.
 
 This used to be *inferred* from the graph — "receives routes but sends none" — which quietly swallowed every leaf where real work happens: a final test bench, a paint booth, the last cell on a line all vanished from the heatmap, hiding a queue exactly where one matters most. Storage is a fact about the location, not its shape, so it is now declared. The migration marks every location that was a leaf at upgrade time, so no existing heatmap changes; leaves added afterwards default to being work locations. It can also be declared mid-graph, for a buffer that has outgoing routes but is still a shelf.
 
@@ -75,7 +75,7 @@ Statistics: the process collects timing based on lot and per product on each sta
 
 The gap between cycle time and line cycle time is the waste, in seconds: work that takes 2 minutes but only ships every 9 is queueing, blocking or transport, and speeding up the operator wins nothing. The Statistics table shows both side by side and tints line cycle time amber when it exceeds cycle time by >50%.
 
-Also collected: Overall Equipment Efficiency (OEE) as the ratio of time where the timer at a location is running vs. open work time — **the crew's** open work time (`sessions.crew_open_seconds`): working time adds up across operators, so where several people work at one station at once it is measured against open time times the operators present, read from the record (each signs in on their own device; an operator counts as present from their first Start to their last Stop within each opening, so a handover at one bench is one operator, not two). Against open time alone every crew station read 100% all day, and the line doctor's load corroboration could not tell the busiest crew from a bench idling half the shift; a station worked by one person at a time is measured exactly as before. Also: number of transport events when lot cards travel from one location to another and overall transport in meters. 
+Also collected: **utilisation** — the ratio of time where the timer at a location is running vs. open work time; idle, breakdowns and changeovers count against it. It is labelled *Utilisation*, never "OEE", everywhere a user, customer or reader sees it: true OEE is availability × performance × quality and needs ideal cycle times and scrap counts that Taktline does not record, so the product renames rather than computes. The API field, variables and settings keys keep the name `oee` (connectors, BI feeds, the MCP server and stored data read it). The denominator is **the crew's** open work time (`sessions.crew_open_seconds`): working time adds up across operators, so where several people work at one station at once it is measured against open time times the operators present, read from the record (each signs in on their own device; an operator counts as present from their first Start to their last Stop within each opening, so a handover at one bench is one operator, not two). Against open time alone every crew station read 100% all day, and the line doctor's load corroboration could not tell the busiest crew from a bench idling half the shift; a station worked by one person at a time is measured exactly as before. Also: number of transport events when lot cards travel from one location to another and overall transport in meters. 
 
 ## Taking the statistics away, and starting them over
 
@@ -86,7 +86,7 @@ same way the page's trend picker does. xlsx rather than CSV because a CSV is
 one flat table of strings: it cannot carry six tables, and every value arrives
 as text that Excel then guesses at — turning lot code `0042` into `42` and
 disagreeing about decimal separators between locales. The workbook carries
-typed cells (timestamps are datetimes; OEE is a fraction *formatted* as a
+typed cells (timestamps are datetimes; utilisation is a fraction *formatted* as a
 percent, so it still works in a pivot), frozen headers and filters, and opens
 natively in Excel, LibreOffice, Numbers and Sheets.
 `tests/test_export_and_reset.py` opens the produced file and reads cells — a
@@ -129,7 +129,7 @@ server**, over the public HTTP API — log in, start a work session, wait out th
 cycle, stop, then advance / merge / hand off. Because it uses the same
 endpoints the Operator view does, every movement broadcasts on the websocket
 (an open board shows lots moving without a reload) and every session feeds the
-real cycle-time / line-cycle-time / OEE statistics. Defaults are 8 tablets, a
+real cycle-time / line-cycle-time / utilisation statistics. Defaults are 8 tablets, a
 5 s cycle, one order a minute, one hour.
 
     .venv/bin/python simulate_line.py                      # fresh dev company + the shipped line
@@ -261,7 +261,7 @@ from Settings → Integrations → *Integration locations*.
   becomes drainable by ShipStation.
 - **An unbound leaf still completes on arrival** — the deliberate migration
   rule, so binding is purely additive.
-- Bound locations are excluded from the heatmap, accumulation warnings, OEE and
+- Bound locations are excluded from the heatmap, accumulation warnings, utilisation and
   the takt pulse (`_warehouse_ids` unions them in). Related fix:
   `/sessions/stats/{id}` used to report `isWarehouse: false` for any station
   with no sessions yet.
@@ -352,7 +352,7 @@ numbers under the wrong mode charge the wrong thing.
 
 **Only two things are gated by plan**, both booleans on `Plan`:
 `integrations` (connectors, API-key use, MCP) and `line_doctor`
-(`GET /analysis/`). Statistics and OEE stay open on **every** tier on purpose —
+(`GET /analysis/`). Statistics and utilisation stay open on **every** tier on purpose —
 the measurement is why anyone installs the product, and taking it from Free
 removes the reason an operator presses stop. The Line Doctor's *runout clock*
 (`/analysis/runout/{id}`) is deliberately ungated too: it orders the operator's
@@ -701,7 +701,7 @@ open hours + starvation downstream) and its advice follows Goldratt's focusing
 steps — exploit before elevate. The **waiting gap** is differentiated into
 queueing vs starvation by whether WIP is standing at the bench, because the
 remedies point in opposite directions. **Over-takt** does the arithmetic
-(⌈work-per-unit ÷ takt⌉ benches, OEE-adjusted when known); **no-headroom**
+(⌈work-per-unit ÷ takt⌉ benches, utilisation-adjusted when known); **no-headroom**
 warns at ≥85% of takt with the Kingman load/(1−load) queue multiplier;
 **imbalance** reports balance efficiency (Σwork ÷ n·max) and names a concrete
 pair of benches whose combined work still fits under the slowest step;

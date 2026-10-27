@@ -226,7 +226,7 @@ class Station(Base):
     integrationRole: Mapped[str | None] = mapped_column(String, nullable=True)
     # Storage rather than work: finished goods rest here by design, so it is
     # kept out of the heatmap (which it would otherwise flatten), reports no
-    # OEE, and is never flagged for accumulating.
+    # utilisation, and is never flagged for accumulating.
     #
     # Explicit rather than inferred from the graph. "No outgoing routes" is not
     # the same question: a final test bench or a paint booth at the end of a
@@ -596,7 +596,7 @@ class GlobalSettings(Base):
     )
     timezone: Mapped[str] = mapped_column(String, nullable=False, default="UTC")
     # 7×24 grid of 0/1 (day 0 = Monday) — the hours the plant is meant to run.
-    # Drives OEE (working time ÷ open time). Defaults to Mon–Fri 9–5.
+    # Drives utilisation (working time ÷ open time). Defaults to Mon–Fri 9–5.
     workHours: Mapped[list] = mapped_column(JSONB, nullable=False, default=_default_work_hours)
     # Breaks, minutes of the local day [[start, end], ...], the same every day:
     # taken out of open time (core/schedule.Schedule), so they are neither

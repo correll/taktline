@@ -76,7 +76,7 @@ export const CATEGORY_ANCHORS: Record<string, string> = {
   Pull: 'pull',
   'Lead time': 'littles-law',
   Takt: 'timing',
-  OEE: 'statistics',
+  Utilisation: 'statistics',
   'Digital lean': 'digital-lean',
   '5S': 'five-s',
   SMED: 'smed',

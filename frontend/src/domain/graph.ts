@@ -386,7 +386,7 @@ export interface Accumulation {
 }
 
 // Stations with incoming routes but none outgoing: finished goods land there on
-// purpose, so they are never "accumulating" and are left out of heat and OEE.
+// purpose, so they are never "accumulating" and are left out of heat and utilisation.
 export function warehouseNodes(edges: Edge[]): Set<string> {
   const hasIn = new Set<string>()
   const hasOut = new Set<string>()

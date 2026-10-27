@@ -37,7 +37,7 @@ async def reset_statistics(ctx: CompanyContext = Depends(require_super_admin),
     """Clear the measured history, keeping the line and the lots on it.
 
     Everything the Statistics view computes comes from two tables: work
-    sessions (cycle time, OEE) and card events (line cycle time, the moves
+    sessions (cycle time, utilisation) and card events (line cycle time, the moves
     chart, a lot's own history). This empties both, so a pilot's practice runs
     or a simulation stop distorting the numbers a real week is judged on.
 

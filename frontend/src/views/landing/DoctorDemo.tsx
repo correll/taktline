@@ -31,11 +31,13 @@ const FINDINGS: Finding[] = [
     waste: 'Waiting',
     title: 'Sewing line is the constraint',
     detail:
-      'A finished unit’s worth of work leaves it every 9m 40s, against 3m 12s elsewhere on ' +
-      'Crew neck. That is the pace of the whole line, whatever the other stations manage — an ' +
-      'hour lost here is an hour lost for everything, and an hour saved anywhere else is a ' +
-      'mirage. More signs point the same way: nine units are queued at it, and Print & pack ' +
-      'downstream is idle waiting for it.',
+      'Of the stations on Crew neck, Sewing line is occupied for the largest share of its open ' +
+      'time: working 88% and in changeover 6%, 94% in all, against 61% at the next busiest. The ' +
+      'busiest resource is the constraint, and its pace is the pace of the whole line, whatever ' +
+      'the other stations manage — an hour lost here is an hour lost for everything, and an hour ' +
+      'saved anywhere else is a mirage. The record around it: a finished unit’s worth of work ' +
+      'leaves it every 9m 40s, nine units stand at it now and Print & pack directly downstream ' +
+      'is idle 58% of its open time.',
   },
   {
     severity: 'warning',

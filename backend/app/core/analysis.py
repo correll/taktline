@@ -84,6 +84,8 @@ class StationMetrics:
     samples: list = field(default_factory=list)   # per-session seconds per piece
     samples_by: dict = field(default_factory=dict)  # the same, by product (template id)
     operators: dict = field(default_factory=dict)  # operatorId → mean sec/piece
+    # operatorId → per-session seconds per piece, in recorded order
+    operator_samples: dict = field(default_factory=dict)
     downtime_sec: float = 0.0       # recorded breakdowns
     changeover_sec: float = 0.0     # recorded changeovers
     wip_avg: Optional[float] = None  # time-averaged units, rebuilt from the history
@@ -489,7 +491,10 @@ def _topology_findings(s: Snapshot) -> list:
                 lengths.append((d, r))
         if len(lengths) >= 3:
             median = statistics.median(d for d, _ in lengths)
-            far = [(d, r) for d, r in lengths if median > 0 and d > 3 * median]
+            # Tukey's upper fence: Q3 + 1.5 × IQR, on the hinges.
+            q1, q3 = _hinges([d for d, _ in lengths])
+            fence = q3 + 1.5 * (q3 - q1)
+            far = [(d, r) for d, r in lengths if d > fence]
             if far:
                 # Compare by distance only: two processes sharing one pair of
                 # stations give two routes of identical length, and a plain
@@ -502,10 +507,14 @@ def _topology_findings(s: Snapshot) -> list:
                     title="One move is much longer than the rest",
                     detail=f"{names.get(r.load, '?')} → {names.get(r.unload, '?')} is "
                            f"{_fmt(d, s.unit)}, against a typical {_fmt(median, s.unit)} on this "
-                           "floor. Transport is the easiest waste to see and the first place to "
-                           "gain: moving those two benches together costs nothing but a morning.",
+                           f"floor and beyond the {_fmt(fence, s.unit)} at which a move stops "
+                           "being one of the floor's own (Tukey's upper fence: the upper "
+                           "quartile plus one and a half interquartile ranges). Transport is "
+                           "the easiest waste to see and the first place to gain: moving those "
+                           "two benches together costs nothing but a morning.",
                     stations=[r.load, r.unload], waste="Transport", manual="waste",
-                    metrics={"metres": round(d, 1), "median": round(median, 1)}))
+                    metrics={"metres": round(d, 1), "median": round(median, 1),
+                             "fence": round(fence, 1)}))
     return out
 
 
@@ -551,6 +560,73 @@ def _reachable(routes: list, frm: str) -> set:
     return seen
 
 
+def _stream_ends(s: Snapshot, routes: list) -> set:
+    """Where finished units leave one value stream.
+
+    A process that ends on a shelf exits through the stations feeding it:
+    nothing ever departs a warehouse, so its line cycle time is null, and
+    measuring there left every line that finishes into storage without a lead
+    time at all."""
+    members = {r.load for r in routes} | {r.unload for r in routes}
+    sinks = [n for n in members if not any(r.load == n for r in routes)]
+    storage = {st.id for st in s.stations if st.is_storage}
+    ends: set = set()
+    for n in sinks:
+        if n in storage:
+            ends |= {r.load for r in routes if r.unload == n and r.load not in storage}
+        else:
+            ends.add(n)
+    return ends
+
+
+def _finished_interval(s: Snapshot, pid: str, routes: list, need: dict) -> Optional[float]:
+    """The measured interval between finished units of one value stream.
+
+    Read where finished units leave (`_stream_ends`): pieces out per open
+    second over the period, divided by the pieces a finished unit is, summed
+    over the ends; the ends' line cycle times where no exit rate is recorded.
+    None where neither exists."""
+    ends = sorted(_stream_ends(s, routes))
+    rates = [s.exit_rate_by_process[(n, pid)] / max(need.get(n, 1), 1e-9)
+             for n in ends if s.exit_rate_by_process.get((n, pid))]
+    if not rates:
+        for n in ends:
+            if n not in s.metrics:
+                continue
+            v = s.line_cycle_by_process.get((n, pid), s.metrics[n].line_cycle_sec)
+            if v:
+                rates.append(1.0 / (v * max(need.get(n, 1), 1e-9)))
+    return 1.0 / sum(rates) if rates else None
+
+
+def _utilisation(m: Optional[StationMetrics]) -> Optional[float]:
+    """Share of open time a station is occupied: working, broken down or in
+    changeover. Open time is recovered from the crew-time utilisation the
+    statistics already compute (working ÷ open), so open = working ÷ oee.
+    None where the station has no open time on record."""
+    if m is None or not m.oee or m.oee <= 0 or not m.working_sec:
+        return None
+    return (m.working_sec + m.downtime_sec + m.changeover_sec) / (m.working_sec / m.oee)
+
+
+def _ceil(x: float) -> int:
+    """⌈x⌉ of a quotient of measured floats. Rounded to nine places first so
+    that 3 × 60 ÷ 60 = 3.0000000000000004 counts as three stations, not four."""
+    return math.ceil(round(x, 9))
+
+
+def _hinges(xs: list) -> tuple:
+    """Tukey's hinges (the lower and upper fourths): the medians of the lower
+    and upper halves of the sorted data, each half including the median when
+    the count is odd. Tukey (1977) defines the fences on these."""
+    xs = sorted(xs)
+    n = len(xs)
+    half = n // 2
+    lower = xs[:half + 1] if n % 2 else xs[:half]
+    upper = xs[half:]
+    return statistics.median(lower), statistics.median(upper)
+
+
 def _stream_lead(s: Snapshot, pid: str, routes: list, need: dict):
     """Lead time of one value stream from the moves alone: each lot's measured
     flow time where enough have finished, Little's law (average WIP over exit
@@ -589,19 +665,7 @@ def _stream_lead(s: Snapshot, pid: str, routes: list, need: dict):
     wip_here = avg if have_avg else s.wip_process.get(pid, 0)
     if wip_here < 5:
         return None
-    sinks = [n for n in members
-             if not any(r.load == n for r in routes)]
-    # A process that ends on a shelf exits through the stations feeding
-    # it: nothing ever departs a warehouse, so its line cycle time is
-    # null, and measuring there left every line that finishes into
-    # storage without a lead time at all.
-    storage = {st.id for st in s.stations if st.is_storage}
-    ends: set = set()
-    for n in sinks:
-        if n in storage:
-            ends |= {r.load for r in routes if r.unload == n and r.load not in storage}
-        else:
-            ends.add(n)
+    ends = _stream_ends(s, routes)
     # Throughput as Little's law needs it: pieces out per open second over
     # the period. The reciprocal of line cycle time is a mean of
     # per-departure ratios, which a once-a-day shipment makes noisy.
@@ -636,165 +700,130 @@ def _timing_findings(s: Snapshot) -> list:
     shelves = {st.id for st in s.stations if st.is_storage}
     floor = {sid: n for sid, n in s.wip.items() if sid not in shelves and n > 0}
     oees = {sid: m.oee for sid, m in worked.items() if m.oee is not None}
-    oee_median = statistics.median(oees.values()) if len(oees) >= 3 else None
+    util = {sid: _utilisation(m) for sid, m in worked.items()}
 
-    # Which stations are entries (nothing feeds them): their exit rate is the
-    # release rate, not their own pace, and the constraint rules must not
-    # mistake the front door for the narrowest doorway.
-    incoming_all, _o = _degrees(_real_routes(s))
-    entries = {st.id for st in s.stations
-               if not incoming_all.get(st.id) and not st.provider and not st.is_storage}
+    # Which value streams use each station. A station two streams share is
+    # judged in each, and the over-capacity rule counts only the stations a
+    # stream has to itself.
+    station_procs: dict = {}
+    for pid, routes in by_process.items():
+        for r in routes:
+            station_procs.setdefault(r.load, set()).add(pid)
+            station_procs.setdefault(r.unload, set()).add(pid)
 
     constraint_of: dict = {}          # pid → station named the constraint
 
-    # ── Per value stream: the constraint, and a line outrun by its orders ──
+    # ── Per value stream: the constraint, and a line with more stations than
+    #    its work needs.
     #
-    # All rates are normalized to FINISHED-UNIT equivalents: a station's
-    # per-piece interval × the pieces it handles per finished unit. Without
-    # this, the end of any split-heavy line looks like the constraint --
-    # Pack Test sees one piece where Busbar Clean saw thirty-two -- and the
-    # report sends someone to speed up a bench that is perfectly in step.
+    # The constraint is the resource with the highest utilisation (Hopp &
+    # Spearman): the share of its open time a station is working, broken down
+    # or being changed over. Every line has one, so it is always named once
+    # there are two stations to compare. An entry station (nothing feeds it
+    # within the stream) is left out: it runs at the release pace, and its
+    # work is not where the stream's capacity is decided.
+    #
+    # Departure interval, queue and idle successors are reported beside it as
+    # evidence, with no threshold on any of them. The interval is normalized
+    # to FINISHED-UNIT equivalents (a station's per-piece interval × the
+    # pieces it handles per finished unit), or the end of any split-heavy line
+    # would read as slow where it is perfectly in step.
     for pid, routes in by_process.items():
         need = needs.get(pid, {})
         members = {r.load for r in routes} | {r.unload for r in routes}
-        lct = {sid: s.line_cycle_by_process.get((sid, pid), worked[sid].line_cycle_sec)
-               for sid in members if sid in worked}
-        norm = {sid: v * need.get(sid, 1) for sid, v in lct.items() if v}
-        if not norm:
-            continue
+        incoming_p, outgoing_p = _degrees(routes)
         pname = procs[pid].name if pid in procs else "this line"
 
-        # Outrun by its orders: the entry interval dwarfs the line's own pace.
-        entry_norm = {sid: v for sid, v in norm.items() if sid in entries}
-        rest_norm = {sid: v for sid, v in norm.items() if sid not in entries}
-        if len(norm) >= 3 and entry_norm and rest_norm:
-            feeder = max(entry_norm, key=lambda k: entry_norm[k])
-            downstream = statistics.median(rest_norm.values())
-            if downstream and entry_norm[feeder] > 1.3 * downstream:
+        cand = {sid: util[sid] for sid in sorted(members)
+                if sid in worked and incoming_p.get(sid) and util.get(sid) is not None}
+        if len(cand) >= 2:
+            top = max(cand, key=lambda k: cand[k])
+            nxt = max(v for k, v in cand.items() if k != top)
+            constraint_of[pid] = top
+            m = worked[top]
+            open_sec = m.working_sec / m.oee
+            parts = [f"working {m.oee * 100:.0f}%"]
+            if m.downtime_sec:
+                parts.append(f"broken down {m.downtime_sec / open_sec * 100:.0f}%")
+            if m.changeover_sec:
+                parts.append(f"in changeover {m.changeover_sec / open_sec * 100:.0f}%")
+            factor = need.get(top, 1)
+            lc = s.line_cycle_by_process.get((top, pid), m.line_cycle_sec)
+            interval = lc * factor if lc else None
+            queued = floor.get(top, 0)
+            succ_idle = {t: 1 - util[t] for t in sorted(outgoing_p.get(top, ()))
+                         if util.get(t) is not None}
+            evidence = []
+            if interval:
+                evidence.append(
+                    f"a finished unit's worth of work leaves it every {_mmss(interval)}"
+                    + (f" ({factor:g} pieces at {_mmss(lc)} each)" if factor != 1 else ""))
+            evidence.append(f"{_plural(queued, 'unit')} "
+                            f"{'stands' if queued == 1 else 'stand'} at it now")
+            for t, idle in succ_idle.items():
+                evidence.append(f"{names.get(t, 'the next station')} directly downstream is "
+                                f"idle {idle * 100:.0f}% of its open time")
+            where = f" on {pname}" if len(by_process) > 1 else ""
+            out.append(Finding(
+                rule="bottleneck", severity=WARNING, basis="load",
+                title=f"{names.get(top, '?')} is the constraint{where}",
+                detail=f"Of the stations on {pname}, {names.get(top, 'this station')} is "
+                       f"occupied for the largest share of its open time: "
+                       f"{_english_list(parts)}, {cand[top] * 100:.0f}% in all, against "
+                       f"{nxt * 100:.0f}% at the next busiest. The busiest resource is the "
+                       "constraint, and its pace is the pace of the whole line, whatever the "
+                       "other stations manage — an hour lost here is an hour lost for "
+                       "everything, and an hour saved anywhere else is a mirage. "
+                       f"The record around it: {_english_list(evidence)}. "
+                       "Before spending anything, make sure it never waits: keep a small "
+                       "buffer in front of it, stagger breaks so it is never unmanned, and "
+                       "move inspection or prep off it. Only when it runs every open minute "
+                       "is more capacity worth buying.",
+                stations=[top], process=pid, manual="timing",
+                metrics={"load": round(cand[top], 3), "nextLoad": round(nxt, 3),
+                         "lineCycleSec": round(interval, 1) if interval else None,
+                         "perUnitPieces": factor,
+                         "queuedUnits": round(queued, 1),
+                         "successorIdle": {t: round(v, 3) for t, v in succ_idle.items()}}))
+
+        # More stations than the work needs: the theoretical minimum number
+        # of stations (line balancing), ⌈Σ work per finished unit ÷ T⌉, is
+        # below the count staffed. T is the takt where one is set, else the
+        # measured interval between finished units. Only the stations this
+        # stream has to itself are counted: a shared one cannot be combined
+        # away by one stream alone.
+        p = procs.get(pid)
+        T = p.desired_takt_sec if p and p.desired_takt_sec else None
+        t_basis = "desired"
+        if not T:
+            T = _finished_interval(s, pid, routes, need)
+            t_basis = "measured"
+        own = [sid for sid in sorted(members)
+               if sid in worked and incoming_p.get(sid) and station_procs.get(sid) == {pid}]
+        if T and own:
+            w_own = {sid: worked[sid].cycle_sec * need.get(sid, 1) for sid in own}
+            total = sum(w_own.values())
+            n_min = _ceil(total / T)
+            if n_min < len(own):
+                beat = (f"Takt for {pname} is {_mmss(T)}" if t_basis == "desired" else
+                        f"A finished unit of {pname} leaves every {_mmss(T)}")
                 out.append(Finding(
                     rule="demand-limited", severity=INSIGHT, basis="timing",
-                    title=f"{pname} is faster than the work arriving at "
-                          f"{names.get(feeder, 'the front')}",
-                    detail=f"A finished unit's worth of material enters at "
-                           f"{names.get(feeder, 'the first station')} every "
-                           f"{_mmss(entry_norm[feeder])}, while the line itself turns one "
-                           f"round every {_mmss(downstream)}. Nothing here is a bottleneck — "
-                           "the line is over-dimensioned for the orders it is getting, and "
-                           "the idle capacity is paid for either way. Rather than speeding "
+                    title=f"{pname} has more stations than its work needs",
+                    detail=f"{beat}, and the {_mmss(total)} of work a finished unit "
+                           f"receives at the {_plural(len(own), 'station')} only {pname} "
+                           f"uses would fit in {_words(n_min)}: ⌈{_mmss(total)} ÷ "
+                           f"{_mmss(T)}⌉ = {n_min}. The other "
+                           f"{_words(len(own) - n_min)} {'is' if len(own) - n_min == 1 else 'are'} "
+                           "idle capacity, paid for either way. Rather than speeding "
                            "anything up, consider combining steps so that fewer stations "
                            "each do more: a longer cycle time at fewer benches, matched to "
-                           "the rate work actually arrives, frees people and floor without "
-                           "slowing anything down.",
-                    stations=[feeder], process=pid, waste="Waiting", manual="timing",
-                    metrics={"entrySec": round(entry_norm[feeder], 1),
-                             "downstreamSec": round(downstream, 1)}))
-
-        # The constraint — with corroborating evidence where it exists.
-        # Naming it is Goldratt's first focusing step; the *advice* is the
-        # second and third: exploit it (it must never wait), subordinate the
-        # rest, and only then buy capacity. An hour lost here is an hour lost
-        # for the whole line; an hour saved anywhere else is a mirage.
-        if len(rest_norm) >= 2:
-            slowest = max(rest_norm, key=lambda k: rest_norm[k])
-            others = sorted(v for k, v in rest_norm.items() if k != slowest)
-            typical = statistics.median(others) if others else 0
-            # An exit interval that stands out names the constraint only if
-            # the station's load agrees: the constraint is the resource with
-            # least capacity against demand, and where work arrives in bursts
-            # a lightly loaded station can show long gaps between departures
-            # simply because nothing arrived. Without load data the interval
-            # stands alone.
-            def _load(sid_):
-                m_ = worked.get(sid_)
-                if m_ is None or not m_.oee or m_.oee <= 0 or not m_.working_sec:
-                    return None
-                return (m_.working_sec + m_.downtime_sec + m_.changeover_sec) / (m_.working_sec / m_.oee)
-            loads_ = {k: _load(k) for k in rest_norm}
-            known = [v for v in loads_.values() if v is not None]
-            corroborated = (loads_.get(slowest) is None or not known
-                            or loads_[slowest] >= 0.9 * max(known))
-            if typical and rest_norm[slowest] > 1.3 * typical and corroborated:
-                constraint_of[pid] = slowest
-                factor = need.get(slowest, 1)
-                per_unit = (f"A finished unit's worth of work leaves it every "
-                            f"{_mmss(rest_norm[slowest])}"
-                            + (f" ({factor:g} pieces at {_mmss(lct[slowest])}"
-                               f" each)" if factor > 1 else "")
-                            + f", against {_mmss(typical)} elsewhere on {pname}.")
-                evidence = []
-                if floor.get(slowest, 0) >= 3:
-                    evidence.append(f"{_words(floor[slowest])} units are queued at it")
-                if (oee_median and slowest in oees
-                        and oees[slowest] >= max(oees.values()) - 1e-9
-                        and oees[slowest] > 1.15 * oee_median):
-                    evidence.append(f"it runs the largest share of open hours "
-                                    f"({oees[slowest] * 100:.0f}%)")
-                starved_downstream = [
-                    t for t in _reachable(routes, slowest)
-                    if t in oees and oee_median and oees[t] < oee_median / 2]
-                if starved_downstream:
-                    evidence.append(f"{names.get(starved_downstream[0], 'a station')} "
-                                    "downstream is idle waiting for it")
-                corro = (" More signs point the same way: "
-                         + _english_list(evidence) + "." if evidence else "")
-                out.append(Finding(
-                    rule="bottleneck", severity=WARNING, basis="timing",
-                    title=f"{names.get(slowest, '?')} is the constraint",
-                    detail=f"{per_unit} That is the pace of the whole line, whatever the "
-                           "other stations manage — an hour lost here is an hour lost for "
-                           "everything, and an hour saved anywhere else is a mirage."
-                           f"{corro} Before spending anything, make sure it never waits: "
-                           "keep a small buffer in front of it, stagger breaks so it is "
-                           "never unmanned, and move inspection or prep off it. Only when "
-                           "it runs every open minute is more capacity worth buying.",
-                    stations=[slowest], process=pid, manual="timing",
-                    metrics={"lineCycleSec": round(rest_norm[slowest], 1),
-                             "typicalSec": round(typical, 1),
-                             "perUnitPieces": factor,
-                             "evidence": len(evidence)}))
-
-    # ── A line paced by its orders has no slow exit, but it still has a
-    # station closest to its capacity, and that is the one that breaks first
-    # when demand grows or a robot is chosen. Exit intervals cannot show it
-    # (every station leaves at the release pace), so it is read from load: the
-    # share of open time a station is working, broken down or being changed
-    # over. Only when the exit-rate rule above has nothing to say.
-    for pid, routes in by_process.items():
-        if pid in constraint_of:
-            continue
-        members = {r.load for r in routes} | {r.unload for r in routes}
-        load = {}
-        for sid in members:
-            m = worked.get(sid)
-            if m is None or sid in entries or not m.oee or m.oee <= 0 or not m.working_sec:
-                continue
-            open_sec = m.working_sec / m.oee
-            load[sid] = min(1.0, (m.working_sec + m.downtime_sec + m.changeover_sec) / open_sec)
-        if len(load) < 2:
-            continue
-        top = max(load, key=lambda k: load[k])
-        rest = sorted((v for k, v in load.items() if k != top), reverse=True)
-        if load[top] < 0.7:
-            continue
-        constraint_of[pid] = top
-        pname = procs[pid].name if pid in procs else "this line"
-        m = worked[top]
-        parts = [f"working {m.oee * 100:.0f}%"]
-        if m.downtime_sec:
-            parts.append(f"broken down {m.downtime_sec / (m.working_sec / m.oee) * 100:.0f}%")
-        if m.changeover_sec:
-            parts.append(f"in changeover {m.changeover_sec / (m.working_sec / m.oee) * 100:.0f}%")
-        out.append(Finding(
-            rule="bottleneck", severity=WARNING, basis="load",
-            title=f"{names.get(top, '?')} is closest to its capacity",
-            detail=f"{pname} is paced by the work arriving, so every station leaves at the "
-                   f"same rate and none shows up as slow. {names.get(top, 'This station')} is "
-                   f"the one with the least slack: {_english_list(parts)} of open time, "
-                   f"{load[top] * 100:.0f}% in all, against {rest[0] * 100:.0f}% at the next "
-                   "busiest. It is the constraint the line will meet first if demand rises, "
-                   "and the first place where saved time shortens the queue.",
-            stations=[top], process=pid, manual="timing",
-            metrics={"load": round(load[top], 3), "nextLoad": round(rest[0], 3)}))
+                           "the rate finished units are needed, frees people and floor "
+                           "without slowing anything down.",
+                    stations=own, process=pid, waste="Waiting", manual="timing",
+                    metrics={"taktSec": round(T, 1), "taktBasis": t_basis,
+                             "workSec": round(total, 1), "minStations": n_min,
+                             "stations": len(own)}))
 
     # ── Against the beat the customer sets — in per-unit work, with sizing.
     for pid, p in procs.items():
@@ -837,38 +866,43 @@ def _timing_findings(s: Snapshot) -> list:
                 metrics={"taktSec": p.desired_takt_sec, "perUnitWorkSec": round(w, 1),
                          "stationsOverTakt": len(over), "benchesNeeded": benches}))
 
-        # No headroom: close to takt is not "just fitting", it is a queue
-        # factory. Queueing theory (Kingman's formula) says waiting time grows
-        # with utilisation/(1−utilisation): at 90% of takt every small hiccup
-        # queues nine times longer than at 50%. A line needs slack to absorb
-        # its own variability, and a station with none exports every wobble
-        # downstream as lateness.
-        near = [(sid, w) for sid, w in per_unit.items()
-                if 0.85 * p.desired_takt_sec <= w <= p.desired_takt_sec]
-        for sid, w in sorted(near, key=lambda t: -t[1])[:1]:
+        # No headroom: Kingman's formula with perfectly regular arrivals
+        # (c_a = 0, the best case, so no assumed arrival variability can be
+        # what raises it): the queue in front is (c_e² / 2) · ρ/(1 − ρ) times
+        # the work. Where that factor reaches one the queue is already longer
+        # than the work, though the station still fits under the takt.
+        near = []
+        for sid, w in per_unit.items():
             rho = w / p.desired_takt_sec
-            mult = rho / (1 - rho) if rho < 1 else float("inf")
-            cv = None
-            if len(worked[sid].samples) >= 6:
-                mean = statistics.fmean(worked[sid].samples)
-                if mean > 0:
-                    cv = statistics.pstdev(worked[sid].samples) / mean
+            xs = worked[sid].samples
+            if rho >= 1 or len(xs) < 6:
+                continue
+            mean = statistics.fmean(xs)
+            if mean <= 0:
+                continue
+            ce = statistics.pstdev(xs) / mean
+            kf = (ce ** 2 / 2) * rho / (1 - rho)
+            if kf >= 1:
+                near.append((sid, w, rho, ce, kf))
+        for sid, w, rho, ce, kf in sorted(near, key=lambda t: -t[1])[:1]:
+            mult = rho / (1 - rho)
+            queue = kf * w
             out.append(Finding(
                 rule="no-headroom", severity=INSIGHT, basis="timing",
                 title=f"{names.get(sid, '?')} has no headroom against the takt",
-                detail=f"Its work content is {_mmss(w)} against a takt of "
-                       f"{_mmss(p.desired_takt_sec)} — {rho * 100:.0f}% loaded. That is "
-                       "not comfortably fitting; it is the steep part of the queueing "
-                       "curve, where waiting grows with load ÷ (1 − load): at this "
-                       f"utilisation every disruption queues roughly {mult:.0f}× its own "
-                       "length before draining."
-                       + (f" The work here also varies (spread/mean {cv:.1f}), which "
-                          "multiplies exactly that queueing." if cv and cv >= 0.3 else "")
-                       + " Either shave a little work content off, or accept and size "
-                       "the buffer in front knowingly.",
+                detail=f"Its work content is {_mmss(w)} per finished unit against a takt of "
+                       f"{_mmss(p.desired_takt_sec)} — {rho * 100:.0f}% loaded — and the work "
+                       f"varies (spread/mean {ce:.2f}). By Kingman's formula, even with work "
+                       "arriving perfectly regularly a unit waits about "
+                       f"{_mmss(queue)} in front of it: (c² ÷ 2) × load ÷ (1 − load) = "
+                       f"{kf:.1f} times its own work. The queue is already longer than the "
+                       "work, while the station still fits under the beat. Either shave work "
+                       "content off, make the work more repeatable, or accept and size the "
+                       "buffer in front knowingly.",
                 stations=[sid], process=pid, waste="Inventory", manual="timing",
-                metrics={"utilization": round(rho, 3),
-                         "queueMultiplier": round(mult, 1) if mult != float("inf") else None}))
+                metrics={"utilization": round(rho, 3), "cv": round(ce, 2),
+                         "queueMultiplier": round(mult, 1),
+                         "kingmanFactor": round(kf, 2), "queueSec": round(queue, 1)}))
 
     # ── Balance, as the payroll sees it — in occupied time per finished
     #    unit, for the same reason the constraint is: a station doing eight
@@ -882,13 +916,19 @@ def _timing_findings(s: Snapshot) -> list:
     # kitting bench) runs at the release pace, often in campaigns, and its
     # seconds per piece are not work anyone could move to an assembler — the
     # constraint rule leaves it out for the same reason.
+    incoming_all, _o = _degrees(_real_routes(s))
+    entries = {st.id for st in s.stations
+               if not incoming_all.get(st.id) and not st.provider and not st.is_storage}
     cycles = {sid: m.cycle_sec * factor_of.get(sid, 1)
               for sid, m in worked.items() if m.cycle_sec and sid not in entries}
     if len(cycles) >= 2:
         fastest = min(cycles, key=lambda k: cycles[k])
         slowest = max(cycles, key=lambda k: cycles[k])
         ratio = cycles[slowest] / cycles[fastest] if cycles[fastest] else 0
-        if ratio >= 2:
+        # Balance loss of at least one whole station (Scholl): the work, at
+        # the slowest station's pace, fits in fewer stations than are staffed.
+        n_min = _ceil(sum(cycles.values()) / cycles[slowest])
+        if n_min < len(cycles):
             # Balance efficiency: of the station-time the payroll buys each
             # cycle, how much is work? Σ cycle / (n × slowest) — the classic
             # assembly-line-balancing measure.
@@ -916,10 +956,14 @@ def _timing_findings(s: Snapshot) -> list:
                     break
             out.append(Finding(
                 rule="line-imbalance", severity=WARNING, basis="timing",
-                title=f"The line is unbalanced — {ratio:.1f}× between fastest and slowest",
+                title=f"The line is unbalanced — its work fits in {_words(n_min)} of its "
+                      f"{_words(len(cycles))} stations",
                 detail=f"{names.get(slowest, '?')} carries {_mmss(cycles[slowest])} of work "
                        f"per finished unit while {names.get(fastest, '?')} carries "
-                       f"{_mmss(cycles[fastest])}. "
+                       f"{_mmss(cycles[fastest])}. Paced by the slowest step, the "
+                       f"{_mmss(sum(cycles.values()))} of work across these "
+                       f"{_plural(len(cycles), 'station')} would fit in {_words(n_min)}: "
+                       f"⌈{_mmss(sum(cycles.values()))} ÷ {_mmss(cycles[slowest])}⌉ = {n_min}. "
                        f"Balance efficiency is {eff * 100:.0f}%: of every hour of "
                        "station time the payroll buys, only that share is work and the "
                        "rest is built-in waiting. Moving work from the slow step to the "
@@ -928,38 +972,58 @@ def _timing_findings(s: Snapshot) -> list:
                 metrics={"ratio": round(ratio, 2),
                          "slowestSec": round(cycles[slowest], 1),
                          "fastestSec": round(cycles[fastest], 1),
-                         "balanceEfficiency": round(eff, 2)}))
+                         "balanceEfficiency": round(eff, 2),
+                         "minStations": n_min, "stations": len(cycles)}))
 
-    # ── Where the work-in-process is — on average over open time, not now.
+    # ── Where the work-in-process waits — on average over open time, not now.
     # A live count is a snapshot, and reads a momentary pile as a standing
     # one; the history-rebuilt average is what Little's law turns into lead
     # time. The live count stands in only before there is any history.
+    #
+    # By Little's law the time a unit spends at a station is the units there
+    # times the interval between departures, per piece. Where that one queue
+    # outlasts all the work a finished unit receives on its value stream, it
+    # costs more lead time than every step of value added.
     avg_floor = {sid: m.wip_avg for sid, m in s.metrics.items()
                  if sid not in shelves and m.wip_avg is not None and m.wip_avg > 0}
     pile = avg_floor or floor
-    if sum(pile.values()) >= 8 and pile:
-        worst = max(pile, key=lambda k: pile[k])
-        share = pile[worst] / max(1, sum(pile.values()))
-        if share >= 0.4 and len(pile) >= 2:
-            drain = ""
-            if worst in worked and worked[worst].cycle_sec:
-                wait = pile[worst] * worked[worst].cycle_sec
-                drain = (f" Even working flat out, the last unit in that queue waits "
-                         f"{_mmss(wait)} before its turn.")
+    waits = {}
+    for sid in sorted(pile):
+        m = s.metrics.get(sid)
+        if m is not None and m.line_cycle_sec:
+            waits[sid] = pile[sid] * m.line_cycle_sec
+    if waits:
+        worst = max(waits, key=lambda k: waits[k])
+        stream_work = {}
+        for pid in station_procs.get(worst, ()):
+            need = needs.get(pid, {})
+            mem = {r.load for r in by_process[pid]} | {r.unload for r in by_process[pid]}
+            wk = sum(worked[sid].cycle_sec * need.get(sid, 1) for sid in mem if sid in worked)
+            if wk > 0:
+                stream_work[pid] = wk
+        exceeded = sorted((wk, pid) for pid, wk in stream_work.items() if waits[worst] > wk)
+        if exceeded:
+            wk, pid = exceeded[0]
+            pname = procs[pid].name if pid in procs else "this line"
+            lc = s.metrics[worst].line_cycle_sec
             out.append(Finding(
                 rule="wip-concentration", severity=WARNING, basis="timing",
-                title=f"{int(share * 100)}% of the work in process is at "
-                      f"{names.get(worst, '?')}",
-                detail=f"{_words(int(round(pile[worst]))).capitalize()} of "
-                       f"{_words(int(round(sum(pile.values()))))} units on the floor"
-                       f"{' on average' if avg_floor else ''} are waiting "
-                       f"at {names.get(worst, 'one station')}. WIP piling up in front of "
-                       "a station is the signature of a bottleneck, and by Little's law "
-                       "it is also lead time: halve the queue and you halve how long an "
-                       f"order takes to cross the shop.{drain}",
-                stations=[worst], waste="Inventory", manual="waste",
-                metrics={"units": round(pile[worst], 1), "floorUnits": round(sum(pile.values()), 1),
-                         "share": round(share, 2), "basis": "average" if avg_floor else "live"}))
+                title=f"Work waits longer at {names.get(worst, '?')} than it takes to make",
+                detail=f"{_words(int(round(pile[worst]))).capitalize()} "
+                       f"unit{'s' if int(round(pile[worst])) != 1 else ''} "
+                       f"{'stand' if int(round(pile[worst])) != 1 else 'stands'} at "
+                       f"{names.get(worst, 'one station')}"
+                       f"{' on average' if avg_floor else ''}, and one piece leaves it every "
+                       f"{_mmss(lc)}. By Little's law a unit waits there about "
+                       f"{_mmss(waits[worst])} — longer than all the work a finished unit of "
+                       f"{pname} receives on the whole line ({_mmss(wk)}). One queue costs "
+                       "more lead time than every step of value added. WIP piling up in front "
+                       "of a station is the signature of a bottleneck: halve the queue and "
+                       "you halve the time it adds to every order.",
+                stations=[worst], process=pid, waste="Inventory", manual="waste",
+                metrics={"units": round(pile[worst], 1), "departureSec": round(lc, 1),
+                         "waitSec": round(waits[worst], 1), "workSec": round(wk, 1),
+                         "basis": "average" if avg_floor else "live"}))
 
     # ── Lead time and flow efficiency: the value-stream headline.
     # Little's law (lead time = WIP ÷ throughput) applied per value stream,
@@ -1039,31 +1103,37 @@ def _timing_findings(s: Snapshot) -> list:
             continue
         break
 
-    # ── One machine, every value stream: a monument.
-    station_procs: dict = {}
-    for pid, routes in by_process.items():
-        for r in routes:
-            station_procs.setdefault(r.load, set()).add(pid)
-            station_procs.setdefault(r.unload, set()).add(pid)
-    for sid, pids in station_procs.items():
-        if len(pids) < 2 or sid not in oees or oee_median is None:
+    # ── One machine, several value streams, and the constraint of at least
+    #    two of them: a monument. Shared alone is just shared; a shared
+    #    station that is the busiest of two streams sets both their paces.
+    named_by: dict = {}
+    for pid, sid in constraint_of.items():
+        named_by.setdefault(sid, []).append(pid)
+    for sid in sorted(named_by, key=lambda k: (-len(named_by[k]), k)):
+        pids = station_procs.get(sid, set())
+        if len(pids) < 2 or len(named_by[sid]) < 2:
             continue
-        if oees[sid] >= max(oees.values()) - 1e-9 and oees[sid] > 1.2 * oee_median:
-            pnames = sorted(procs[p].name for p in pids if p in procs)
-            out.append(Finding(
-                rule="shared-monument", severity=INSIGHT, basis="timing",
-                title=f"{names.get(sid, '?')} is a monument shared by "
-                      f"{_words(len(pids))} value streams",
-                detail=f"It serves {_english_list(pnames)} and runs the highest share "
-                       f"of open hours on the floor ({oees[sid] * 100:.0f}%). One "
-                       "machine every product must visit sets the pace for all of them "
-                       "at once, and every changeover on it is paid by every line. "
-                       "Schedule it deliberately, keep a small buffer in front, and "
-                       "when it comes up for replacement consider two right-sized "
-                       "machines over one faster monument.",
-                stations=[sid], waste="Waiting",
-                metrics={"processes": len(pids), "oee": round(oees[sid], 3)}))
-            break
+        pnames = sorted(procs[p].name for p in pids if p in procs)
+        cnames = sorted(procs[p].name for p in named_by[sid] if p in procs)
+        u = util.get(sid)
+        out.append(Finding(
+            rule="shared-monument", severity=INSIGHT, basis="timing",
+            title=f"{names.get(sid, '?')} is a monument shared by "
+                  f"{_words(len(pids))} value streams",
+            detail=f"It serves {_english_list(pnames)} and is the constraint of "
+                   + ("both" if len(named_by[sid]) == len(pids) == 2 else
+                      _english_list(cnames))
+                   + (f", busy {u * 100:.0f}% of its open time" if u is not None else "")
+                   + ". One machine several products must visit sets the pace for all of "
+                   "them at once, and every changeover on it is paid by every line. "
+                   "Schedule it deliberately, keep a small buffer in front, and "
+                   "when it comes up for replacement consider two right-sized "
+                   "machines over one faster monument.",
+            stations=[sid], waste="Waiting",
+            metrics={"processes": len(pids), "constraintOf": len(named_by[sid]),
+                     "load": round(u, 3) if u is not None else None,
+                     "oee": round(oees[sid], 3) if sid in oees else None}))
+        break
 
     # ── Repeatability — and WHICH kind of unrepeatable, because the remedies
     #    are opposite. A few extreme cycles among steady ones are special
@@ -1071,43 +1141,49 @@ def _timing_findings(s: Snapshot) -> list:
     #    events. A wide spread everywhere is a common cause (no standard
     #    work): write the method down. Shewhart's distinction, and chasing
     #    the wrong one demoralises people without moving the number.
+    #
+    # Per station and product: a station making two products with different
+    # work contents is not uneven. Special cause is read from an individuals
+    # chart on log time per piece (task times are right-skewed): centre = the
+    # mean, σ = the mean moving range ÷ 1.128, and a lot above centre + 3σ is
+    # an assignable cause. Common cause is a coefficient of variation of 0.75
+    # or more — moderate variability or worse in Hopp & Spearman's classes.
     tname = {t.id: t.name for t in s.templates}
     done_uneven = False
     for sid, m in worked.items():
-        groups = {k: v for k, v in (m.samples_by or {}).items() if len(v) >= 6} or \
-                 ({"?": m.samples} if len(m.samples) >= 6 else {})
+        if m.samples_by:
+            groups = {k: [x for x in v if x > 0] for k, v in m.samples_by.items()}
+        else:
+            groups = {"?": [x for x in m.samples if x > 0]}
+        groups = {k: v for k, v in groups.items() if len(v) >= 6}
         for prod, xs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
             mean = statistics.fmean(xs)
             med = statistics.median(xs)
-            if mean <= 0 or med <= 0:
-                continue
             cv = statistics.pstdev(xs) / mean
-            if cv < 0.6:
-                continue
-            # Shewhart: assignable causes are a few points outside the limits
-            # of an otherwise stable process. Outlying lots (three times the
-            # median or more) count as assignable only if they are a minority
-            # and the remaining lots are themselves steady; a broad, skewed
-            # spread throws up outliers too, and is chance variation.
-            out_ = [x for x in xs if x >= 3 * med]
-            rest = [x for x in xs if x < 3 * med]
-            steady = (len(rest) >= 3 and statistics.fmean(rest) > 0
-                      and statistics.pstdev(rest) / statistics.fmean(rest) < 0.3)
-            spiky = bool(out_) and len(out_) <= 0.25 * len(xs) and steady
+            logs = [math.log(x) for x in xs]
+            centre = statistics.fmean(logs)
+            sigma = statistics.fmean(abs(b - a) for a, b in zip(logs, logs[1:])) / 1.128
+            ucl = centre + 3 * sigma
+            above = [x for x, lx in zip(xs, logs) if lx > ucl]
             what = f" for {tname[prod]}" if prod in tname else ""
-            if spiky:
+            if above:
                 shape = "spikes"
-                diagnosis = (f"Most lots{what} take close to {_mmss(med)} a piece, but "
-                             f"{_words(len(out_))} of {_words(len(xs))} took three times as long or "
-                             "more. That pattern is an assignable cause: something interrupts "
+                diagnosis = (f"A typical lot{what} takes about {_mmss(math.exp(centre))} a "
+                             f"piece, but {_words(len(above))} of {_words(len(xs))} "
+                             f"{'lies' if len(above) == 1 else 'lie'} above "
+                             f"the control limit of {_mmss(math.exp(ucl))} that the lot-to-lot "
+                             "variation sets. That is an assignable cause: something interrupts "
                              "the work on those lots (a missing tool, material, rework) rather "
                              "than the work itself varying. Go and see what happened to them.")
-            else:
+            elif cv >= 0.75:
                 shape = "spread"
-                diagnosis = (f"The spread{what} is broad across lots rather than a few bad ones: "
+                diagnosis = (f"No lot{what} falls outside the control limits, yet the spread "
+                             f"is broad (spread/mean {cv:.2f}, moderate variability or worse): "
                              "chance variation in the work itself, which usually means the step "
                              "is several different jobs or that there is no standard way of "
                              "doing it. Write the best method down and teach it.")
+            else:
+                continue
             out.append(Finding(
                 rule="uneven-work", severity=INSIGHT, basis="timing",
                 title=f"The work at {names.get(sid, '?')} is not repeatable",
@@ -1120,32 +1196,59 @@ def _timing_findings(s: Snapshot) -> list:
                 metrics={"cv": round(cv, 2), "meanSec": round(mean, 1),
                          "medianSec": round(med, 1), "shape": shape,
                          "minSec": round(min(xs), 1), "maxSec": round(max(xs), 1),
+                         "limitSec": round(math.exp(ucl), 1), "aboveLimit": len(above),
                          "product": tname.get(prod)}))
             done_uneven = True
             break
         if done_uneven:
             break
 
-    # ── Two people, one bench, very different times.
+    # ── Two people, one bench, different times — read from an X-bar chart on
+    #    log time per piece: an operator whose mean lies outside the grand
+    #    mean ± 3σ/√nᵢ, σ pooled within operators, works differently from the
+    #    rest by more than the variation in anyone's own work explains.
     for sid, m in worked.items():
-        if len(m.operators) < 2:
+        ops = {op: [math.log(x) for x in xs if x > 0]
+               for op, xs in (m.operator_samples or {}).items()}
+        ops = {op: v for op, v in ops.items() if len(v) >= 2}
+        if len(ops) < 2:
             continue
-        vals = sorted(m.operators.values())
-        if vals[0] > 0 and vals[-1] / vals[0] >= 2.5:
-            out.append(Finding(
-                rule="operator-spread", severity=INSIGHT, basis="timing",
-                title=f"Operators differ {vals[-1] / vals[0]:.1f}× at {names.get(sid, '?')}",
-                detail=f"The quickest averages {_mmss(vals[0])} a piece and the slowest "
-                       f"{_mmss(vals[-1])}, at the same station. That is rarely about "
-                       "effort — it is the sign that there is no standard work, so "
-                       "everyone has invented their own method. Write the best one down "
-                       "and teach it; it is the cheapest improvement on this list. "
-                       "(One honest caveat first: if these people run different "
-                       "products at this bench, the gap may be the product mix, not "
-                       "the person — compare like with like before concluding.)",
-                stations=[sid],
-                metrics={"fastestSec": round(vals[0], 1), "slowestSec": round(vals[-1], 1)}))
-            break
+        means = {op: statistics.fmean(v) for op, v in ops.items()}
+        dof = sum(len(v) - 1 for v in ops.values())
+        ss = sum((x - means[op]) ** 2 for op, v in ops.items() for x in v)
+        sigma = math.sqrt(ss / dof)
+        grand = statistics.fmean(x for v in ops.values() for x in v)
+        # 1e-12: the mean of identical logs can differ from the grand mean in
+        # the last bit, and a zero-width limit must not read that as a signal.
+        outside = {op: abs(means[op] - grand) - 3 * sigma / math.sqrt(len(ops[op]))
+                   for op in sorted(ops)}
+        outside = {op: e for op, e in outside.items() if e > 1e-12}
+        if not outside:
+            continue
+        op = max(outside, key=lambda k: outside[k])
+        half = 3 * sigma / math.sqrt(len(ops[op]))
+        lo, hi = math.exp(grand - half), math.exp(grand + half)
+        geo = {k: math.exp(v) for k, v in means.items()}
+        fastest, slowest = min(geo.values()), max(geo.values())
+        out.append(Finding(
+            rule="operator-spread", severity=INSIGHT, basis="timing",
+            title=f"Operators differ {slowest / fastest:.1f}× at {names.get(sid, '?')}",
+            detail=f"One operator's pieces take {_mmss(geo[op])} on average here, against "
+                   f"{_mmss(math.exp(grand))} for the station as a whole — outside the "
+                   f"{_mmss(lo)} to {_mmss(hi)} that the variation within each person's own "
+                   f"work allows for someone with {_words(len(ops[op]))} timed lots. That is "
+                   "rarely about effort — it is the sign that there is no standard work, so "
+                   "everyone has invented their own method. Write the best one down "
+                   "and teach it; it is the cheapest improvement on this list. "
+                   "(One honest caveat first: if these people run different "
+                   "products at this bench, the gap may be the product mix, not "
+                   "the person — compare like with like before concluding.)",
+            stations=[sid],
+            metrics={"fastestSec": round(fastest, 1), "slowestSec": round(slowest, 1),
+                     "operatorSec": round(geo[op], 1), "grandSec": round(math.exp(grand), 1),
+                     "lowerSec": round(lo, 1), "upperSec": round(hi, 1),
+                     "operators": len(ops)}))
+        break
 
     return out
 

@@ -75,7 +75,7 @@ Statistics: the process collects timing based on lot and per product on each sta
 
 The gap between cycle time and line cycle time is the waste, in seconds: work that takes 2 minutes but only ships every 9 is queueing, blocking or transport, and speeding up the operator wins nothing. The Statistics table shows both side by side and tints line cycle time amber when it exceeds cycle time by >50%.
 
-Also collected: **utilisation** — the ratio of time where the timer at a location is running vs. open work time; idle, breakdowns and changeovers count against it. It is labelled *Utilisation*, never "OEE", everywhere a user, customer or reader sees it: true OEE is availability × performance × quality and needs ideal cycle times and scrap counts that Taktline does not record, so the product renames rather than computes. The API field, variables and settings keys keep the name `oee` (connectors, BI feeds, the MCP server and stored data read it). The denominator is **the crew's** open work time (`sessions.crew_open_seconds`): working time adds up across operators, so where several people work at one station at once it is measured against open time times the operators present, read from the record (each signs in on their own device; an operator counts as present from their first Start to their last Stop within each opening, so a handover at one bench is one operator, not two). Against open time alone every crew station read 100% all day, and the line doctor's load corroboration could not tell the busiest crew from a bench idling half the shift; a station worked by one person at a time is measured exactly as before. Also: number of transport events when lot cards travel from one location to another and overall transport in meters. 
+Also collected: **utilisation** — the ratio of time where the timer at a location is running vs. open work time; idle, breakdowns and changeovers count against it. It is labelled *Utilisation*, never "OEE", everywhere a user, customer or reader sees it: true OEE is availability × performance × quality and needs ideal cycle times and scrap counts that Taktline does not record, so the product renames rather than computes. The API field, variables and settings keys keep the name `oee` (connectors, BI feeds, the MCP server and stored data read it). The denominator is **the crew's** open work time (`sessions.crew_open_seconds`): working time adds up across operators, so where several people work at one station at once it is measured against open time times the operators present, read from the record (each signs in on their own device; an operator counts as present from their first Start to their last Stop within each opening, so a handover at one bench is one operator, not two). Against open time alone every crew station read 100% all day, and the line doctor's constraint, which is read from utilisation, could not tell the busiest crew from a bench idling half the shift; a station worked by one person at a time is measured exactly as before. Also: number of transport events when lot cards travel from one location to another and overall transport in meters. 
 
 ## Taking the statistics away, and starting them over
 
@@ -681,37 +681,72 @@ delivering six pieces into a bench that consumes one, a station every order
 must cross, one move far longer than the rest. Those are visible the moment the
 graph is drawn — which is exactly when a new user has no data and most needs to
 be told their line cannot work. **Timing** findings need sessions and
-departures: the constraint (slowest line cycle time), the cycle-vs-line-cycle
-gap (the manual's own framing of where waste lives), takt adherence, balance,
-WIP concentration read through Little's law, unevenness (Mura) from the spread
-of individual sessions, and operator spread as the sign that standard work is
-missing.
+departures: the constraint (highest utilisation), a line with more stations
+than its work needs, takt adherence, balance, WIP concentration read through
+Little's law, unevenness (Mura) from a control chart of individual sessions,
+and operator spread as the sign that standard work is missing.
 
 **Every rate is normalized to finished-unit equivalents** (`_per_unit_need`,
 the same walk the accumulation warning uses). Busbar Clean touches 32 pieces
 per pack, so its per-piece interval is structurally ~32× shorter on a healthy
 day — conservation of flow equalizes *finished-unit* throughput along a steady
 line, never piece throughput. Raw per-piece comparison names the end of any
-split-heavy line the constraint, forever. The constraint, demand-limited,
-over-takt, balance and flow-efficiency rules all work in per-unit terms.
+split-heavy line the constraint, forever. The over-capacity, over-takt,
+balance, WIP and flow-efficiency rules, and the departure interval the
+constraint reports, all work in per-unit terms.
 
-The timing rules carry the science they rest on: the constraint is
-**triangulated** (slowest normalized exit + queue in front + highest share of
-open hours + starvation downstream) and its advice follows Goldratt's focusing
-steps — exploit before elevate. The **waiting gap** is differentiated into
-queueing vs starvation by whether WIP is standing at the bench, because the
-remedies point in opposite directions. **Over-takt** does the arithmetic
-(⌈work-per-unit ÷ takt⌉ benches, utilisation-adjusted when known); **no-headroom**
-warns at ≥85% of takt with the Kingman load/(1−load) queue multiplier;
-**imbalance** reports balance efficiency (Σwork ÷ n·max) and names a concrete
-pair of benches whose combined work still fits under the slowest step;
-**flow-efficiency** is Little's law per value stream — lead time = WIP ÷
-throughput against touch time, the number value-stream mapping exists to
-expose; **unmatched-feeds** flags a merge paced by its slowest branch (matched
-sets, not full bins); **shared-monument** names a machine serving several value
-streams at the highest utilisation on the floor; and **uneven-work** separates
-special-cause spikes from common-cause spread (Shewhart), because chasing the
-wrong one moves nothing.
+**Every timing rule fires at a natural boundary of the equation it applies or
+at the constant its textbook source gives** — a ratio of one, an integer count
+of stations, three sigma, Tukey's 1.5 IQR. The one free parameter is the
+unmatched-feeds ratio (1.5); the readiness gates (3 stations, 12 sessions) and
+the six-sample minimum decide whether there is evidence, not what it means.
+The rules, as `core/analysis.py` applies them:
+
+- **Constraint** (`bottleneck`, basis `load`): per value stream, the station
+  with the highest utilisation u = (work + downtime + changeover) ÷ open time,
+  open time = work ÷ the crew-time utilisation already measured (Hopp &
+  Spearman). Entry stations of the stream are left out; it needs two candidates
+  and is otherwise always named, because every line has one. Departure
+  interval per finished unit, units queued and the idle share of each direct
+  successor ride along as evidence with no threshold on any of them. The advice
+  follows Goldratt's focusing steps — exploit before elevate.
+- **Over-capacity** (rule id `demand-limited`): with T the
+  desired takt, or else the measured interval between finished units of the
+  stream, ⌈Σw ÷ T⌉ < n, where w is cycle time × pieces per finished unit and n
+  counts the stream's non-entry worked stations used by no other stream — the
+  theoretical minimum number of stations (Scholl).
+- **Over-takt**: per-unit work > takt, with the ⌈work ÷ takt⌉ bench arithmetic,
+  utilisation-adjusted when known.
+- **No-headroom**: ρ < 1 and Kingman's queue with perfectly regular arrivals
+  (c_a = 0, the best case) is already as long as the work:
+  (c_e² ÷ 2) · ρ ÷ (1 − ρ) ≥ 1, with c_e the spread/mean of at least six
+  per-piece samples. The queue (that factor × the work) is reported.
+- **Imbalance**: balance loss of at least one whole station,
+  ⌈Σw ÷ max w⌉ < n over the non-entry stations; it reports balance efficiency
+  (Σw ÷ n·max) and names a pair of benches whose combined work still fits under
+  the slowest step.
+- **WIP concentration**: by Little's law the wait at a station is its WIP
+  (time-averaged, live before there is history) × its departure interval per
+  piece; the station with the longest wait is named when that wait exceeds the
+  total work per finished unit of a value stream it belongs to.
+- **Flow efficiency**: Little's law per value stream — lead time = WIP ÷
+  throughput against touch time, a measure reported for every stream rather
+  than a detection.
+- **Unmatched feeds**: a merge whose feeds' per-unit intervals differ ≥ 1.5×
+  (matched sets, not full bins) — the free parameter, stated as such.
+- **Shared monument**: a station used by two or more value streams that is the
+  constraint of at least two of them.
+- **Uneven work**: per station and product with at least six samples, a
+  Shewhart individuals chart on log time per piece (centre = mean, σ = mean
+  moving range ÷ 1.128, samples in recorded order): a lot above centre + 3σ is
+  an assignable cause (`spikes`); otherwise a spread/mean of 0.75 or more —
+  moderate variability or worse in Hopp & Spearman's classes — is common cause
+  (`spread`). Chasing the wrong one moves nothing.
+- **Operator spread**: an X-bar chart on log time per piece — an operator with
+  two or more timed lots whose mean lies outside the grand mean ± 3σ ÷ √nᵢ,
+  σ pooled within operators (`StationMetrics.operator_samples`).
+- **Long transport** (topology): a move beyond Tukey's upper fence, Q3 + 1.5 IQR
+  on the hinges of the route lengths.
 
 Findings carry the TIMWOOD name and a manual anchor, and every number is on the
 finding, so a client renders values from data rather than parsing prose.

@@ -642,8 +642,11 @@ function ScienceChapter() {
         adjustments to its noise. A station whose utilisation bounces between 58% and 66% has one kind of
         problem (a system to improve); a station that drops to 30% on Tuesdays has a different one
         (an event to find). Taktline's line doctor makes exactly this split when it reads cycle
-        times: a broad spread means no standard; a few extreme spikes mean something interrupts
-        the work — go and see those cycles, not the average.
+        times, per station and product, on a control chart of time per piece: a lot above the
+        upper limit (three sigma, with sigma estimated from the moving range between successive
+        lots) means something interrupts the work — go and see those cycles, not the average;
+        with every lot inside the limits, a broad spread (spread ÷ mean of 0.75 or more) means
+        no standard.
       </P>
 
       <H2 id="matched-sets">Matched sets</H2>
@@ -684,10 +687,11 @@ function ScienceChapter() {
         capacity only once exploitation is exhausted, because it is the expensive step; and
         <B> repeat</B>, because fixing one constraint reveals the next. The arithmetic to keep:
         an hour lost at the constraint is an hour lost for the whole line, and an hour saved
-        anywhere else is a mirage. Taktline's line doctor names the constraint from measured exit
-        rates — normalized so stations that handle many products per finished unit are compared
-        fairly — and checks the queue, utilisation and downstream starvation agree before it
-        points.
+        anywhere else is a mirage. Taktline's line doctor names the constraint of each value
+        stream as the station with the <B>highest utilisation</B> — the share of its open time it
+        is working, broken down or being changed over — and reports beside it, as evidence, how
+        often a finished product's worth of work leaves it, how many products wait in front of
+        it, and how idle the stations it feeds stand.
       </P>
 
       <H2 id="runout">The runout rule</H2>

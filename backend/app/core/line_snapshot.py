@@ -82,10 +82,15 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
         select(SessionRow).where(
             SessionRow.companyId == company_id,
             SessionRow.endedAt.isnot(None),
-            SessionRow.startedAt >= since))).scalars().all()
+            SessionRow.startedAt >= since)
+        # Recorded order: the individuals chart reads successive lots, and a
+        # moving range over rows in whatever order Postgres returns them
+        # measures nothing.
+        .order_by(SessionRow.startedAt, SessionRow.id))).scalars().all()
     samples: dict = {}
     samples_by: dict = {}
     per_operator: dict = {}
+    operator_samples: dict = {}
     tmpl_of = {str(c.id): str(c.lotTemplateId) for c in (await session.execute(
         select(CardRow).where(CardRow.companyId == company_id))).scalars().all() if c.lotTemplateId}
     for w in work:
@@ -100,6 +105,10 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
         # work contents is not uneven, and pooled its times look as if it were
         samples_by.setdefault(sid, {}).setdefault(tmpl_of.get(str(w.cardId), "?"), []).append(each)
         per_operator.setdefault(sid, {}).setdefault(w.operatorId or "—", []).append(each)
+        # A session with no operator on record is nobody's sample: pooled
+        # under one key it would be charted as a person.
+        if w.operatorId:
+            operator_samples.setdefault(sid, {}).setdefault(w.operatorId, []).append(each)
 
     metrics = {}
     for sid, m in measured.items():
@@ -114,6 +123,7 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             samples=samples.get(sid, []),
             samples_by=samples_by.get(sid, {}),
             operators=ops,
+            operator_samples=operator_samples.get(sid, {}),
             downtime_sec=m.get("downtimeSec", 0.0) or 0.0,
             changeover_sec=m.get("changeoverSec", 0.0) or 0.0,
             wip_avg=m.get("wipAvg"),

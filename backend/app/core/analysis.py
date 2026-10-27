@@ -609,6 +609,12 @@ def _utilisation(m: Optional[StationMetrics]) -> Optional[float]:
     return (m.working_sec + m.downtime_sec + m.changeover_sec) / (m.working_sec / m.oee)
 
 
+def _shewhart_z(n: int) -> float:
+    """The one-sided limit, in σ, at which a chart of n points raises a false
+    alarm with Shewhart's per-point probability 0.00135 (3σ upper tail)."""
+    return statistics.NormalDist().inv_cdf(1 - 0.00135 / max(n, 1))
+
+
 def _ceil(x: float) -> int:
     """⌈x⌉ of a quotient of measured floats. Rounded to nine places first so
     that 3 × 60 ÷ 60 = 3.0000000000000004 counts as three stations, not four."""
@@ -1148,8 +1154,13 @@ def _timing_findings(s: Snapshot) -> list:
     # Per station and product: a station making two products with different
     # work contents is not uneven. Special cause is read from an individuals
     # chart on log time per piece (task times are right-skewed): centre = the
-    # mean, σ = the mean moving range ÷ 1.128, and a lot above centre + 3σ is
-    # an assignable cause. Common cause is a coefficient of variation of 0.75
+    # mean, σ = the mean moving range ÷ 1.128. The limit keeps Shewhart's
+    # false-alarm probability (0.27%, two-sided 3σ) for the CHART, not for each
+    # lot: a chart holding a month of lots examines hundreds at once, and at 3σ
+    # per lot it signals by chance on almost every healthy line. With n lots
+    # the limit is z_n σ, z_n = Φ⁻¹(1 − 0.00135/n): 3σ for one lot, about 4.3σ
+    # for five hundred. A lot above it is an assignable cause. Common cause is
+    # a coefficient of variation of 0.75
     # or more — moderate variability or worse in Hopp & Spearman's classes.
     tname = {t.id: t.name for t in s.templates}
     done_uneven = False
@@ -1166,7 +1177,7 @@ def _timing_findings(s: Snapshot) -> list:
             logs = [math.log(x) for x in xs]
             centre = statistics.fmean(logs)
             sigma = statistics.fmean(abs(b - a) for a, b in zip(logs, logs[1:])) / 1.128
-            ucl = centre + 3 * sigma
+            ucl = centre + _shewhart_z(len(xs)) * sigma
             above = [x for x, lx in zip(xs, logs) if lx > ucl]
             what = f" for {tname[prod]}" if prod in tname else ""
             if above:
@@ -1175,7 +1186,7 @@ def _timing_findings(s: Snapshot) -> list:
                              f"piece, but {_words(len(above))} of {_words(len(xs))} "
                              f"{'lies' if len(above) == 1 else 'lie'} above "
                              f"the control limit of {_mmss(math.exp(ucl))} that the lot-to-lot "
-                             "variation sets. That is an assignable cause: something interrupts "
+                             f"variation sets for {_words(len(xs))} lots. That is an assignable cause: something interrupts "
                              "the work on those lots (a missing tool, material, rework) rather "
                              "than the work itself varying. Go and see what happened to them.")
             elif cv >= 0.75:

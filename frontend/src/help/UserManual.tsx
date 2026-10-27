@@ -643,8 +643,9 @@ function ScienceChapter() {
         problem (a system to improve); a station that drops to 30% on Tuesdays has a different one
         (an event to find). Taktline's line doctor makes exactly this split when it reads cycle
         times, per station and product, on a control chart of time per piece: a lot above the
-        upper limit (three sigma, with sigma estimated from the moving range between successive
-        lots) means something interrupts the work — go and see those cycles, not the average;
+        upper limit (sigma estimated from the moving range between successive lots; three sigma
+        for a single lot, set wider for a long history so that a month of steady lots does not
+        cross it by chance) means something interrupts the work — go and see those cycles, not the average;
         with every lot inside the limits, a broad spread (spread ÷ mean of 0.75 or more) means
         no standard.
       </P>

@@ -919,6 +919,33 @@ def test_one_spike_among_steady_lots_is_an_assignable_cause_whatever_the_spread(
     assert f and f.metrics["shape"] == "spikes" and f.metrics["cv"] < 0.6
 
 
+def test_a_month_of_steady_lots_raises_no_chance_signal():
+    """Five hundred lots of steady work (spread/mean 0.15): at 3σ per lot the
+    chart would signal by chance about half the time; the limit keeps
+    Shewhart's false-alarm rate for the whole chart. Ten seeded months, and
+    none of them signals."""
+    import random
+    for seed in range(10):
+        rnd = random.Random(seed)
+        xs = [30 * rnd.lognormvariate(0, 0.15) for _ in range(500)]
+        r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+            sew=dict(**BUSY, cycle_sec=30, samples=xs))))
+        assert "uneven-work" not in rules(r), seed
+
+
+def test_a_real_spike_still_stands_out_of_a_month_of_lots():
+    """The wider limit for a long chart still catches a lot three times the
+    usual time among five hundred steady ones."""
+    import random
+    rnd = random.Random(7)
+    xs = [30 * rnd.lognormvariate(0, 0.15) for _ in range(500)]
+    xs[250] = 90
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+        sew=dict(**BUSY, cycle_sec=30, samples=xs))))
+    f = next((f for f in r.findings if f.rule == "uneven-work"), None)
+    assert f and f.metrics["shape"] == "spikes" and f.metrics["aboveLimit"] == 1
+
+
 def test_unevenness_is_judged_per_product():
     """Five lots of each product are too few to chart either; pooled, the
     two products would read as one erratic job."""

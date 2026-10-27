@@ -697,7 +697,7 @@ constraint reports, all work in per-unit terms.
 
 **Every timing rule fires at a natural boundary of the equation it applies or
 at the constant its textbook source gives** — a ratio of one, an integer count
-of stations, three sigma, Tukey's 1.5 IQR. The one free parameter is the
+of stations, Shewhart's false-alarm rate, Tukey's 1.5 IQR. The one free parameter is the
 unmatched-feeds ratio (1.5); the readiness gates (3 stations, 12 sessions) and
 the six-sample minimum decide whether there is evidence, not what it means.
 The rules, as `core/analysis.py` applies them:
@@ -738,8 +738,11 @@ The rules, as `core/analysis.py` applies them:
   constraint of at least two of them.
 - **Uneven work**: per station and product with at least six samples, a
   Shewhart individuals chart on log time per piece (centre = mean, σ = mean
-  moving range ÷ 1.128, samples in recorded order): a lot above centre + 3σ is
-  an assignable cause (`spikes`); otherwise a spread/mean of 0.75 or more —
+  moving range ÷ 1.128, samples in recorded order): a lot above centre + z_n σ
+  is an assignable cause (`spikes`), with z_n = Φ⁻¹(1 − 0.00135/n) for n lots —
+  Shewhart's false-alarm probability kept for the whole chart, not per lot (3σ
+  for one lot, ≈4.3σ for 500; at 3σ per lot a month of steady lots signals by
+  chance on almost every line); otherwise a spread/mean of 0.75 or more —
   moderate variability or worse in Hopp & Spearman's classes — is common cause
   (`spread`). Chasing the wrong one moves nothing.
 - **Operator spread**: an X-bar chart on log time per piece — an operator with

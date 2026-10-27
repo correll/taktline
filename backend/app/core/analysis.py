@@ -81,10 +81,10 @@ class StationMetrics:
     cycle_sec: Optional[float] = None        # work time per piece
     line_cycle_sec: Optional[float] = None   # interval between departures, per piece
     oee: Optional[float] = None
-    samples: list = field(default_factory=list)   # per-session seconds per piece
+    samples: list = field(default_factory=list)   # seconds per piece, one per lot (its sessions pooled)
     samples_by: dict = field(default_factory=dict)  # the same, by product (template id)
     operators: dict = field(default_factory=dict)  # operatorId → mean sec/piece
-    # operatorId → per-session seconds per piece, in recorded order
+    # operatorId → seconds per piece per lot they worked, in recorded order
     operator_samples: dict = field(default_factory=dict)
     downtime_sec: float = 0.0       # recorded breakdowns
     changeover_sec: float = 0.0     # recorded changeovers

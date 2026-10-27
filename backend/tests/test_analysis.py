@@ -511,6 +511,59 @@ def test_the_snapshot_carries_each_operators_samples_in_recorded_order(actor):
     assert m.samples == [30.0, 30.0, 20.0, 30.0]
 
 
+def test_a_lot_split_by_a_break_is_one_sample(actor):
+    """An operator who presses Stop at a break books the partly finished
+    piece's time against the pieces done: 7 min for one piece, then 3 min for
+    the remaining two after the break. Charted per session that is a lot at
+    420 s/piece next to one at 90 s; the lot is one reading, 10 min for three
+    pieces, 200 s each."""
+    import asyncio
+    import uuid as _uuid
+    from datetime import timedelta
+    from app.core import line_snapshot
+    from app.db.connection import SessionLocal
+    from app.db.tables import WorkSession
+    from app.models.common import utcnow
+
+    a = actor(); bootstrap_admin(a)
+    st = lambda ref, name: {
+        "ref": ref, "name": name, "description": "",
+        "position": {"x": 100, "y": 100, "width": 72, "height": 72}, "color": None,
+        "icon": "Box", "isStorage": False, "branchMode": None,
+        "integrationProvider": None, "integrationRole": None}
+    doc = {"kind": "taktline-map", "version": 1, "name": "Break",
+           "mapSettings": {"unit": "m", "pixelsPerUnit": 10, "stationSizeUnits": 3},
+           "stations": [st("a", "Cut"), st("b", "Sew")],
+           "processes": [{"ref": "p", "name": "Line", "description": "", "desiredTaktSec": None}],
+           "templates": [{"ref": "t", "name": "Widget", "description": "", "process": "p",
+                          "startStation": "a", "color": None, "fields": []}],
+           "routes": [{"process": "p", "load": "a", "unload": "b", "quantity": 1,
+                       "outputTemplate": None}]}
+    assert a.req("POST", "/map-io/import", doc).status_code == 200
+    ids = {s_["name"]: s_["_id"] for s_ in a.req("GET", "/stations/").json()}
+    tmpl = a.req("GET", "/lot-templates/").json()[0]
+    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": tmpl["processId"],
+                                     "totalQuantity": 3, "bins": {ids["Sew"]: {"count": 3}}})
+    assert card.status_code == 201, card.text
+    cid = card.json()["_id"]
+    now = utcnow()
+
+    async def go():
+        async with SessionLocal() as session:
+            for ago, dur, qty in ((60, 420.0, 1), (40, 180.0, 2)):
+                start = now - timedelta(minutes=ago)
+                session.add(WorkSession(
+                    companyId=_uuid.UUID(a.company), stationId=_uuid.UUID(ids["Sew"]),
+                    cardId=_uuid.UUID(cid), operatorId="ann", quantity=qty, startedAt=start,
+                    endedAt=start + timedelta(seconds=dur), durationSec=dur, closedBy="operator"))
+            await session.commit()
+        async with SessionLocal() as session:
+            return await line_snapshot.build(session, _uuid.UUID(a.company))
+    m = asyncio.run(go()).metrics[ids["Sew"]]
+    assert m.samples == [200.0]
+    assert m.operator_samples == {"ann": [200.0]}
+
+
 def test_a_shipped_example_has_no_fatal_flaw(actor):
     """The examples are what a new user imports to learn from. If the doctor
     calls one broken, either the example or the doctor is wrong."""

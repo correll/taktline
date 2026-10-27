@@ -75,9 +75,14 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
     except Exception:                       # the report must not fail over a measurement
         observed_by_p = {}
 
-    # Per-session seconds per piece, and per-operator means. The aggregate
-    # cannot answer "is this repeatable" or "do two people do it differently" —
-    # both need the individual sessions, and both are findings worth having.
+    # Seconds per piece per LOT, and per-operator means. The aggregate cannot
+    # answer "is this repeatable" or "do two people do it differently" -- both
+    # need the individual lots, and both are findings worth having. A lot is
+    # read as all its sessions at a station pooled (work time over pieces):
+    # an operator who presses Stop at a break books the partly finished
+    # piece's time against the pieces completed, so one session reads long
+    # and the one after the break short, and charted per session every line
+    # with breaks would show an "assignable cause" that is only the clock.
     work = (await session.execute(
         select(SessionRow).where(
             SessionRow.companyId == company_id,
@@ -85,30 +90,41 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
             SessionRow.startedAt >= since)
         # Recorded order: the individuals chart reads successive lots, and a
         # moving range over rows in whatever order Postgres returns them
-        # measures nothing.
+        # measures nothing. A lot takes the place of its first session.
         .order_by(SessionRow.startedAt, SessionRow.id))).scalars().all()
-    samples: dict = {}
-    samples_by: dict = {}
-    per_operator: dict = {}
-    operator_samples: dict = {}
     tmpl_of = {str(c.id): str(c.lotTemplateId) for c in (await session.execute(
         select(CardRow).where(CardRow.companyId == company_id))).scalars().all() if c.lotTemplateId}
+    lots: dict = {}            # (station, lot) -> [work sec, pieces]
+    lots_op: dict = {}         # (station, lot, operator) -> [work sec, pieces]
     for w in work:
         if not w.durationSec or not w.quantity or w.quantity < 1:
             continue
         if w.closedBy == "next_start":   # never stopped: not a reading of the work
             continue
         sid = str(w.stationId)
-        each = w.durationSec / w.quantity
-        samples.setdefault(sid, []).append(each)
-        # by product too: a station that makes two products with different
-        # work contents is not uneven, and pooled its times look as if it were
-        samples_by.setdefault(sid, {}).setdefault(tmpl_of.get(str(w.cardId), "?"), []).append(each)
-        per_operator.setdefault(sid, {}).setdefault(w.operatorId or "—", []).append(each)
+        lot = str(w.cardId) if w.cardId else f"session:{w.id}"   # no lot: the session is its own
+        acc = lots.setdefault((sid, lot), [0.0, 0])
+        acc[0] += w.durationSec
+        acc[1] += w.quantity
         # A session with no operator on record is nobody's sample: pooled
         # under one key it would be charted as a person.
         if w.operatorId:
-            operator_samples.setdefault(sid, {}).setdefault(w.operatorId, []).append(each)
+            acc = lots_op.setdefault((sid, lot, w.operatorId), [0.0, 0])
+            acc[0] += w.durationSec
+            acc[1] += w.quantity
+    samples: dict = {}
+    samples_by: dict = {}
+    per_operator: dict = {}
+    operator_samples: dict = {}
+    for (sid, lot), (sec, n) in lots.items():          # dicts keep first-session order
+        each = sec / n
+        samples.setdefault(sid, []).append(each)
+        # by product too: a station that makes two products with different
+        # work contents is not uneven, and pooled its times look as if it were
+        samples_by.setdefault(sid, {}).setdefault(tmpl_of.get(lot, "?"), []).append(each)
+    for (sid, lot, op), (sec, n) in lots_op.items():
+        per_operator.setdefault(sid, {}).setdefault(op, []).append(sec / n)
+        operator_samples.setdefault(sid, {}).setdefault(op, []).append(sec / n)
 
     metrics = {}
     for sid, m in measured.items():

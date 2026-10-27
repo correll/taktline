@@ -736,7 +736,10 @@ The rules, as `core/analysis.py` applies them:
   (matched sets, not full bins) — the free parameter, stated as such.
 - **Shared monument**: a station used by two or more value streams that is the
   constraint of at least two of them.
-- **Uneven work**: per station and product with at least six samples, a
+- **Uneven work**: per station and product with at least six lots — a lot's
+  sessions at the station pooled (work time ÷ pieces), because an operator who
+  presses Stop at a break books the partly finished piece against the pieces
+  done, and charted per session every line with breaks shows a false spike — a
   Shewhart individuals chart on log time per piece (centre = mean, σ = mean
   moving range ÷ 1.128, samples in recorded order): a lot above centre + z_n σ
   is an assignable cause (`spikes`), with z_n = Φ⁻¹(1 − 0.00135/n) for n lots —

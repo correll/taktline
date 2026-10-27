@@ -765,7 +765,10 @@ def _timing_findings(s: Snapshot) -> list:
                                 f"idle {idle * 100:.0f}% of its open time")
             where = f" on {pname}" if len(by_process) > 1 else ""
             out.append(Finding(
-                rule="bottleneck", severity=WARNING, basis="load",
+                # Information, not an alarm: every line has a constraint, and
+                # knowing which station it is tells where saved time pays.
+                # Warnings are kept for findings that point at a fault.
+                rule="bottleneck", severity=INSIGHT, basis="load",
                 title=f"{names.get(top, '?')} is the constraint{where}",
                 detail=f"Of the stations on {pname}, {names.get(top, 'this station')} is "
                        f"occupied for the largest share of its open time: "

@@ -224,6 +224,20 @@ def test_the_constraint_is_named():
     assert named[0].metrics["load"] == 0.6 and named[0].metrics["nextLoad"] == 0.4
 
 
+def test_naming_the_constraint_is_information_not_an_alarm():
+    """Every timed line has a constraint, so naming it must not make a sound
+    line look unsound: it is an insight, and the headline stays calm."""
+    r = analyse(line(CHAIN, CHAIN_ROUTES, templates=CHAIN_TMPL, metrics=timed(
+        cut=dict(**BUSY, cycle_sec=20, line_cycle_sec=30, oee=0.3),
+        sew=dict(**BUSY, cycle_sec=25, line_cycle_sec=30, oee=0.6),
+        pack=dict(**BUSY, cycle_sec=20, line_cycle_sec=32, oee=0.4))))
+    named = next(f for f in r.findings if f.rule == "bottleneck")
+    assert named.severity == INSIGHT
+    assert not [f for f in r.findings if f.severity in (CRITICAL, WARNING)], \
+        [f.rule for f in r.findings if f.severity in (CRITICAL, WARNING)]
+    assert r.headline.startswith("Nothing is wrong"), r.headline
+
+
 def test_the_constraint_leaves_out_the_entry_station():
     """Cut is the busiest station but nothing feeds it: it runs at the release
     pace, so the constraint is the busiest of the rest."""

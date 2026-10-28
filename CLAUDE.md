@@ -727,8 +727,10 @@ The rules, as `core/analysis.py` applies them:
   the slowest step.
 - **WIP concentration**: by Little's law the wait at a station is its WIP
   (time-averaged, live before there is history) × its departure interval per
-  piece; the station with the longest wait is named when that wait exceeds the
-  total work per finished unit of a value stream it belongs to.
+  piece, and at a merge ÷ the parts one assembly consumes (the feed weights),
+  since the units standing there are parts and departures are assemblies; the
+  station with the longest wait is named when that wait exceeds the total work
+  per finished unit of a value stream it belongs to.
 - **Flow efficiency**: Little's law per value stream — lead time = WIP ÷
   throughput against touch time, a measure reported for every stream rather
   than a detection.

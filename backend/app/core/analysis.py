@@ -993,6 +993,20 @@ def _timing_findings(s: Snapshot) -> list:
     # times the interval between departures, per piece. Where that one queue
     # outlasts all the work a finished unit receives on its value stream, it
     # costs more lead time than every step of value added.
+    #
+    # At a merge the units standing are mostly precursor parts waiting for
+    # their partners, while departures count assemblies: k parts leave as one
+    # (the weights of the routes feeding it), so a part waits units × interval
+    # ÷ k. Read without k, a frame-and-two-panels assembly bench would show a
+    # queue three times its length.
+    parts_per_departure: dict = {}
+    for pid, routes in by_process.items():
+        feeds: dict = {}
+        for rt in routes:
+            feeds.setdefault(rt.unload, []).append(max(1, rt.quantity or 1))
+        for sid, ws in feeds.items():
+            if len(ws) >= 2:
+                parts_per_departure[sid] = max(parts_per_departure.get(sid, 1), sum(ws))
     avg_floor = {sid: m.wip_avg for sid, m in s.metrics.items()
                  if sid not in shelves and m.wip_avg is not None and m.wip_avg > 0}
     pile = avg_floor or floor
@@ -1000,7 +1014,7 @@ def _timing_findings(s: Snapshot) -> list:
     for sid in sorted(pile):
         m = s.metrics.get(sid)
         if m is not None and m.line_cycle_sec:
-            waits[sid] = pile[sid] * m.line_cycle_sec
+            waits[sid] = pile[sid] * m.line_cycle_sec / parts_per_departure.get(sid, 1)
     if waits:
         worst = max(waits, key=lambda k: waits[k])
         stream_work = {}
@@ -1023,7 +1037,10 @@ def _timing_findings(s: Snapshot) -> list:
                        f"{'stand' if int(round(pile[worst])) != 1 else 'stands'} at "
                        f"{names.get(worst, 'one station')}"
                        f"{' on average' if avg_floor else ''}, and one piece leaves it every "
-                       f"{_mmss(lc)}. By Little's law a unit waits there about "
+                       f"{_mmss(lc)}"
+                       + (f", made from {parts_per_departure[worst]} parts"
+                          if parts_per_departure.get(worst, 1) > 1 else "")
+                       + f". By Little's law a unit waits there about "
                        f"{_mmss(waits[worst])} — longer than all the work a finished unit of "
                        f"{pname} receives on the whole line ({_mmss(wk)}). One queue costs "
                        "more lead time than every step of value added. WIP piling up in front "
@@ -1031,6 +1048,7 @@ def _timing_findings(s: Snapshot) -> list:
                        "you halve the time it adds to every order.",
                 stations=[worst], process=pid, waste="Inventory", manual="waste",
                 metrics={"units": round(pile[worst], 1), "departureSec": round(lc, 1),
+                         "partsPerDeparture": parts_per_departure.get(worst, 1),
                          "waitSec": round(waits[worst], 1), "workSec": round(wk, 1),
                          "basis": "average" if avg_floor else "live"}))
 

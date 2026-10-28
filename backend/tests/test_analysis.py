@@ -384,6 +384,23 @@ def test_most_of_the_wip_in_one_place_is_not_a_problem_if_it_drains_fast():
     assert "wip-concentration" not in rules(r)
 
 
+def test_parts_waiting_at_a_merge_wait_per_part_not_per_assembly():
+    """Thirty parts stand at Assembly, one frame and two panels per widget,
+    and a widget leaves every 60 s. Three parts leave with each widget, so a
+    part waits 30 × 60 ÷ 3 = 600 s, not 1800 s: shorter than the 720 s of
+    work, and no finding. Counted per assembly the bench would be named."""
+    st = [("frame", "Frame saw"), ("panel", "Panel cut"), ("asm", "Assembly"), ("pack", "Pack")]
+    routes = [("frame", "asm", 1), ("panel", "asm", 2), ("asm", "pack", 1)]
+    r = analyse(line(st, routes, templates=[("t1", "Frame", "p1", "frame"), ("t2", "Panel", "p1", "panel")],
+                     wip={"asm": 30, "pack": 1},
+                     metrics=timed(frame=dict(**BUSY, cycle_sec=120, line_cycle_sec=60),
+                                   panel=dict(**BUSY, cycle_sec=120, line_cycle_sec=30),
+                                   asm=dict(**BUSY, cycle_sec=300, line_cycle_sec=60),
+                                   pack=dict(**BUSY, cycle_sec=60, line_cycle_sec=60))))
+    assert "wip-concentration" not in rules(r), \
+        next(f.metrics for f in r.findings if f.rule == "wip-concentration")
+
+
 def test_a_shelf_full_of_stock_is_not_a_problem():
     """A warehouse is meant to fill up. Reporting it is noise."""
     r = analyse(line(

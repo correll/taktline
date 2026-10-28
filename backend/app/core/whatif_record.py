@@ -5,7 +5,7 @@ constant number of servers, and breakdowns that accrue with work
 (`core/whatif.py`). Each assumption leaves a trace in the record when a line
 works otherwise, and each can be replaced by what the record shows:
 
-* **a buffer that fills.** A station that never holds more than a few lots,
+* **a buffer that fills.** A station that never holds more than so many units,
   while the lots finished in front of it wait to be moved on, is held to that
   number: the station feeding it blocks.
 * **a shared crew.** Two stations that are each busy much of the time but are
@@ -104,14 +104,15 @@ def measure(*, clock, openings: list, stations: list, work: list, stops: list,
     # ── a buffer that fills: lots at each station over time, and how long
     #    finished lots wait to leave ──
     present = defaultdict(lambda: defaultdict(int))     # station -> card -> units
-    lots_now = defaultdict(int)
-    max_lots = defaultdict(int)
+    lots_now, units_now = defaultdict(int), defaultdict(int)
+    max_lots, max_units = defaultdict(int), defaultdict(int)
     for e in events:
         q = int(e.quantity or 0)
         if e.fromStation and e.type in ("moved", "deleted", "updated"):
             s, c = e.fromStation, e.cardId
             before = present[s][c]
             present[s][c] = max(0, before - q)
+            units_now[s] -= before - present[s][c]
             if before > 0 and present[s][c] == 0:
                 lots_now[s] -= 1
         if e.toStation and e.type in ("moved", "created"):
@@ -120,6 +121,8 @@ def measure(*, clock, openings: list, stations: list, work: list, stops: list,
                 lots_now[s] += 1
                 max_lots[s] = max(max_lots[s], lots_now[s])
             present[s][c] += q
+            units_now[s] += q
+            max_units[s] = max(max_units[s], units_now[s])
     last_stop = {}
     for w in sorted(work, key=lambda x: x.endedAt or x.startedAt):
         if w.cardId and w.endedAt:
@@ -136,7 +139,7 @@ def measure(*, clock, openings: list, stations: list, work: list, stops: list,
     buffers = {}
     for sid in sids:
         w_up = [x for f in feeders.get(sid, ()) for x in waits.get(f, [])]
-        buffers[sid] = {"maxLots": max_lots.get(sid, 0),
+        buffers[sid] = {"maxLots": max_lots.get(sid, 0), "maxUnits": max_units.get(sid, 0),
                         "feederFinishedWaitSec": round(sum(w_up) / len(w_up), 1) if w_up else None}
 
     # ── a crew that changes over the day: operators present, as recorded ──

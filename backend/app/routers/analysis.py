@@ -156,7 +156,7 @@ class SharedCrewIn(BaseModel):
 class AssumptionsIn(BaseModel):
     """Idealisations of the model to replace with what the record shows.
     Empty: the model as it is (core/whatif.py)."""
-    # station -> most lots it holds at once; 0 = the most it held in the record
+    # station -> most units it holds at once; 0 = the most it held in the record
     buffers: dict[str, int] = Field(default_factory=dict)
     sharedCrews: list[SharedCrewIn] = Field(default_factory=list, max_length=12)
     # stations whose breakdowns accrue on open hours, at the recorded rate per open hour
@@ -239,9 +239,9 @@ def _apply_assumptions(model, a: Optional["AssumptionsIn"]):
         raise HTTPException(404, "Station not found")
     buffers = {}
     for sid, n in a.buffers.items():
-        n = n or (rec.get("buffers", {}).get(sid, {}).get("maxLots") or 0)
+        n = n or (rec.get("buffers", {}).get(sid, {}).get("maxUnits") or 0)
         if n < 1:
-            raise HTTPException(422, "No lots were recorded at that station to size its buffer")
+            raise HTTPException(422, "No units were recorded at that station to size its buffer")
         buffers[sid] = int(n)
     model.assumptions = whatif.Assumptions(
         buffers=buffers,

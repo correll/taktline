@@ -63,7 +63,7 @@ def test_a_crew_that_shrinks_over_the_day_is_read_from_the_schedule():
 
 
 def test_a_full_buffer_holds_the_station_feeding_it():
-    """Station a feeds both b (slow, room for one lot) and c. With b full, a
+    """Station a feeds both b (slow, room for one unit) and c. With b full, a
     keeps its finished lot and cannot start the next one, so the other value
     stream through a waits too: the line's lead time grows."""
     st = {"a": StationModel(id="a", name="a", rates=[10.0]),
@@ -194,7 +194,7 @@ def test_the_model_reproduces_the_lead_time_the_line_had(actor, clock, monkeypat
     ev = a.req("GET", "/analysis/assumptions?days=1")
     assert ev.status_code == 200, ev.text
     ev = ev.json()
-    assert ev["staffing"]["Pack"]["max"] == 1 and ev["buffers"]["Pack"]["maxLots"] >= 1
+    assert ev["staffing"]["Pack"]["max"] == 1 and ev["buffers"]["Pack"]["maxUnits"] >= 10
     assert any(set(p["stations"]) == {"Cut", "Pack"} for p in ev["sharedCrew"])
     same = a.req("POST", "/analysis/what-if", {"scenarios": [
         {"name": "faster pack", "changes": [{"stationId": ids["Pack"], "speedFactor": 0.5}]}],

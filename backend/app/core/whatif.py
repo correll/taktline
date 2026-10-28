@@ -31,7 +31,7 @@ Its idealisations are first-in-first-out queues, unlimited buffers, stations
 staffed independently of each other at a constant number of servers, and
 breakdowns that accrue with work. Each can be replaced where the record shows
 the line works otherwise (`Assumptions`): a station holding at most so many
-lots (the station feeding it then blocks), stations sharing operators,
+units (the station feeding it then blocks), stations sharing operators,
 breakdowns that accrue on open hours, idle or not, and staffing that changes
 over the day. None is on unless asked for, and with none the model is exactly
 the one described above.
@@ -92,8 +92,9 @@ class ArrivalIn:
 class Assumptions:
     """Where the line works otherwise than the model's idealisations. Empty
     means none of them is replaced."""
-    # station -> most lots it holds at once (waiting and in work); a station
-    # whose finished lot is bound there keeps it, and its server, until room
+    # station -> most units it holds at once (waiting and in work); a station
+    # whose finished lot would overfill it keeps the lot, and its server,
+    # until there is room (a lot larger than the buffer enters an empty one)
     buffers: dict = field(default_factory=dict)
     # groups of stations worked by one crew: (stations, operators); a lot
     # starts only while the group has an operator free
@@ -190,7 +191,7 @@ class _Sim:
                 self.group_cap.append(max(1, int(ops)))
                 self.group_busy.append(0)
             self.blocked = defaultdict(deque)        # station -> [(source, lot)] waiting for room
-            self.held = defaultdict(int)             # station -> servers holding a blocked lot
+            self.in_work = defaultdict(int)          # station -> units on its servers
             # open-clock failures, drawn lazily in time order from the
             # station's own stream so baseline and scenario meet the same ones
             self.next_fail, self.down_until = {}, defaultdict(float)
@@ -359,6 +360,7 @@ class _Sim:
             x = min(ready, key=lambda y: (self.queue[y][0].queued, y))
             lot = self.queue[x].popleft()
             self.busy[x] += 1
+            self.in_work[x] += lot.qty
             if g is not None:
                 self.group_busy[g] += 1
             work, down = self.service(x, lot)     # down: changeovers (and work-clock failures)
@@ -404,34 +406,42 @@ class _Sim:
         return to
 
     def _occupied(self, sid):
-        return len(self.queue[sid]) + self.busy[sid]
+        """Units at a station: waiting and on its servers."""
+        return sum(l.qty for l in self.queue[sid]) + self.in_work[sid]
 
-    def _release(self, t, sid):
+    def _room(self, sid, qty):
+        held = self._occupied(sid)
+        return held == 0 or held + qty <= self.A.buffers.get(sid, math.inf)
+
+    def _release(self, t, sid, qty):
         """A server at sid lets go of its lot: room may open at sid for a lot
         blocked upstream, and the crew may start the next one."""
         self.busy[sid] -= 1
+        self.in_work[sid] -= qty
         g = self.group_of.get(sid)
         if g is not None:
             self.group_busy[g] -= 1
-        if self.blocked[sid] and self._occupied(sid) < self.A.buffers.get(sid, math.inf):
+        if self.blocked[sid] and self._room(sid, self.blocked[sid][0][1].qty):
             src, lot = self.blocked[sid].popleft()
+            q = lot.qty                                  # a merge downstream may consume it
             lot.feed = src
             self.arrive(t, sid, lot)
-            self._release(t, src)
+            self._release(t, src, q)
         self.start(t, sid)
 
     def _finish_a(self, t, sid, lot):
+        q = lot.qty                                      # routing into a merge consumes it
         to = self._bound_for(sid, lot)
-        if to is not None and self._occupied(to) >= self.A.buffers[to]:
+        if to is not None and not self._room(to, lot.qty):
             self.blocked[to].append((sid, lot))          # keeps the lot and the server
             return
         if to is not None:
             lot.feed = sid
             self.arrive(t, to, lot)
-            self._release(t, sid)
+            self._release(t, sid, q)
             return
         self.route(t, sid, lot)
-        self._release(t, sid)
+        self._release(t, sid, q)
 
     def run(self) -> dict:
         f = self.sc.demand or 1.0

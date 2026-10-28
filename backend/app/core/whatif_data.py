@@ -83,14 +83,19 @@ def _max_concurrency(intervals: list) -> int:
 async def build_model(session, company_id, since: datetime, until: datetime,
                       schedule, tzname) -> tuple[LineModel, dict]:
     """The model, and station names for presenting its answers."""
+    # Every query in a fixed order: the model samples work times and repairs
+    # by position, so rows in whatever order the database stored them would
+    # give the same record a slightly different answer each time it is asked.
     stations = (await session.execute(
-        select(StationRow).where(StationRow.companyId == company_id))).scalars().all()
+        select(StationRow).where(StationRow.companyId == company_id)
+        .order_by(StationRow.id))).scalars().all()
     partners = {str(s.id) for s in stations if s.integrationProvider}
     storage = {str(s.id) for s in stations if s.isStorage}
     choice = {str(s.id) for s in stations if s.branchMode == "choice"}
     names = {str(s.id): s.name for s in stations}
     routes = [r for r in (await session.execute(
-        select(RouteRow).where(RouteRow.companyId == company_id))).scalars().all()
+        select(RouteRow).where(RouteRow.companyId == company_id)
+        .order_by(RouteRow.id))).scalars().all()
         if str(r.load) not in partners and str(r.unload) not in partners]
 
     # ── the record: lot events, stoppages, sessions ──
@@ -98,7 +103,7 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         select(CardEventRow).where(CardEventRow.companyId == company_id,
                                    CardEventRow.timestamp >= since,
                                    CardEventRow.timestamp <= until)
-        .order_by(CardEventRow.timestamp.asc())
+        .order_by(CardEventRow.timestamp.asc(), CardEventRow.id)
     )).scalars().all()
     # The model's period is the one the record covers: from the first event
     # in the window, not the window's nominal start, or averages over it
@@ -111,12 +116,12 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         select(StoppageRow).where(StoppageRow.companyId == company_id,
                                   StoppageRow.endedAt.isnot(None),
                                   StoppageRow.startedAt >= since, StoppageRow.startedAt <= until)
-    )).scalars().all()
+        .order_by(StoppageRow.startedAt, StoppageRow.id))).scalars().all()
     work = (await session.execute(
         select(SessionRow).where(SessionRow.companyId == company_id,
                                  SessionRow.endedAt.isnot(None),
                                  SessionRow.endedAt >= since, SessionRow.startedAt <= until)
-    )).scalars().all()
+        .order_by(SessionRow.startedAt, SessionRow.id))).scalars().all()
 
     def open_span(a_, b_):
         return max(0.0, clock(min(b_, until)) - clock(max(a_, since)))

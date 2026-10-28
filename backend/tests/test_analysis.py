@@ -564,6 +564,61 @@ def test_a_lot_split_by_a_break_is_one_sample(actor):
     assert m.operator_samples == {"ann": [200.0]}
 
 
+def test_a_card_passing_a_station_tray_by_tray_is_many_samples(actor):
+    """A card can carry a stock through a station in trays, moving on part of
+    it at a time. Each pass -- the sessions until those units move on -- is a
+    sample; pooled whole the card would be one, and nothing could be charted."""
+    import asyncio
+    import uuid as _uuid
+    from datetime import timedelta
+    from app.core import line_snapshot
+    from app.db.connection import SessionLocal
+    from app.db.tables import CardEvent, WorkSession
+    from app.models.common import utcnow
+
+    a = actor(); bootstrap_admin(a)
+    st = lambda ref, name: {
+        "ref": ref, "name": name, "description": "",
+        "position": {"x": 100, "y": 100, "width": 72, "height": 72}, "color": None,
+        "icon": "Box", "isStorage": False, "branchMode": None,
+        "integrationProvider": None, "integrationRole": None}
+    doc = {"kind": "taktline-map", "version": 1, "name": "Trays",
+           "mapSettings": {"unit": "m", "pixelsPerUnit": 10, "stationSizeUnits": 3},
+           "stations": [st("a", "Cut"), st("b", "Sew"), st("c", "Pack")],
+           "processes": [{"ref": "p", "name": "Line", "description": "", "desiredTaktSec": None}],
+           "templates": [{"ref": "t", "name": "Widget", "description": "", "process": "p",
+                          "startStation": "a", "color": None, "fields": []}],
+           "routes": [{"process": "p", "load": "a", "unload": "b", "quantity": 1, "outputTemplate": None},
+                      {"process": "p", "load": "b", "unload": "c", "quantity": 1, "outputTemplate": None}]}
+    assert a.req("POST", "/map-io/import", doc).status_code == 200
+    ids = {s_["name"]: s_["_id"] for s_ in a.req("GET", "/stations/").json()}
+    tmpl = a.req("GET", "/lot-templates/").json()[0]
+    card = a.req("POST", "/cards/", {"lotTemplateId": tmpl["_id"], "processId": tmpl["processId"],
+                                     "totalQuantity": 60, "bins": {ids["Sew"]: {"count": 60}}})
+    assert card.status_code == 201, card.text
+    cid = card.json()["_id"]
+    now = utcnow()
+
+    async def go():
+        async with SessionLocal() as session:
+            # three trays of 20: work, move the tray on, next tray
+            for k, dur in enumerate((400.0, 420.0, 380.0)):
+                start = now - timedelta(minutes=90 - 20 * k)
+                session.add(WorkSession(
+                    companyId=_uuid.UUID(a.company), stationId=_uuid.UUID(ids["Sew"]),
+                    cardId=_uuid.UUID(cid), operatorId="ann", quantity=20, startedAt=start,
+                    endedAt=start + timedelta(seconds=dur), durationSec=dur, closedBy="operator"))
+                session.add(CardEvent(
+                    companyId=_uuid.UUID(a.company), cardId=cid, type="moved",
+                    fromStation=ids["Sew"], toStation=ids["Pack"], quantity=20,
+                    timestamp=start + timedelta(seconds=dur + 30)))
+            await session.commit()
+        async with SessionLocal() as session:
+            return await line_snapshot.build(session, _uuid.UUID(a.company))
+    m = asyncio.run(go()).metrics[ids["Sew"]]
+    assert m.samples == [20.0, 21.0, 19.0]
+
+
 def test_a_shipped_example_has_no_fatal_flaw(actor):
     """The examples are what a new user imports to learn from. If the doctor
     calls one broken, either the example or the doctor is wrong."""

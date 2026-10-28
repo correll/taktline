@@ -8,6 +8,7 @@ background task that imports routers risks a circular import with `main`.
 `core/analysis.py` still owns every judgement. This only gathers.
 """
 
+import bisect
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import analysis as engine
 from ..models.common import utcnow
 from ..db.tables import (
-    Card as CardRow, LotTemplate as LotTemplateRow, MapSettings as MapSettingsRow,
+    Card as CardRow, CardEvent, LotTemplate as LotTemplateRow, MapSettings as MapSettingsRow,
     Process as ProcessRow, Route as RouteRow, Station as StationRow,
     WorkSession as SessionRow,
 )
@@ -77,12 +78,15 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
 
     # Seconds per piece per LOT, and per-operator means. The aggregate cannot
     # answer "is this repeatable" or "do two people do it differently" -- both
-    # need the individual lots, and both are findings worth having. A lot is
-    # read as all its sessions at a station pooled (work time over pieces):
-    # an operator who presses Stop at a break books the partly finished
-    # piece's time against the pieces completed, so one session reads long
-    # and the one after the break short, and charted per session every line
-    # with breaks would show an "assignable cause" that is only the clock.
+    # need the individual lots, and both are findings worth having. A sample
+    # is a lot's VISIT to a station: its sessions there until those units are
+    # moved on, pooled (work time over pieces). An operator who presses Stop
+    # at a break books the partly finished piece's time against the pieces
+    # completed, so one session reads long and the one after the break short,
+    # and charted per session every line with breaks would show an
+    # "assignable cause" that is only the clock. A visit, not the whole card:
+    # a card that carries a stock through a station tray by tray (partial
+    # moves) passes it many times, and pooled whole it would be one sample.
     work = (await session.execute(
         select(SessionRow).where(
             SessionRow.companyId == company_id,
@@ -94,15 +98,29 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
         .order_by(SessionRow.startedAt, SessionRow.id))).scalars().all()
     tmpl_of = {str(c.id): str(c.lotTemplateId) for c in (await session.execute(
         select(CardRow).where(CardRow.companyId == company_id))).scalars().all() if c.lotTemplateId}
-    lots: dict = {}            # (station, lot) -> [work sec, pieces]
-    lots_op: dict = {}         # (station, lot, operator) -> [work sec, pieces]
+    # Moves out of each station, per card, in time order: the visit a session
+    # belongs to is the number of moves of its card out of its station before
+    # the session started.
+    outs: dict = {}
+    for cid, frm, ts in (await session.execute(
+            select(CardEvent.cardId, CardEvent.fromStation, CardEvent.timestamp).where(
+                CardEvent.companyId == company_id, CardEvent.type == "moved",
+                CardEvent.timestamp >= since, CardEvent.fromStation.isnot(None))
+            .order_by(CardEvent.timestamp))).all():
+        outs.setdefault((str(cid), str(frm)), []).append(ts)
+    lots: dict = {}            # (station, visit) -> [work sec, pieces]
+    lots_op: dict = {}         # (station, visit, operator) -> [work sec, pieces]
     for w in work:
         if not w.durationSec or not w.quantity or w.quantity < 1:
             continue
         if w.closedBy == "next_start":   # never stopped: not a reading of the work
             continue
         sid = str(w.stationId)
-        lot = str(w.cardId) if w.cardId else f"session:{w.id}"   # no lot: the session is its own
+        if w.cardId:
+            cid = str(w.cardId)
+            lot = (cid, bisect.bisect_right(outs.get((cid, sid), []), w.startedAt))
+        else:
+            lot = (f"session:{w.id}", 0)      # no lot: the session is its own
         acc = lots.setdefault((sid, lot), [0.0, 0])
         acc[0] += w.durationSec
         acc[1] += w.quantity
@@ -121,7 +139,7 @@ async def build(session: AsyncSession, company_id) -> engine.Snapshot:
         samples.setdefault(sid, []).append(each)
         # by product too: a station that makes two products with different
         # work contents is not uneven, and pooled its times look as if it were
-        samples_by.setdefault(sid, {}).setdefault(tmpl_of.get(lot, "?"), []).append(each)
+        samples_by.setdefault(sid, {}).setdefault(tmpl_of.get(lot[0], "?"), []).append(each)
     for (sid, lot, op), (sec, n) in lots_op.items():
         per_operator.setdefault(sid, {}).setdefault(op, []).append(sec / n)
         operator_samples.setdefault(sid, {}).setdefault(op, []).append(sec / n)

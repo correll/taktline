@@ -190,6 +190,26 @@ def test_the_model_reproduces_the_lead_time_the_line_had(actor, clock, monkeypat
                                                     "cv": None}).json()
     assert ranked["scenarios"][0]["name"] == "Pack"
 
+    # What the record says about the idealisations, and replacing them.
+    ev = a.req("GET", "/analysis/assumptions?days=1")
+    assert ev.status_code == 200, ev.text
+    ev = ev.json()
+    assert ev["staffing"]["Pack"]["max"] == 1 and ev["buffers"]["Pack"]["maxLots"] >= 1
+    assert any(set(p["stations"]) == {"Cut", "Pack"} for p in ev["sharedCrew"])
+    same = a.req("POST", "/analysis/what-if", {"scenarios": [
+        {"name": "faster pack", "changes": [{"stationId": ids["Pack"], "speedFactor": 0.5}]}],
+        "replications": 3, "days": 1, "assumptions": {}}).json()
+    assert same == body                       # nothing named, nothing replaced
+    staffed = a.req("POST", "/analysis/what-if", {"scenarios": [
+        {"name": "faster pack", "changes": [{"stationId": ids["Pack"], "speedFactor": 0.5}]}],
+        "replications": 3, "days": 1,
+        "assumptions": {"recordedStaffing": [ids["Pack"]], "buffers": {ids["Pack"]: 0}}})
+    assert staffed.status_code == 200, staffed.text
+    bad = a.req("POST", "/analysis/what-if", {"scenarios": [{"name": "x", "changes": []}],
+                                              "replications": 3, "days": 1,
+                                              "assumptions": {"openHourBreakdowns": ["nope"]}})
+    assert bad.status_code == 404
+
 
 
 

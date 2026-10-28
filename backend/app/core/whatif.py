@@ -127,6 +127,9 @@ class LineModel:
     # process -> (observed mean lead time in open seconds, units)
     observed_by_process: dict = field(default_factory=dict)
     assumptions: Assumptions = field(default_factory=Assumptions)
+    # what the record says about the idealisations (core/whatif_record.py);
+    # read by whoever decides which to replace, never by the simulation
+    record: dict = field(default_factory=dict)
 
 
 @dataclass

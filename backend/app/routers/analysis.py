@@ -148,13 +148,32 @@ class ScenarioIn(BaseModel):
     demandFactor: float = Field(1.0, gt=0.1, le=5)
 
 
+class SharedCrewIn(BaseModel):
+    stations: list[str] = Field(..., min_length=2, max_length=12)
+    operators: int = Field(1, ge=1, le=50)
+
+
+class AssumptionsIn(BaseModel):
+    """Idealisations of the model to replace with what the record shows.
+    Empty: the model as it is (core/whatif.py)."""
+    # station -> most lots it holds at once; 0 = the most it held in the record
+    buffers: dict[str, int] = Field(default_factory=dict)
+    sharedCrews: list[SharedCrewIn] = Field(default_factory=list, max_length=12)
+    # stations whose breakdowns accrue on open hours, at the recorded rate per open hour
+    openHourBreakdowns: list[str] = Field(default_factory=list, max_length=200)
+    # stations whose crew is replayed as recorded (operators present over the day)
+    recordedStaffing: list[str] = Field(default_factory=list, max_length=200)
+
+
 class WhatIfIn(BaseModel):
     scenarios: list[ScenarioIn] = Field(..., min_length=1, max_length=12)
+    assumptions: Optional[AssumptionsIn] = None
     replications: int = Field(20, ge=2, le=50)
     days: int = Field(LOOKBACK_DAYS, ge=1, le=LOOKBACK_DAYS)
 
 
 class AutomationIn(BaseModel):
+    assumptions: Optional[AssumptionsIn] = None
     speedFactor: float = Field(0.75, gt=0.05, le=10)
     cv: Optional[float] = Field(0.05, ge=0, le=3)
     breakdowns: bool = True
@@ -206,6 +225,34 @@ def _present(res: dict, names: dict) -> dict:
     return out
 
 
+def _apply_assumptions(model, a: Optional["AssumptionsIn"]):
+    """Replace the idealisations the request names, from the record."""
+    from fastapi import HTTPException
+    from ..core import whatif
+    if a is None:
+        return
+    rec = model.record or {}
+    known = set(model.stations)
+    named = (set(a.buffers) | {x for g in a.sharedCrews for x in g.stations}
+             | set(a.openHourBreakdowns) | set(a.recordedStaffing))
+    if named - known:
+        raise HTTPException(404, "Station not found")
+    buffers = {}
+    for sid, n in a.buffers.items():
+        n = n or (rec.get("buffers", {}).get(sid, {}).get("maxLots") or 0)
+        if n < 1:
+            raise HTTPException(422, "No lots were recorded at that station to size its buffer")
+        buffers[sid] = int(n)
+    model.assumptions = whatif.Assumptions(
+        buffers=buffers,
+        shared=[(list(g.stations), g.operators) for g in a.sharedCrews],
+        open_failures={sid: rec.get("breakdownClock", {}).get(sid, {}).get("perOpenSec", 0.0)
+                       for sid in a.openHourBreakdowns},
+        staffing={sid: [tuple(x) for x in rec.get("staffing", {}).get(sid, {}).get("schedule", [])]
+                  for sid in a.recordedStaffing
+                  if rec.get("staffing", {}).get(sid, {}).get("schedule")})
+
+
 def _assert_answerable(model):
     from fastapi import HTTPException
     if not any(st.worked for st in model.stations.values()):
@@ -225,6 +272,7 @@ async def what_if(body: WhatIfIn, ctx: CompanyContext = Depends(get_active_compa
     entitlements.ensure_line_doctor(ent)
     model, names = await _model(session, ctx.company_id, body.days)
     _assert_answerable(model)
+    _apply_assumptions(model, body.assumptions)
     scen = []
     for sc in body.scenarios:
         for c in sc.changes:
@@ -237,6 +285,29 @@ async def what_if(body: WhatIfIn, ctx: CompanyContext = Depends(get_active_compa
     return _present(whatif.run(model, scen, body.replications), names)
 
 
+@router.get("/assumptions")
+async def assumptions(days: int = LOOKBACK_DAYS, ctx: CompanyContext = Depends(get_active_company),
+                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
+    """What the record says about each of the what-if model's idealisations:
+    the evidence on which to replace one (core/whatif_record.py). Reading
+    only; the request to /what-if names what to replace."""
+    ent = ctx.entitlement or await entitlements.resolve(session, ctx.company_id)
+    entitlements.ensure_line_doctor(ent)
+    model, names = await _model(session, ctx.company_id, max(1, min(days, LOOKBACK_DAYS)))
+    rec = model.record or {}
+    nm = lambda sid: names.get(sid, sid)
+    return {
+        "unit": "open seconds",
+        "busyShare": {nm(k): v for k, v in rec.get("busyShare", {}).items()},
+        "sharedCrew": [{**p, "stationIds": p["stations"], "stations": [nm(x) for x in p["stations"]]}
+                       for p in rec.get("sharedCrew", [])],
+        "breakdownClock": {nm(k): {**v, "stationId": k} for k, v in rec.get("breakdownClock", {}).items()},
+        "buffers": {nm(k): {**v, "stationId": k} for k, v in rec.get("buffers", {}).items()},
+        "staffing": {nm(k): {"stationId": k, "min": v["min"], "max": v["max"]}
+                     for k, v in rec.get("staffing", {}).items()},
+    }
+
+
 @router.post("/automation")
 async def automation(body: AutomationIn, ctx: CompanyContext = Depends(get_active_company),
                      session: AsyncSession = Depends(get_session, **SESSION_SCOPE)):
@@ -247,5 +318,6 @@ async def automation(body: AutomationIn, ctx: CompanyContext = Depends(get_activ
     entitlements.ensure_line_doctor(ent)
     model, names = await _model(session, ctx.company_id, body.days)
     _assert_answerable(model)
+    _apply_assumptions(model, body.assumptions)
     return _present(whatif.automation_candidates(model, body.speedFactor, body.cv,
                                                  body.breakdowns, body.replications), names)

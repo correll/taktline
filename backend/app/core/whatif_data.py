@@ -105,7 +105,8 @@ async def build_model(session, company_id, since: datetime, until: datetime,
     # (WIP, utilisation) are diluted by days nothing was recorded.
     if events:
         since = max(since, events[0].timestamp)
-    clock = OpenClock(open_intervals(since, until, schedule, tzname))
+    openings = open_intervals(since, until, schedule, tzname)
+    clock = OpenClock(openings)
     stops = (await session.execute(
         select(StoppageRow).where(StoppageRow.companyId == company_id,
                                   StoppageRow.endedAt.isnot(None),
@@ -452,7 +453,12 @@ async def build_model(session, company_id, since: datetime, until: datetime,
         if pid:
             by_p[pid][0] += d * k
             by_p[pid][1] += k
+    from . import whatif_record
+    record = whatif_record.measure(
+        clock=clock, openings=openings, stations=[s for s in stations if str(s.id) in model_st],
+        work=work, stops=stops, events=events, routes=routes, horizon=clock.total)
     return LineModel(stations=model_st, routing=routing, merges=merges, merge_lot=merge_lot,
                      endpoints=endpoints, arrivals=arrivals, horizon=clock.total,
                      observed_lead_sec=observed, observed_n=units,
-                     observed_by_process={p_: (v[0] / v[1], v[1]) for p_, v in by_p.items() if v[1]}), names
+                     observed_by_process={p_: (v[0] / v[1], v[1]) for p_, v in by_p.items() if v[1]},
+                     record=record), names

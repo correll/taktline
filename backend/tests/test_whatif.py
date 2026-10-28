@@ -9,7 +9,7 @@ from datetime import timedelta
 
 import pytest
 
-from app.core.whatif import (ArrivalIn, Change, LineModel, Scenario, StationModel,
+from app.core.whatif import (ArrivalIn, Assumptions, Change, LineModel, Scenario, StationModel,
                              automation_candidates, run)
 from tests.test_stoppages import Clock, _line, _lot, _start, clock  # noqa: F401
 from tests.helpers import bootstrap_admin
@@ -25,6 +25,78 @@ def _chain(rates: dict, arrivals: list, horizon: float, fail=None) -> LineModel:
     routing = {("p", a): [(b, 1.0, "move")] for a, b in zip(names, names[1:])}
     return LineModel(stations=st, routing=routing, merges={}, merge_lot={},
                      endpoints={("p", "end")}, arrivals=arrivals, horizon=horizon)
+
+
+# ── Assumptions the record can replace ─────────────────────────────────────
+
+def test_a_buffer_too_large_to_fill_changes_nothing():
+    """The model with an assumption that never binds is the model without it,
+    to the last digit: the replacements are a separate path, not a rewrite."""
+    arr = [ArrivalIn(t=300.0 * k, qty=5, process="p", station="a") for k in range(60)]
+    m = _chain({"a": 50.0, "b": 70.0}, arr, 20000, fail={"b": (1 / 4000, 600.0)})
+    plain = run(m, [Scenario("tpm", [Change("b", breakdowns=False)])], replications=4)
+    m.assumptions = Assumptions(buffers={"b": 10 ** 9})
+    bounded = run(m, [Scenario("tpm", [Change("b", breakdowns=False)])], replications=4)
+    assert bounded == plain
+
+
+def test_one_operator_for_two_stations_works_one_lot_at_a_time():
+    """Two lots at once, 30 s at a then 40 s at b. Staffed independently they
+    finish at 70 and 110 s (mean 90). One operator for both, first come first
+    served: a lot1 0-30, a lot2 30-60, b lot1 60-100, b lot2 100-140 (mean 120)."""
+    arr = [ArrivalIn(t=0.0, qty=1, process="p", station="a") for _ in range(2)]
+    m = _chain({"a": 30.0, "b": 40.0}, arr, 1000)
+    assert run(m, [], replications=1)["baseline"]["leadTimeSec"] == pytest.approx(90)
+    m.assumptions = Assumptions(shared=[(["a", "b"], 1)])
+    assert run(m, [], replications=1)["baseline"]["leadTimeSec"] == pytest.approx(120)
+
+
+def test_a_crew_that_shrinks_over_the_day_is_read_from_the_schedule():
+    """Two servers until 1000 s, one after: two 100 s lots arriving at 1010 s
+    are worked one after the other (lead 100 and 200), not side by side."""
+    arr = [ArrivalIn(t=1010.0, qty=1, process="p", station="a") for _ in range(2)]
+    m = _chain({"a": 100.0}, arr, 3000)
+    m.stations["a"].servers = 2
+    assert run(m, [], replications=1)["baseline"]["leadTimeSec"] == pytest.approx(100)
+    m.assumptions = Assumptions(staffing={"a": [(0.0, 2), (1000.0, 1)]})
+    assert run(m, [], replications=1)["baseline"]["leadTimeSec"] == pytest.approx(150)
+
+
+def test_a_full_buffer_holds_the_station_feeding_it():
+    """Station a feeds both b (slow, room for one lot) and c. With b full, a
+    keeps its finished lot and cannot start the next one, so the other value
+    stream through a waits too: the line's lead time grows."""
+    st = {"a": StationModel(id="a", name="a", rates=[10.0]),
+          "b": StationModel(id="b", name="b", rates=[200.0]),
+          "c": StationModel(id="c", name="c", rates=[10.0])}
+    routing = {("p1", "a"): [("b", 1.0, "move")], ("p1", "b"): [("end", 1.0, "move")],
+               ("p2", "a"): [("c", 1.0, "move")], ("p2", "c"): [("end", 1.0, "move")]}
+    arr = []
+    for k in range(10):
+        arr.append(ArrivalIn(t=100.0 * k, qty=1, process="p1", station="a"))
+        arr.append(ArrivalIn(t=100.0 * k + 1, qty=1, process="p2", station="a"))
+    m = LineModel(stations=st, routing=routing, merges={}, merge_lot={},
+                  endpoints={("p1", "end"), ("p2", "end")}, arrivals=arr, horizon=5000)
+    free = run(m, [], replications=1)["baseline"]["leadTimeSec"]
+    m.assumptions = Assumptions(buffers={"b": 1})
+    held = run(m, [], replications=1)["baseline"]["leadTimeSec"]
+    assert held > free * 1.5, (free, held)
+
+
+def test_breakdowns_on_the_calendar_strike_an_idle_station():
+    """A station that works 10 s an hour meets almost no breakdowns per
+    working second, but on the calendar it is down a third of the time (one
+    every hour, half an hour to repair), and a lot that arrives then waits."""
+    arr = [ArrivalIn(t=3600.0 * k + 1234.5, qty=1, process="p", station="a") for k in range(400)]
+    m = _chain({"a": 10.0}, arr, 400 * 3600, fail={"a": (1 / 3600, 1800.0)})
+    work_clock = run(m, [], replications=3)["baseline"]["leadTimeSec"]
+    m.assumptions = Assumptions(open_failures={"a": 1 / 3600})
+    calendar = run(m, [], replications=3)["baseline"]["leadTimeSec"]
+    assert work_clock < 20
+    assert calendar > 150, calendar
+    # removing the breakdowns removes the waiting, whichever clock they ran on
+    res = run(m, [Scenario("tpm", [Change("a", breakdowns=False)])], replications=3)
+    assert res["scenarios"][0]["leadTimeSec"] == pytest.approx(10)
 
 
 def test_an_unloaded_station_contributes_exactly_its_work():

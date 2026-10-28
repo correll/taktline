@@ -27,6 +27,15 @@ The model is deliberately the line as recorded, not a line as designed:
   model runs on a clock that only ticks while the plant is open; lead times
   are in open hours.
 
+Its idealisations are first-in-first-out queues, unlimited buffers, stations
+staffed independently of each other at a constant number of servers, and
+breakdowns that accrue with work. Each can be replaced where the record shows
+the line works otherwise (`Assumptions`): a station holding at most so many
+lots (the station feeding it then blocks), stations sharing operators,
+breakdowns that accrue on open hours, idle or not, and staffing that changes
+over the day. None is on unless asked for, and with none the model is exactly
+the one described above.
+
 Every scenario is compared with a baseline run of the same model on the same
 random numbers (one stream per station and purpose), so the difference
 reflects the change rather than the dice. The baseline's own lead time is
@@ -80,6 +89,28 @@ class ArrivalIn:
 
 
 @dataclass
+class Assumptions:
+    """Where the line works otherwise than the model's idealisations. Empty
+    means none of them is replaced."""
+    # station -> most lots it holds at once (waiting and in work); a station
+    # whose finished lot is bound there keeps it, and its server, until room
+    buffers: dict = field(default_factory=dict)
+    # groups of stations worked by one crew: (stations, operators); a lot
+    # starts only while the group has an operator free
+    shared: list = field(default_factory=list)
+    # station -> breakdowns per OPEN second: failures accrue on the calendar,
+    # idle time included, and a repair holds the station whether or not a lot
+    # is on it
+    open_failures: dict = field(default_factory=dict)
+    # station -> [(open second from the window start, servers), ...]: the
+    # crew changes over the day (a shift, a team, a lunch)
+    staffing: dict = field(default_factory=dict)
+
+    def any(self) -> bool:
+        return bool(self.buffers or self.shared or self.open_failures or self.staffing)
+
+
+@dataclass
 class LineModel:
     stations: dict                                   # id -> StationModel
     # (process, station) -> list of (to, probability, kind) where kind is
@@ -95,6 +126,7 @@ class LineModel:
     observed_n: int = 0
     # process -> (observed mean lead time in open seconds, units)
     observed_by_process: dict = field(default_factory=dict)
+    assumptions: Assumptions = field(default_factory=Assumptions)
 
 
 @dataclass
@@ -122,6 +154,7 @@ class _Lot:
     station: str = ""
     feed: str = ""
     product: str = ""
+    queued: float = 0.0
 
 
 class _Sim:
@@ -143,15 +176,55 @@ class _Sim:
         self.rng = {(sid, k): random.Random(f"{seed}:{sid}:{k}")
                     for sid in order for k in ("work", "fail", "co")}
         self.rng_route = random.Random(f"{seed}:route")
+        a = m.assumptions
+        self.A = a if a.any() else None
+        if self.A is not None:
+            self.group_of = {}
+            self.group_cap, self.group_busy = [], []
+            for g, (members, ops) in enumerate(a.shared):
+                for sid in members:
+                    self.group_of[sid] = g
+                self.group_cap.append(max(1, int(ops)))
+                self.group_busy.append(0)
+            self.blocked = defaultdict(deque)        # station -> [(source, lot)] waiting for room
+            self.held = defaultdict(int)             # station -> servers holding a blocked lot
+            # open-clock failures, drawn lazily in time order from the
+            # station's own stream so baseline and scenario meet the same ones
+            self.next_fail, self.down_until = {}, defaultdict(float)
+            for sid, lam in a.open_failures.items():
+                if lam > 0 and sid in m.stations and m.stations[sid].repairs:
+                    self.next_fail[sid] = self.rng[(sid, "fail")].expovariate(lam)
 
     def push(self, t, kind, payload):
         self.n += 1
         heapq.heappush(self.ev, (t, self.n, kind, payload))
 
-    def servers(self, sid):
+    def servers(self, sid, t=None):
         c = self.ch.get(sid)
         st = self.m.stations[sid]
+        if self.A is not None and sid in self.A.staffing and t is not None:
+            base = st.servers
+            for t0, n in self.A.staffing[sid]:
+                if t0 <= t:
+                    base = n
+                else:
+                    break
+            extra = (c.servers - st.servers) if c and c.servers else 0
+            return max(0, base + extra)
         return (c.servers if c and c.servers else st.servers) or 1
+
+    def _failures_until(self, sid, t):
+        """Open-clock breakdowns up to time t: each holds the station for its
+        repair, starting when it occurs or when the previous repair ends."""
+        lam = self.A.open_failures.get(sid, 0.0)
+        rf = self.rng[(sid, "fail")]
+        st = self.m.stations[sid]
+        while sid in self.next_fail and self.next_fail[sid] <= t:
+            f = self.next_fail[sid]
+            rep = rf.choice(st.repairs)
+            self.down_until[sid] = max(self.down_until[sid], f) + rep
+            self.down_time[sid] += rep
+            self.next_fail[sid] = self.down_until[sid] + rf.expovariate(lam)
 
     def service(self, sid, lot: _Lot) -> tuple[float, float]:
         st = self.m.stations[sid]
@@ -170,7 +243,9 @@ class _Sim:
         work = lot.qty * rate * (c.speed if c is not None else 1.0)
         down = 0.0
         fails = c is None or c.breakdowns
-        if fails and st.fail_rate > 0 and st.repairs:
+        if self.A is not None and sid in self.A.open_failures:
+            pass                                       # accrued on the calendar, in start()
+        elif fails and st.fail_rate > 0 and st.repairs:
             # failures accrue on working time: a faster process runs fewer
             # hours and so meets fewer of them
             k = _poisson(rf, st.fail_rate * work)
@@ -202,6 +277,7 @@ class _Sim:
         if not self.m.stations.get(sid) or not self.m.stations[sid].worked:
             self.route(t, sid, lot)                     # a pass-through: nothing is done here
             return
+        lot.queued = t
         self.queue[sid].append(lot)
         self.start(t, sid)
 
@@ -225,12 +301,15 @@ class _Sim:
             asm = _Lot(qty=q, process=p, entry=entries / max(1, units), station=sid,
                        product=f"assembly:{p}:{sid}")
             if self.m.stations.get(sid) and self.m.stations[sid].worked:
+                asm.queued = t
                 self.queue[sid].append(asm)
                 self.start(t, sid)
             else:
                 self.route(t, sid, asm)
 
     def start(self, t, sid):
+        if self.A is not None:
+            return self._start_a(t, sid)
         while self.queue[sid] and self.busy[sid] < self.servers(sid):
             lot = self.queue[sid].popleft()
             self.busy[sid] += 1
@@ -238,6 +317,55 @@ class _Sim:
             self.busy_time[sid] += work
             self.down_time[sid] += down
             self.push(t + work + down, "finish", (sid, lot))
+
+    def _open_clock_service(self, sid, t, work) -> float:
+        """Time beyond the work itself for a lot started at t on a station
+        whose breakdowns accrue on open hours: any repair under way when it
+        arrives, and every breakdown that strikes while it is worked. (With
+        several servers the station is treated as one machine: a breakdown
+        holds all of them.)"""
+        self._failures_until(sid, t)
+        begin = max(t, self.down_until[sid])
+        end = begin + work
+        lam = self.A.open_failures[sid]
+        rf = self.rng[(sid, "fail")]
+        st = self.m.stations[sid]
+        while self.next_fail.get(sid, math.inf) <= end:
+            f = self.next_fail[sid]
+            rep = rf.choice(st.repairs)
+            end += rep
+            self.down_time[sid] += rep
+            self.down_until[sid] = max(self.down_until[sid], f) + rep
+            self.next_fail[sid] = self.down_until[sid] + rf.expovariate(lam)
+        return end - t - work
+
+    def _can_start(self, t, sid):
+        if not self.queue[sid] or self.busy[sid] >= self.servers(sid, t):
+            return False
+        g = self.group_of.get(sid)
+        return g is None or self.group_busy[g] < self.group_cap[g]
+
+    def _start_a(self, t, sid):
+        g = self.group_of.get(sid)
+        members = [x for x in self.A.shared[g][0] if x in self.m.stations] if g is not None else [sid]
+        while True:
+            ready = [x for x in members if self._can_start(t, x)]
+            if not ready:
+                return
+            # one crew, first come first served across its stations
+            x = min(ready, key=lambda y: (self.queue[y][0].queued, y))
+            lot = self.queue[x].popleft()
+            self.busy[x] += 1
+            if g is not None:
+                self.group_busy[g] += 1
+            work, down = self.service(x, lot)     # down: changeovers (and work-clock failures)
+            self.down_time[x] += down                 # open-clock repairs are counted as they occur
+            if x in self.A.open_failures and x in self.next_fail \
+                    and (self.ch.get(x) is None or self.ch[x].breakdowns):
+                # a breakdown can strike during a changeover as well as the work
+                down += self._open_clock_service(x, t, work + down)
+            self.busy_time[x] += work
+            self.push(t + work + down, "finish", (x, lot))
 
     def route(self, t, sid, lot: _Lot):
         opts = self.m.routing.get((lot.process, sid), [])
@@ -260,12 +388,59 @@ class _Sim:
         lot.feed = sid
         self.arrive(t, to, lot)
 
+    def _bound_for(self, sid, lot):
+        """The one station a finished whole lot goes to next, when that
+        station holds a limited number of lots; None otherwise."""
+        opts = self.m.routing.get((lot.process, sid), [])
+        if not opts or opts[0][2] == "piece" or len(opts) != 1:
+            return None
+        to = opts[0][0]
+        if to not in self.A.buffers or (lot.process, to) in self.m.merges \
+                or (lot.process, to) in self.m.endpoints:
+            return None
+        return to
+
+    def _occupied(self, sid):
+        return len(self.queue[sid]) + self.busy[sid]
+
+    def _release(self, t, sid):
+        """A server at sid lets go of its lot: room may open at sid for a lot
+        blocked upstream, and the crew may start the next one."""
+        self.busy[sid] -= 1
+        g = self.group_of.get(sid)
+        if g is not None:
+            self.group_busy[g] -= 1
+        if self.blocked[sid] and self._occupied(sid) < self.A.buffers.get(sid, math.inf):
+            src, lot = self.blocked[sid].popleft()
+            lot.feed = src
+            self.arrive(t, sid, lot)
+            self._release(t, src)
+        self.start(t, sid)
+
+    def _finish_a(self, t, sid, lot):
+        to = self._bound_for(sid, lot)
+        if to is not None and self._occupied(to) >= self.A.buffers[to]:
+            self.blocked[to].append((sid, lot))          # keeps the lot and the server
+            return
+        if to is not None:
+            lot.feed = sid
+            self.arrive(t, to, lot)
+            self._release(t, sid)
+            return
+        self.route(t, sid, lot)
+        self._release(t, sid)
+
     def run(self) -> dict:
         f = self.sc.demand or 1.0
         for a in self.m.arrivals:
             self.push(a.t / f, "arrive", (a.station, _Lot(qty=a.qty, process=a.process,
                                                           entry=a.t / f, feed=a.feed,
                                                           product=a.product)))
+        if self.A is not None:
+            for sid, sched in self.A.staffing.items():
+                for t0, _n in sched:
+                    if sid in self.m.stations:
+                        self.push(t0, "staff", sid)
         guard = 0
         while self.ev and guard < 2_000_000:
             guard += 1
@@ -273,11 +448,15 @@ class _Sim:
             if kind == "arrive":
                 sid, lot = payload
                 self.arrive(t, sid, lot)
-            else:
+            elif kind == "staff":
+                self.start(t, payload)
+            elif self.A is None:
                 sid, lot = payload
                 self.busy[sid] -= 1
                 self.route(t, sid, lot)
                 self.start(t, sid)
+            else:
+                self._finish_a(t, *payload)
         units = sum(q for _, _, q in self.done)
         lead = (sum((b - a) * q for a, b, q in self.done) / units) if units else None
         span = (self.m.horizon / f) or 1.0

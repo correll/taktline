@@ -10,6 +10,7 @@ import {
   platformApi, type AuditEntry, type PlatformCompany, type PlatformStatus,
   type PlatformUser, type Voucher,
 } from '../../api/platform.api'
+import { generateVoucherCode } from './voucherCode'
 
 // Customer-service dashboard. Server-side checks are authoritative — this view
 // merely renders what /platform/* returns (404s for anyone else).
@@ -594,14 +595,19 @@ function VouchersSection({ vouchers, isOwner, onChanged }: {
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [minted, setMinted] = useState<Voucher | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
+  // "Mint" has to mint. It used to require a code first and sit disabled
+  // until one was typed — but disabled with inline colours looks exactly like
+  // enabled, so pressing it to *get* a voucher did nothing, silently. A blank
+  // code now becomes a generated one; a typed code is kept as before.
   const create = async () => {
-    if (!code.trim() || busy) return
-    setBusy(true); setError(null)
+    if (busy) return
+    setBusy(true); setError(null); setMinted(null)
     try {
-      await platformApi.createVoucher({
-        code: code.trim(),
+      const v = await platformApi.createVoucher({
+        code: code.trim() || generateVoucherCode(),
         plan,
         months: Math.max(1, parseInt(months, 10) || 1),
         maxRedemptions: maxRedemptions.trim() ? parseInt(maxRedemptions, 10) : null,
@@ -610,6 +616,7 @@ function VouchersSection({ vouchers, isOwner, onChanged }: {
         note: note.trim() || null,
       })
       setCode(''); setNote(''); setMaxRedemptions(''); setExpiresAt('')
+      setMinted(v)
       onChanged()
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? String(e))
@@ -617,7 +624,7 @@ function VouchersSection({ vouchers, isOwner, onChanged }: {
   }
 
   const retire = async (v: Voucher) => {
-    setError(null)
+    setError(null); setMinted(null)
     try { await platformApi.deleteVoucher(v.id); setConfirmId(null); onChanged() }
     catch (e) { setError(String(e)) }
   }
@@ -631,13 +638,22 @@ function VouchersSection({ vouchers, isOwner, onChanged }: {
     <section>
       <SectionTitle>Vouchers ({vouchers.length})</SectionTitle>
       {error && <div style={{ fontSize: 12, color: color.statusFault, marginBottom: 6 }}>{error}</div>}
+      {minted && !error && (
+        <div style={{ fontSize: 12, color: color.statusRunning, marginBottom: 6 }}>
+          Minted <span style={{ fontFamily: font.mono, color: color.textPrimary }}>{minted.code}</span>
+          {' — '}{minted.plan} free for {minted.months} month{minted.months === 1 ? '' : 's'}.
+          It is first in the list below.
+        </div>
+      )}
 
       {isOwner && (
         <div style={{ ...cardListStyle, padding: size.sp4, marginBottom: size.sp3,
                       display: 'flex', gap: size.sp2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <label style={voucherLabel}>Code
-            <input style={{ ...input, width: 130, fontFamily: font.mono, textTransform: 'uppercase' }}
-                   value={code} onChange={(e) => setCode(e.target.value)} placeholder="EXAMPLE2026" />
+            <input style={{ ...input, width: 150, fontFamily: font.mono, textTransform: 'uppercase' }}
+                   value={code} onChange={(e) => setCode(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Enter') void create() }}
+                   placeholder="blank = generated" />
           </label>
           <label style={voucherLabel}>Plan
             <select style={input} value={plan} onChange={(e) => setPlan(e.target.value)}>
@@ -661,8 +677,11 @@ function VouchersSection({ vouchers, isOwner, onChanged }: {
                    onChange={(e) => setNote(e.target.value)} placeholder="Who this is for" />
           </label>
           <button style={{ ...smallBtn, background: color.bluePrimary, color: '#fff',
-                           borderColor: color.bluePrimary }}
-                  disabled={!code.trim() || busy} onClick={create}>
+                           borderColor: color.bluePrimary,
+                           // A disabled button must look disabled: inline colours
+                           // override the browser's greying, so say it ourselves.
+                           opacity: busy ? 0.55 : 1, cursor: busy ? 'default' : 'pointer' }}
+                  disabled={busy} onClick={create}>
             {busy ? 'Minting…' : 'Mint voucher'}
           </button>
         </div>
@@ -721,9 +740,10 @@ function VouchersSection({ vouchers, isOwner, onChanged }: {
       </div>
       <p style={{ fontSize: 11.5, color: color.textDim, margin: `${size.sp2} 0 0`, lineHeight: 1.5 }}>
         A company redeems a code in Settings → Billing and gets the plan free for
-        the months stated — no card. Codes are case-insensitive and a leading # is
-        ignored. Retiring a code stops new redemptions; grants already made keep
-        running to their end date.
+        the months stated — no card. Type a code for a campaign (EXAMPLE2026) or
+        leave it blank and Mint makes one. Codes are case-insensitive and a
+        leading # is ignored. Retiring a code stops new redemptions; grants
+        already made keep running to their end date.
       </p>
     </section>
   )
